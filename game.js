@@ -1508,6 +1508,12 @@ function waitForLoginClick() {
 async function init() {
   let user = auth.currentUser;
   if (!user) {
+    if (location.search.includes('dev=1')) {
+      $('loading').textContent = '테스트 계정으로 접속 중...';
+      const cred = await signInAnonymously(auth);
+      user = cred.user;
+      googleName = '테스터';
+    } else {
     try {
       user = await waitForLoginClick();
     } catch (e) {
@@ -1517,6 +1523,7 @@ async function init() {
         '설정 &gt; 승인된 도메인에 <b>rpg.sanghak.kr</b> 등록' +
         '<br><br><a href="javascript:location.reload()" style="color:#7fc7ff">다시 시도</a>';
       return;
+    }
     }
   }
   uid = user.uid;

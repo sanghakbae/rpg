@@ -2,12 +2,19 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getAuth, signInWithPopup, GoogleAuthProvider, signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import {
   getFirestore, doc, setDoc, updateDoc, onSnapshot, collection,
-  query, orderBy, limit, addDoc, runTransaction, getDoc, writeBatch, increment
+  query, orderBy, limit, addDoc, runTransaction, getDoc, writeBatch, increment,
+  connectFirestoreEmulator
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { connectAuthEmulator } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 
 const app = initializeApp(window.firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
+
+if (location.search.includes('emu=1')) {
+  connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+  connectFirestoreEmulator(db, '127.0.0.1', 8080);
+}
 
 /* ================= 상수 ================= */
 const WORLD = { w: 1600, h: 1200 };
@@ -1412,7 +1419,15 @@ function loop(t) {
   const now = Date.now();
   const dt = Math.min(50, t - lastT);
   lastT = t;
-  if (!ready) return;
+  if (!ready) {
+    ctx.fillStyle = '#0d1420';
+    ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.fillStyle = '#778';
+    ctx.font = '15px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('연결 중...', cv.width / 2, cv.height / 2 - 10);
+    return;
+  }
 
   if (!me.dead && document.activeElement !== chatInput) {
     let dx = 0, dy = 0;
@@ -1482,10 +1497,25 @@ function renderQuestsThrottled() { if (Date.now() - questT > 700) { questT = Dat
 /* ================= 시작 ================= */
 setInterval(() => { if (uid && meRef) updateDoc(meRef, { lastSeen: Date.now() }).catch(() => {}); }, 4000);
 
+window.addEventListener('error', ev => {
+  const el = document.getElementById('loading');
+  if (el && el.style.display !== 'none') {
+    el.style.display = 'flex';
+    el.innerHTML = '오류 발생: ' + esc(ev.message || String(ev)) +
+      '<br><br><a href="javascript:location.reload()" style="color:#7fc7ff">새로고침</a>';
+  }
+});
+
 function waitForLoginClick() {
   return new Promise((resolve, reject) => {
     $('loading').style.display = 'none';
-    const scr = $('loginScreen');
+    let scr = $('loginScreen');
+    if (!scr) {
+      scr = document.createElement('div');
+      scr.id = 'loginScreen';
+      scr.innerHTML = '<h1>미니 MMORPG</h1><button id="googleLoginBtn">🅶 Google로 계속하기</button>';
+      document.body.appendChild(scr);
+    }
     scr.style.display = 'flex';
     const btn = $('googleLoginBtn');
     btn.onclick = async () => {

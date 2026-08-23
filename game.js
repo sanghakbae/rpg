@@ -1,5 +1,5 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
-import { getAuth, signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import { getAuth, signInWithPopup, GoogleAuthProvider } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import {
   getFirestore, doc, setDoc, updateDoc, onSnapshot, collection,
   query, orderBy, limit, addDoc, runTransaction, getDoc, writeBatch, increment
@@ -13,7 +13,7 @@ const auth = getAuth(app);
 const WORLD = { w: 1600, h: 1200 };
 const SPAWN = { x: 800, y: 600 };
 const OFFLINE_MS = 12000;
-const INV_SIZE = 12;
+const INV_SIZE = 18;
 const MAX_SKILL_LV = 5;
 
 const CLASSES = {
@@ -36,6 +36,12 @@ const SPAWN_ZONES = [
 ];
 const BOSS_DEF = { name: '오크 대족장', hp: 800, atk: 35, speed: 65, exp: 400, gold: 500, r: 42, color: '#c0392b', aggro: 420, respawn: 120000, range: 72 };
 
+const SLOTS = [
+  ['weapon', '무기'], ['armor', '갑옷'], ['helmet', '모자'],
+  ['pants', '바지'], ['gloves', '장갑'], ['boots', '부츠'],
+  ['bracelet', '팔찌'], ['necklace', '목걸이'], ['ring', '반지'],
+];
+
 const ITEMS = {
   sword_wood:    { name: '나무 검',   slot: 'weapon', atk: 3,  color: '#a0714f' },
   sword_iron:    { name: '철 검',     slot: 'weapon', atk: 8,  color: '#bdc3c7' },
@@ -43,13 +49,31 @@ const ITEMS = {
   armor_cloth:   { name: '천 갑옷',   slot: 'armor',  def: 2,  color: '#d9c8a9' },
   armor_leather: { name: '가죽 갑옷', slot: 'armor',  def: 5,  color: '#8b5a2b' },
   armor_plate:   { name: '강철 갑옷', slot: 'armor',  def: 10, color: '#7f8c8d' },
+  cap_cloth:     { name: '천 모자',   slot: 'helmet', def: 1,  color: '#d9c8a9' },
+  cap_leather:   { name: '가죽 투구', slot: 'helmet', def: 3,  color: '#8b5a2b' },
+  crown_gold:    { name: '대족장의 왕관', slot: 'helmet', def: 6, atk: 3, color: '#ffd700' },
+  pants_cloth:   { name: '천 바지',   slot: 'pants',  def: 1,  color: '#cbbfa3' },
+  pants_leather: { name: '가죽 바지', slot: 'pants',  def: 3,  color: '#7a5230' },
+  pants_plate:   { name: '강철 다리보호대', slot: 'pants', def: 6, color: '#95a5a6' },
+  gloves_cloth:  { name: '천 장갑',   slot: 'gloves', def: 1,  color: '#d9c8a9' },
+  gloves_leather:{ name: '가죽 장갑', slot: 'gloves', def: 2,  atk: 2, color: '#8b5a2b' },
+  gloves_steel:  { name: '강철 건틀릿', slot: 'gloves', def: 4, atk: 4, color: '#aab7c4' },
+  boots_cloth:   { name: '천 신발',   slot: 'boots',  def: 1,  color: '#cbbfa3' },
+  boots_leather: { name: '가죽 부츠', slot: 'boots',  def: 2,  color: '#7a5230' },
+  boots_wind:    { name: '질풍 부츠', slot: 'boots',  def: 3,  spd: 25, color: '#5dade2' },
+  bracelet_wood: { name: '나무 팔찌', slot: 'bracelet', def: 1, color: '#a0714f' },
+  bracelet_jade: { name: '옥 팔찌',   slot: 'bracelet', def: 3, atk: 2, color: '#48c9b0' },
+  necklace_copper:{ name: '구리 목걸이', slot: 'necklace', atk: 2, color: '#b87333' },
+  necklace_ruby: { name: '루비 목걸이', slot: 'necklace', atk: 5, color: '#e74c3c' },
+  ring_leather:  { name: '가죽 반지', slot: 'ring', crit: .03, color: '#8b5a2b' },
+  ring_shadow:   { name: '그림자 반지', slot: 'ring', crit: .08, atk: 3, color: '#6c3483' },
   potion:        { name: 'HP 물약',   heal: 50, color: '#e74c3c' },
 };
 const DROP_TABLE = {
-  slime:  [['potion', .30], ['sword_wood', .15]],
-  goblin: [['potion', .25], ['sword_iron', .12], ['armor_cloth', .12]],
-  wolf:   [['potion', .30], ['armor_leather', .12]],
-  boss:   [['sword_flame', 1], ['armor_plate', 1], ['potion', .5]],
+  slime:  [['potion', .30], ['sword_wood', .15], ['pants_cloth', .10], ['cap_cloth', .10], ['boots_cloth', .08], ['gloves_cloth', .08], ['bracelet_wood', .06]],
+  goblin: [['potion', .25], ['sword_iron', .12], ['armor_cloth', .12], ['gloves_leather', .10], ['cap_leather', .10], ['pants_leather', .10], ['necklace_copper', .08]],
+  wolf:   [['potion', .30], ['armor_leather', .12], ['boots_leather', .12], ['gloves_leather', .10], ['ring_leather', .08]],
+  boss:   [['sword_flame', 1], ['armor_plate', 1], ['pants_plate', .8], ['crown_gold', .8], ['gloves_steel', .8], ['boots_wind', .8], ['bracelet_jade', .8], ['necklace_ruby', .8], ['ring_shadow', .8]],
 };
 
 const SKILLS = {
@@ -93,7 +117,7 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;'
 const $ = id => document.getElementById(id);
 
 /* ================= 상태 ================= */
-let uid = null, myName = '', meRef = null, myCls = 'warrior';
+let uid = null, myName = '', meRef = null, myCls = 'warrior', googleName = '';
 let me = { x: SPAWN.x, y: SPAWN.y, lv: 1, exp: 0, hp: 100, maxHp: 100, atk: 10, gold: 0, inv: {}, equipped: {}, skills: {}, q: {}, qc: {}, dead: false };
 let others = {}, lootItems = {};
 let sims = [], bossWasAlive = true;
@@ -110,10 +134,11 @@ const colorOf = id => PALETTE[[...id].reduce((a, c) => a + c.charCodeAt(0), 0) %
 const skillLv = id => (me.skills || {})[id] || 0;
 const passSum = f => Object.keys(SKILLS).reduce((a, id) => a + (SKILLS[id][f] || 0) * skillLv(id), 0);
 const cdef = () => CLASSES[myCls] || CLASSES.warrior;
-const totalAtk = () => (me.atk || 10) + ((ITEMS[me.equipped?.weapon] || {}).atk || 0) + passSum('atk');
-const totalDef = () => ((ITEMS[me.equipped?.armor] || {}).def || 0) + passSum('def');
-const totalCrit = () => cdef().crit + passSum('crit');
-const moveSpd = () => cdef().speed + passSum('spd');
+const eqStats = f => Object.values(me.equipped || {}).reduce((a, id) => a + ((ITEMS[id] || {})[f] || 0), 0);
+const totalAtk = () => (me.atk || 10) + eqStats('atk') + passSum('atk');
+const totalDef = () => eqStats('def') + passSum('def');
+const totalCrit = () => cdef().crit + passSum('crit') + eqStats('crit');
+const moveSpd = () => cdef().speed + passSum('spd') + eqStats('spd');
 const classActiveId = () => Object.keys(SKILLS).find(k => SKILLS[k].cls === myCls && SKILLS[k].type === 'active');
 
 function float(x, y, text, color = '#fff') { floats.push({ x, y, text, color, t: 0 }); }
@@ -549,11 +574,24 @@ function renderInvUI() {
     }
     grid.appendChild(div);
   }
-  const w = ITEMS[me.equipped?.weapon], a = ITEMS[me.equipped?.armor];
-  $('eqWeapon').innerHTML = w ? `<span style="color:${w.color}">${w.name}</span>` : '무기 없음';
-  $('eqArmor').innerHTML = a ? `<span style="color:${a.color}">${a.name}</span>` : '갑옷 없음';
-  $('eqWeapon').onclick = () => unequip('weapon');
-  $('eqArmor').onclick = () => unequip('armor');
+  const eg = $('equipGrid');
+  eg.innerHTML = '';
+  for (const [slot, label] of SLOTS) {
+    const div = document.createElement('div');
+    div.className = 'eslot';
+    const itemId = (me.equipped || {})[slot];
+    if (itemId) {
+      const it = ITEMS[itemId];
+      div.innerHTML = `<span class="slbl">${label}</span><span style="color:${it.color}">${esc(it.name)}</span>`;
+      const extra = [it.atk ? `공격+${it.atk}` : '', it.def ? `방어+${it.def}` : '',
+        it.crit ? `치명타+${Math.round(it.crit * 100)}%p` : '', it.spd ? `속도+${it.spd}` : ''].filter(Boolean).join(' · ');
+      div.title = `${it.name}\n${extra}`;
+      div.onclick = () => unequip(slot);
+    } else {
+      div.innerHTML = `<span class="slbl">${label}</span><span style="color:#556">-</span>`;
+    }
+    eg.appendChild(div);
+  }
 }
 
 /* ================= 몬스터 시뮬레이션 ================= */
@@ -872,9 +910,7 @@ function updateHUD() {
   $('uiAtk').textContent = totalAtk();
   $('uiDef').textContent = totalDef();
   $('uiCrit').textContent = Math.round(totalCrit() * 100);
-  const w = ITEMS[me.equipped?.weapon], a = ITEMS[me.equipped?.armor];
-  $('uiWeapon').textContent = w ? w.name : '-';
-  $('uiArmor').textContent = a ? a.name : '-';
+  $('uiSpd').textContent = Math.round(moveSpd());
   $('uiGold').textContent = (me.gold || 0).toLocaleString();
 }
 
@@ -982,6 +1018,7 @@ function showCreateUI() {
   return new Promise(resolve => {
     $('loading').style.display = 'none';
     $('create').style.display = 'flex';
+    if (googleName) $('nameInput').value = googleName.slice(0, 12);
     $('nameInput').focus();
     buildCreateUI(resolve);
   });
@@ -1052,8 +1089,23 @@ function renderQuestsThrottled() { if (Date.now() - questT > 700) { questT = Dat
 setInterval(() => { if (uid && meRef) updateDoc(meRef, { lastSeen: Date.now() }).catch(() => {}); }, 4000);
 
 async function init() {
-  const cred = await signInAnonymously(auth);
-  uid = cred.user.uid;
+  let user = auth.currentUser;
+  if (!user) {
+    $('loading').textContent = '구글 로그인 창을 여는 중...';
+    try {
+      const cred = await signInWithPopup(auth, new GoogleAuthProvider());
+      user = cred.user;
+    } catch (e) {
+      $('loading').innerHTML =
+        '구글 로그인 실패: ' + esc(e.code || e.message) +
+        '<br><br>확인 사항:<br>1. Firebase 콘솔 &gt; Authentication &gt; 로그인 방법에서 <b>Google 사용 설정</b>' +
+        '<br>2. Authentication &gt; 설정 &gt; 승인된 도메인에 <b>rpg.sanghak.kr</b> 추가' +
+        '<br><br><a href="javascript:location.reload()" style="color:#7fc7ff">다시 시도</a>';
+      return;
+    }
+  }
+  uid = user.uid;
+  googleName = user.displayName || '';
   meRef = doc(db, 'players', uid);
 
   const snap = await getDoc(meRef);
@@ -1101,7 +1153,7 @@ async function init() {
 
 init().catch(err => {
   $('loading').textContent = '초기화 실패: ' + err.message +
-    '\n\nFirebase 콘솔에서 확인하세요:\n1. Authentication > 익명 로그인 사용\n2. Cloud Firestore 생성\n3. 보안 규칙에서 로그인 사용자 읽기/쓰기 허용';
+    '\n\nFirebase 콘솔에서 확인하세요:\n1. Authentication > Google 로그인 사용\n2. Cloud Firestore 생성\n3. 보안 규칙에서 로그인 사용자 읽기/쓰기 허용';
 });
 
 requestAnimationFrame(loop);

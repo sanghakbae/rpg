@@ -58,9 +58,11 @@
   /* 인벤토리 */
   #invPanel { position: fixed; left: 12px; top: 218px; width: 235px; padding: 8px; z-index: 10; }
   #invPanel h3 { font-size: 11px; color: #888; margin: 2px 0 6px 2px; letter-spacing: 1px; }
-  #equipRow { display: flex; gap: 6px; margin-bottom: 8px; }
-  .eslot { flex: 1; height: 42px; background: rgba(255,255,255,.05); border: 1px dashed #555; border-radius: 6px;
-    display: flex; align-items: center; justify-content: center; font-size: 11px; cursor: pointer; text-align: center; line-height: 1.2; }
+  #equipGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-bottom: 8px; }
+  .eslot { height: 36px; background: rgba(255,255,255,.05); border: 1px dashed #555; border-radius: 5px;
+           display: flex; flex-direction: column; align-items: center; justify-content: center;
+           font-size: 10px; cursor: pointer; text-align: center; line-height: 1.25; overflow: hidden; padding: 0 2px; }
+  .eslot .slbl { font-size: 8px; color: #667; letter-spacing: 1px; }
   .eslot:hover { border-color: #ffd700; }
   #invGrid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; }
   .islot { aspect-ratio: 1; background: rgba(255,255,255,.06); border: 1px solid #444; border-radius: 5px;
@@ -142,8 +144,7 @@
   <div class="bartext" id="hpText"></div>
   <div class="barwrap"><div class="bar" id="expbar"></div></div>
   <div class="bartext" style="margin-top:-13px;margin-bottom:2px;" id="expText"></div>
-  <div id="stats">공격 <b id="uiAtk"></b> · 방어 <b id="uiDef"></b> · 치명타 <b id="uiCrit"></b>%<br>
-    무기 <b id="uiWeapon">-</b> · 방어구 <b id="uiArmor">-</b></div>
+  <div id="stats">공격 <b id="uiAtk"></b> · 방어 <b id="uiDef"></b> · 치명타 <b id="uiCrit"></b>% · 속도 <b id="uiSpd"></b></div>
   <div id="goldRow">💰 <span id="uiGold">0</span> G</div>
   <div id="btnRow">
     <button id="shopBtn">스킬샵 [B]</button>
@@ -153,10 +154,7 @@
 
 <div id="invPanel" class="panel">
   <h3>장비 [클릭: 해제]</h3>
-  <div id="equipRow">
-    <div class="eslot" id="eqWeapon">무기 없음</div>
-    <div class="eslot" id="eqArmor">갑옷 없음</div>
-  </div>
+  <div id="equipGrid"></div>
   <h3>가방 [클릭: 장착/사용]</h3>
   <div id="invGrid"></div>
 </div>

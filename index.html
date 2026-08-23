@@ -13,6 +13,14 @@
     border-radius: 8px; color: #ddd; }
   button { font-family: inherit; cursor: pointer; border: none; border-radius: 5px; }
 
+  /* ===== 구글 로그인 ===== */
+  #loginScreen { position: fixed; inset: 0; background: radial-gradient(ellipse at center, #1a2233 0%, #0a0e16 70%);
+    z-index: 101; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 26px; }
+  #loginScreen h1 { color: #ffd700; font-size: 42px; letter-spacing: 6px; text-shadow: 0 0 24px rgba(255,215,0,.35); }
+  #googleLoginBtn { display: flex; align-items: center; padding: 13px 34px; font-size: 16px; font-weight: bold;
+    background: #fff; color: #3c4043; border-radius: 8px; }
+  #googleLoginBtn:hover { box-shadow: 0 0 22px rgba(255,255,255,.4); transform: translateY(-2px); }
+
   /* ===== 캐릭터 생성 ===== */
   #create { position: fixed; inset: 0; background: radial-gradient(ellipse at center, #1a2233 0%, #0a0e16 70%);
     z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 26px; }
@@ -182,8 +190,8 @@
 </div>
 
 <div id="help" class="panel">
-  <b>이동</b> WASD/화살표 · <b>공격</b> Space<br>
-  <b>스킬</b> 1·2 · <b>샵</b> B · <b>퀘스트</b> Q<br>
+  <b>이동</b> WASD/화살표/빈 곳 클릭<br>
+  <b>공격</b> Space/몬스터 클릭 · <b>스킬</b> 1·2 · <b>샵</b> B · <b>퀘스트</b> Q<br>
   루팅은 아이템에 접근 시 자동
 </div>
 

@@ -18,7 +18,7 @@ if (location.search.includes('emu=1')) {
 /* ================= 상수 ================= */
 const WORLD = { w: 1600, h: 1200 };
 const SPAWN = { x: 800, y: 600 };
-const OFFLINE_MS = 12000;
+const OFFLINE_MS = 35000;
 const BASE_BAG = 18, MAX_BAG = 36;
 const bagSize = () => Math.min(MAX_BAG, me.bagSize || BASE_BAG);
 const bagUpCost = () => 500 * Math.pow(2, (bagSize() - BASE_BAG) / 6);
@@ -374,6 +374,7 @@ let othersPrev = {}, mePrev = { x: SPAWN.x, y: SPAWN.y }, meMovingNow = false;
 let mouseDown = false, dest = null, attackTargetSimId = null;
 const view = { x: 0, y: 0 };
 let lastAttackAt = 0, lastPosWrite = 0, hurtUntil = 0, picking = false;
+let sentX = -1, sentY = -1, sentHp = -1, sentMp = null;
 let ready = false;
 let loginAt = Date.now();
 let shakeT = 0, shakePow = 0, lastRegenWrite = 0, dustT = 0, hpDirty = false;
@@ -588,9 +589,15 @@ function watchMonsters() {
     });
     bossWasAlive = (sims.find(s => s.boss) || { alive: true }).alive;
   }, err => {
-    monErr = '구독오류:' + (err.code || err.message);
+    const code = String(err.code || err.message || '');
+    monErr = '구독오류:' + code;
     console.error('[monsters]', err);
-    if (!monWarned) { monWarned = true; toast('⚠️ 몬스터 연결 실패: ' + esc(err.code || err.message)); }
+    if (!monWarned) {
+      monWarned = true;
+      toast(code.includes('resource-exhausted') || code.includes('quota')
+        ? '⛔ 서버 일일 한도 초과! 내일 자정(태평양)까지 일부 기능 제한 — Firebase Blaze 플랜 필요'
+        : '⚠️ 몬스터 연결 실패: ' + esc(code));
+    }
     setTimeout(() => watchMonsters(), 4000);
   });
 }
@@ -3209,9 +3216,13 @@ function loopBody(t) {
   } else meMovingNow = false;
   if (moved) resolveCollide();
 
-  if (now - lastPosWrite > 150 || (hpDirty && now - lastPosWrite > 400)) {
+  const movedFar = Math.abs(me.x - sentX) + Math.abs(me.y - sentY) > 2;
+  const hpChanged = Math.round(me.hp || 0) !== sentHp;
+  const mpChanged = me.mp != null && Math.round(me.mp) !== sentMp;
+  if ((now - lastPosWrite > 600 && (movedFar || hpDirty || mpChanged)) || now - lastPosWrite > 8000) {
     lastPosWrite = now;
     hpDirty = false;
+    sentX = me.x; sentY = me.y; sentHp = Math.round(me.hp || 0); sentMp = me.mp != null ? Math.round(me.mp) : null;
 updateDoc(meRef, { x: me.x, y: me.y, hp: me.hp, ...(me.mp != null ? { mp: Math.round(me.mp) } : {}), ...(me.lastHurtAt ? { lastHurtAt: Math.round(me.lastHurtAt) } : {}), power: totalAtk(), lastSeen: now }).catch(() => {});
   }
 
@@ -3410,7 +3421,7 @@ function waitForLoginClick() {
 }
 
 /* ================= 시작 ================= */
-setInterval(() => { if (uid && meRef) updateDoc(meRef, { lastSeen: Date.now() }).catch(() => {}); }, 4000);
+setInterval(() => { if (uid && meRef) updateDoc(meRef, { lastSeen: Date.now() }).catch(() => {}); }, 15000);
 setInterval(() => {
   let n = 1;
   for (const [, o] of Object.entries(others)) if (Date.now() - (o.lastSeen || 0) < OFFLINE_MS) n++;

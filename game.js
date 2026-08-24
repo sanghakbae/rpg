@@ -556,20 +556,24 @@ function hitFlashOverlay(c, s, now, d) {
 /* ================= 실시간 구독 ================= */
 let unsubMon = null;
 let pageRetryT = 0;
+let monErr = '';
+let monWarned = false;
 function watchMonsters() {
   if (unsubMon) unsubMon();
   sims = [];
   othersPrev = {};
   unsubMon = onSnapshot(query(collection(db, 'monsters'), where('page', '==', myPage())), snap => {
+    monErr = '';
     const EXPECT = 13;
     if (snap.size < EXPECT && Date.now() - pageRetryT > 8000) {
       pageRetryT = Date.now();
-      ensurePage(pageNum()).catch(() => {});
+      ensurePage(pageNum()).catch(e => { monErr = '보충실패:' + (e.code || e.message); });
     }
     snap.forEach(dc => {
       const d = dc.data();
-      let s = sims.find(x => x.id === dc.id);
-      if (!s) { s = makeSim(dc.id, d); sims.push(s); }
+      let s = null;
+      try { s = sims.find(x => x.id === dc.id); if (!s) { s = makeSim(dc.id, d); sims.push(s); } }
+      catch (e) { monErr = 'makeSim실패(' + dc.id + '):' + (e.message || e); if (!monWarned) { monWarned = true; toast('⚠️ 몬스터 로드 오류: ' + esc(monErr)); } return; }
       if (typeof d.hp === 'number' && typeof s.hp === 'number' && d.hp < s.hp && s.alive) s.hitFlash = Date.now();
       if (!d.alive && s.alive) spawnPoof(s);
       if (d.alive && !s.alive) {
@@ -583,6 +587,11 @@ function watchMonsters() {
       s.respawnAt = d.respawnAt || 0;
     });
     bossWasAlive = (sims.find(s => s.boss) || { alive: true }).alive;
+  }, err => {
+    monErr = '구독오류:' + (err.code || err.message);
+    console.error('[monsters]', err);
+    if (!monWarned) { monWarned = true; toast('⚠️ 몬스터 연결 실패: ' + esc(err.code || err.message)); }
+    setTimeout(() => watchMonsters(), 4000);
   });
 }
 
@@ -3136,12 +3145,15 @@ addEventListener('pointerdown', function unlockAudio() {
 
 /* ================= 메인 루프 ================= */
 let lastT = 0;
-let lastLoopErr = '';
+let lastLoopErr = '', loopErrMsg = '';
 function loop(t) {
   requestAnimationFrame(loop);
-  try { loopBody(t); } catch (err) {
-    const m = String(err && err.message || err);
-    if (m !== lastLoopErr) { lastLoopErr = m; console.error('[loop]', err); }
+  try {
+    loopBody(t);
+    if (loopErrMsg) loopErrMsg = '';
+  } catch (err) {
+    loopErrMsg = String(err && err.message || err);
+    if (loopErrMsg !== lastLoopErr) { lastLoopErr = loopErrMsg; console.error('[loop]', err); toast('⚠️ 렌더 오류: ' + esc(loopErrMsg)); }
   }
 }
 function loopBody(t) {
@@ -3515,6 +3527,24 @@ document.querySelectorAll('#invPanel h3.tog').forEach(h => {
   if (innerWidth <= 640) { g.classList.add('collapsed'); h.classList.add('closed'); }
   h.onclick = () => { g.classList.toggle('collapsed'); h.classList.toggle('closed'); sfx('click'); };
 });
+
+/* 몬스터 로드 실패 화면 경고 + 디버그 오버레이 */
+let noMonWarned = false;
+setInterval(() => {
+  if (ready && Date.now() - loginAt > 12000 && !sims.some(s => s.alive) && !noMonWarned) {
+    noMonWarned = true;
+    toast('⚠️ 몬스터 로드 안 됨' + (monErr ? ' — ' + esc(monErr) : '') + ' — URL에 &dbg=1', 'sysq');
+  }
+  if (sims.some(s => s.alive)) noMonWarned = false;
+}, 5000);
+if (location.search.includes('dbg=1')) {
+  const dv = document.createElement('div');
+  dv.style.cssText = 'position:fixed;bottom:4px;right:4px;z-index:99999;background:rgba(0,0,0,.85);color:#4f4;font:11px monospace;padding:6px 8px;white-space:pre;pointer-events:none;border-radius:6px;';
+  document.body.appendChild(dv);
+  setInterval(() => {
+    dv.textContent = `ready:${ready} map:${me.map || '?'}\nsims:${sims.length} alive:${sims.filter(s => s.alive).length}\nloot:${Object.keys(lootItems).length} players:${1 + Object.keys(others).length}\nloopErr:${loopErrMsg || '-'}\nmonErr:${monErr || '-'}`;
+  }, 800);
+}
 
 init().catch(err => {
   $('loading').textContent = '초기화 실패: ' + err.message +

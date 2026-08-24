@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <link rel="icon" type="image/svg+xml" href="favicon.svg?v=1">
 <title>미니 MMORPG</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: #000;
@@ -58,6 +60,8 @@
   #mpbar { background: linear-gradient(#3498db, #21618c); }
   #expbar { background: linear-gradient(#f1c40f, #b7950b); }
   .bartext { font-size: 13px; color: #ccc; text-align: right; margin-top: -22px; margin-bottom: 8px; position: relative; }
+  #mpText { margin-bottom: 8px; }
+  #expText { margin-top: -22px; margin-bottom: 3px; }
   #stats { color: #aaa; font-size: 14px; line-height: 1.55; }
   #stats b { color: #eee; }
   #goldRow { margin-top: 8px; padding-top: 8px; border-top: 1px solid #333; color: #ffd700; font-weight: bold; }
@@ -82,6 +86,43 @@
   .islot .ic { font-size: 21px; font-weight: bold; pointer-events: none; }
   .islot .scnt { position: absolute; top: 2px; right: 4px; font-size: 14px; font-weight: bold; color: #ffd700;
     text-shadow: 0 1px 2px #000, 0 0 5px rgba(0,0,0,.9); pointer-events: none; }
+
+  /* 인벤 섹션 접기 */
+  #invPanel h3.tog { cursor: pointer; }
+  #invPanel h3.tog .arr { display: inline-block; transition: transform .15s; }
+  #invPanel h3.tog.closed .arr { transform: rotate(-90deg); }
+  .collapsed { display: none !important; }
+
+  /* 드래그 앤 드롭 강화 */
+  .islot.dragging { opacity: .35; }
+  .islot.dropok { border-color: #ffd700 !important; box-shadow: inset 0 0 10px rgba(255,215,0,.55); }
+  #enhBox { background: #141a26; border: 1px solid #3a4a66; border-radius: 12px; padding: 18px 20px;
+    width: min(330px, 90vw); box-shadow: 0 10px 40px rgba(0,0,0,.7); font-size: 14px; color: #ccd; line-height: 1.6; }
+
+  /* 모바일 (아이폰 등) */
+  @media (max-width: 640px) {
+    body { overflow: hidden; }
+    canvas#game { touch-action: none; -webkit-user-select: none; user-select: none; }
+    #hud { width: calc(100vw - 16px); left: 8px; top: 8px; padding: 8px 10px; font-size: 11.5px; }
+    #hud .lv { font-size: 16px; }
+    #hud .cls { font-size: 10.5px; }
+    .barwrap { height: 12px; margin-bottom: 3px; border-radius: 6px; }
+    .bartext, #mpText { font-size: 9.5px; margin-top: -13px; margin-bottom: 3px; }
+    #expText { margin-top: -13px; margin-bottom: 1px; }
+    #stats { font-size: 10.5px; }
+    #goldRow { margin-top: 4px; padding-top: 4px; }
+    #statPtsRow { font-size: 11px; gap: 3px; }
+    .stbtn { padding: 3px 5px; font-size: 10px; }
+    #btnRow { margin-top: 5px; gap: 4px; }
+    #btnRow button { font-size: 10.5px; padding: 6px 0; }
+    #invPanel { width: calc(100vw - 16px); left: 8px; top: auto; bottom: 8px; padding: 6px 8px;
+      max-height: 40vh; overflow-y: auto; background: rgba(10,14,22,.78); }
+    #invPanel h3 { font-size: 10.5px; margin-bottom: 4px; }
+    .eslot { height: 34px; font-size: 9.5px; }
+    .eslot .slbl { font-size: 7.5px; }
+    .islot .ic { font-size: 16px; }
+    .islot .scnt { font-size: 11px; top: 0; right: 2px; }
+  }
 
   /* 핫바 */
   #hotbar { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; z-index: 10; }
@@ -237,9 +278,9 @@
   <div class="barwrap"><div class="bar" id="hpbar"></div></div>
   <div class="bartext" id="hpText"></div>
   <div class="barwrap"><div class="bar" id="mpbar"></div></div>
-  <div class="bartext" style="margin-top:-22px;margin-bottom:8px;" id="mpText"></div>
+  <div class="bartext" id="mpText"></div>
   <div class="barwrap"><div class="bar" id="expbar"></div></div>
-  <div class="bartext" style="margin-top:-22px;margin-bottom:3px;" id="expText"></div>
+  <div class="bartext" id="expText"></div>
   <div id="stats">공격 <b id="uiAtk"></b> · 방어 <b id="uiDef"></b> · 치명타 <b id="uiCrit"></b>% · 속도 <b id="uiSpd"></b></div>
   <div id="goldRow">💰 <span id="uiGold">0</span> G</div>
   <div id="statPtsRow">✨ 포인트 <b id="uiPts">0</b>
@@ -253,13 +294,14 @@
     <button id="questBtn">퀘스트 [Q]</button>
     <button id="mapBtn">세계지도 [V]</button>
     <button id="dexBtn">도감 [C]</button>
+    <button id="logoutBtn" style="background:linear-gradient(#7a3030,#4d1d1d);">🚪</button>
   </div>
 </div>
 
 <div id="invPanel" class="panel">
-  <h3>장비 [클릭: 해제]</h3>
+  <h3 class="tog" data-tog="equipGrid">장비 [클릭: 해제] <span class="arr">▾</span></h3>
   <div id="equipGrid"></div>
-  <h3>가방 [클릭: 장착/사용] <span id="bagCount">0/18</span></h3>
+  <h3 class="tog" data-tog="invGrid">가방 [클릭: 장착/사용] <span id="bagCount">0/18</span> <span class="arr">▾</span></h3>
   <div id="invGrid"></div>
 </div>
 

@@ -1,5 +1,5 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
-import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signInAnonymously, onAuthStateChanged, connectAuthEmulator, setPersistence, browserLocalPersistence } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signInAnonymously, onAuthStateChanged, connectAuthEmulator, setPersistence, browserLocalPersistence, signOut } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import {
   getFirestore, doc, setDoc, updateDoc, onSnapshot, collection,
   query, orderBy, limit, addDoc, runTransaction, getDoc, writeBatch, increment, where,
@@ -340,6 +340,8 @@ function sfx(kind) {
   if (AC.state === 'suspended') AC.resume().catch(() => {});
   switch (kind) {
     case 'swing':  tone(320, 90, .07, 'sawtooth', .04); break;
+    case 'shoot':  tone(950, 280, .07, 'square', .05); break;
+    case 'cast':   tone(560, 1150, .11, 'sine', .06); break;
     case 'hit':    tone(190, 55, .09, 'square', .09); break;
     case 'crit':   tone(340, 80, .13, 'square', .11); tone(500, 130, .1, 'sawtooth', .05, .03); break;
     case 'hurt':   tone(210, 60, .14, 'sawtooth', .1); break;
@@ -373,6 +375,7 @@ let mouseDown = false, dest = null, attackTargetSimId = null;
 const view = { x: 0, y: 0 };
 let lastAttackAt = 0, lastPosWrite = 0, hurtUntil = 0, picking = false;
 let ready = false;
+let loginAt = Date.now();
 let shakeT = 0, shakePow = 0, lastRegenWrite = 0, dustT = 0, hpDirty = false;
 let goldHintShown = false;
 let hitStopUntil = 0, mapFading = false, portalHintT = 0;
@@ -437,7 +440,8 @@ async function ensureWorld() {
 async function ensurePage(n) {
   const pid = pageId(n);
   const flag = doc(db, 'world', 'init_' + pid);
-  if ((await getDoc(flag)).exists()) return;
+  const probe = await getDoc(doc(db, 'monsters', pid + '_z0_0'));
+  if ((await getDoc(flag)).exists() && probe.exists()) return;
   const pd = pageDef(n);
   const batch = writeBatch(db);
   const zones = [{ cx: 540, cy: 430, spread: 150 }, { cx: 1060, cy: 770, spread: 150 }];
@@ -557,7 +561,8 @@ function watchMonsters() {
   sims = [];
   othersPrev = {};
   unsubMon = onSnapshot(query(collection(db, 'monsters'), where('page', '==', myPage())), snap => {
-    if (snap.empty && Date.now() - pageRetryT > 8000) {
+    const EXPECT = 13;
+    if (snap.size < EXPECT && Date.now() - pageRetryT > 8000) {
       pageRetryT = Date.now();
       ensurePage(pageNum()).catch(() => {});
     }
@@ -791,7 +796,7 @@ function tryAttack(now, forced = null) {
     sfx('swing');
   } else if (target) {
     fireShot(target.x, target.y, myCls === 'archer' ? '#e8d9a0' : '#c89bff', Math.min(600, Math.hypot(target.x - me.x, target.y - me.y) / 520 * 1000), myCls === 'archer' ? 4 : 8);
-    sfx(myCls === 'archer' ? 'swing' : 'potion');
+    sfx(myCls === 'archer' ? 'shoot' : 'cast');
   }
   if (!target) return;
   const crit = Math.random() < totalCrit();
@@ -1174,26 +1179,72 @@ function unequip(slot) {
   }).catch(() => {});
 }
 
-function sellItem(idx) {
+function openEnhModal(scrollRaw, targetRaw) {
+  closeEnhModal();
+  const [sb] = splitStack(scrollRaw);
+  const sc = getItem(sb);
+  const t = getItem(targetRaw);
+  if (!sc.scroll || t.heal || t.mana || t.scroll) return;
+  const lv = t._lv || 0;
+  const rMul = t.rarity === 'unique' ? 4 : t.rarity === 'legend' ? 3 : t.rarity === 'epic' ? 2 : 1;
+  const cost = 300 * (lv + 1) * rMul;
+  const grade = sc.grade || 'normal';
+  const chance = Math.round(ENH_CHANCE[grade](lv));
+  const [, tcnt] = splitStack(targetRaw), [, scnt2] = splitStack(scrollRaw);
+  const gl = document.createElement('div');
+  gl.id = 'enhModal';
+  gl.style.cssText = 'position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,.62);display:flex;align-items:center;justify-content:center;';
+  gl.innerHTML = `<div id="enhBox">
+    <div style="font-size:16px;font-weight:bold;margin-bottom:10px;">🔨 아이템 강화</div>
+    <div style="margin-bottom:4px;">대상: <b style="color:${t.color}">${esc(t.name)}</b>${tcnt > 1 ? ` x${tcnt}` : ''}</div>
+    <div style="margin-bottom:4px;">주문서: <b style="color:${RARITY_COLOR[sc.rarity] || '#ccc'}">${esc(sc.name)}</b>${scnt2 > 1 ? ` (보유 ${scnt2})` : ''}</div>
+    <div style="margin:8px 0;padding:8px;background:#1c2536;border-radius:8px;">
+      <div>성공률 <b style="color:${chance >= 70 ? '#2ecc71' : chance >= 40 ? '#f39c12' : '#e74c3c'}">${chance}%</b></div>
+      <div>골드 <b style="color:#ffd700">${cost.toLocaleString()} G</b></div>
+      <div style="color:#ff9b9b;">실패 시 <b>아이템 파괴!</b></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <button id="enhGo" style="flex:1;padding:9px 0;font-weight:bold;background:linear-gradient(#c9a227,#8f6f14);color:#fff;border-radius:6px;">강화 실행</button>
+      <button id="enhNo" style="flex:1;padding:9px 0;background:#243049;color:#aab;border-radius:6px;">취소</button>
+    </div>
+  </div>`;
+  document.body.appendChild(gl);
+  gl.addEventListener('pointerdown', e => { if (e.target === gl) closeEnhModal(); });
+  $('#enhNo').onclick = closeEnhModal;
+  $('#enhGo').onclick = () => { closeEnhModal(); enhanceItem(targetRaw, grade); };
+}
+function closeEnhModal() { const m = $('enhModal'); if (m) m.remove(); }
+
+const normId = s => { const [b] = splitStack(s); const i = b.indexOf('+'); return i < 0 ? b : b.slice(0, i); };
+function findInvKey(inv, rawId) {
+  for (const [k, v] of Object.entries(inv)) if (v === rawId) return k;
+  const want = normId(rawId);
+  for (const [k, v] of Object.entries(inv)) if (normId(v) === want) return k;
+  return null;
+}
+
+function sellItem(itemId) {
   runTransaction(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return null;
     const p = snap.data();
     const inv = { ...(p.inv || {}) };
     const eq = { ...(p.equipped || {}) };
-    const id = inv[String(idx)];
-    if (!id) return null;
+    const key = findInvKey(inv, itemId);
+    if (!key) return 'gone';
+    const id = inv[key];
     const it = getItem(id);
     const [, cnt] = splitStack(id);
     let equippedSlot = null;
     for (const [sl, eid] of Object.entries(eq)) if (eid === id) equippedSlot = sl;
     const gain = sellPrice(id);
-    delete inv[String(idx)];
+    delete inv[key];
     if (equippedSlot) delete eq[equippedSlot];
     tx.update(meRef, { gold: (p.gold || 0) + gain, inv: sortInvMap(inv), equipped: eq });
     return { gain, name: it.name, cnt };
   }).then(r => {
     if (!r) return;
+    if (r === 'gone') { toast('이미 사라진 아이템입니다'); return; }
     sfx('coin');
     toast(`💰 <b style="color:#ffd700">${esc(r.name)}</b>${r.cnt > 1 ? ` x${r.cnt}` : ''} 판매 → <b style="color:#ffd700">+${r.gain.toLocaleString()} G</b>`);
     renderInvUI();
@@ -1223,11 +1274,10 @@ function countScrolls() {
 let enhMenuEl = null;
 function closeEnhMenu() { if (enhMenuEl) { enhMenuEl.remove(); enhMenuEl = null; document.removeEventListener('pointerdown', onEnhAway); } }
 function onEnhAway(e) { if (enhMenuEl && !enhMenuEl.contains(e.target)) closeEnhMenu(); }
-function showEnhMenu(x, y, idx) {
+function showEnhMenu(x, y, rawId) {
   closeEnhMenu();
   const c = countScrolls();
-  const raw = (me.inv || {})[idx] || '';
-  const it0 = getItem(raw);
+  const it0 = getItem(rawId);
   const isConsumable = !!(it0.heal || it0.mana || it0.scroll);
   const lv = it0._lv || 0;
   enhMenuEl = document.createElement('div');
@@ -1237,13 +1287,13 @@ function showEnhMenu(x, y, idx) {
     b.style.cssText = `display:flex;justify-content:space-between;gap:12px;padding:7px 10px;font-size:13px;background:${c[g] ? '#1c2536' : '#161d2a'};color:${c[g] ? col : '#556'};border:1px solid #2b3547;border-radius:6px;cursor:${c[g] ? 'pointer' : 'not-allowed'};text-align:left;`;
     b.innerHTML = `<span>${label}</span><span style="color:#889">${c[g]}개 · ${Math.round(ENH_CHANCE[g](lv))}%</span>`;
     b.disabled = !c[g];
-    b.onclick = () => { closeEnhMenu(); enhanceItem(idx, g); };
+    b.onclick = () => { closeEnhMenu(); enhanceItem(rawId, g); };
     enhMenuEl.appendChild(b);
   }
   const sb = document.createElement('button');
   sb.style.cssText = 'display:flex;justify-content:space-between;gap:12px;padding:7px 10px;font-size:13px;background:#2a1620;color:#ff9b9b;border:1px solid #4a2530;border-radius:6px;cursor:pointer;text-align:left;';
-  sb.innerHTML = `<span>💰 판매${!isConsumable ? '' : ''}</span><span style="color:#889">+${sellPrice(raw).toLocaleString()} G</span>`;
-  sb.onclick = () => { closeEnhMenu(); sellItem(idx); };
+  sb.innerHTML = `<span>💰 판매</span><span style="color:#889">+${sellPrice(rawId).toLocaleString()} G</span>`;
+  sb.onclick = () => { closeEnhMenu(); sellItem(rawId); };
   enhMenuEl.appendChild(sb);
   document.body.appendChild(enhMenuEl);
   const r = enhMenuEl.getBoundingClientRect();
@@ -1252,15 +1302,16 @@ function showEnhMenu(x, y, idx) {
   setTimeout(() => document.addEventListener('pointerdown', onEnhAway), 0);
 }
 
-function enhanceItem(idx, grade = 'normal') {
+function enhanceItem(itemId, grade = 'normal') {
   runTransaction(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return null;
     const p = snap.data();
     const inv = { ...(p.inv || {}) };
     const eq = { ...(p.equipped || {}) };
-    const id = inv[String(idx)];
-    if (!id) return null;
+    const key = findInvKey(inv, itemId);
+    if (!key) return 'gone';
+    const id = inv[key];
     const it = getItem(id);
     if (it.heal || it.mana || it.scroll) return 'no';
     let scIdx = null, scBase = null, scCnt = 0;
@@ -1281,20 +1332,22 @@ function enhanceItem(idx, grade = 'normal') {
     let result;
     if (Math.random() * 100 < chance) {
       const nid = it._base + '+' + (lv + 1);
-      if (equippedSlot) eq[equippedSlot] = nid; else inv[String(idx)] = nid;
+      if (equippedSlot) eq[equippedSlot] = nid; else inv[key] = nid;
       tx.update(meRef, { gold: p.gold - cost, inv: sortInvMap(inv), equipped: eq });
       result = { ok: true, nid };
     } else {
-      if (equippedSlot) delete eq[equippedSlot]; else delete inv[String(idx)];
+      if (equippedSlot) delete eq[equippedSlot]; else delete inv[key];
       tx.update(meRef, { gold: p.gold - cost, inv: sortInvMap(inv), equipped: eq });
       result = { ok: false };
     }
     return result;
   }).then(r => {
     if (!r) return;
+    if (r === 'gone') { toast('아이템을 찾을 수 없습니다'); renderInvUI(); return; }
     if (r === 'poor') { toast('💰 골드가 부족합니다'); return; }
     if (r === 'noscroll') { toast('📜 강화 주문서가 없습니다'); return; }
-    if (r === 'no' || r === null) return;
+    if (r === 'no') return;
+    if (r === null) { toast('강화에 실패했습니다 — 다시 시도하세요'); return; }
     if (r.ok) {
       sfx('levelup');
       toast(`🔨 강화 성공! <b style="color:${RARITY_COLOR[getItem(r.nid).rarity]}">${getItem(r.nid).name}</b>`, 'sysq');
@@ -1327,8 +1380,38 @@ function renderInvUI() {
       div.dataset.r = it.rarity || 'common';
       div.innerHTML = `<span class="ic">${itemIcon(itemId)}</span>` + (scnt > 1 ? `<span class="scnt">${scnt}</span>` : '');
       div.title = `${it.name} [${RARITY_KR[it.rarity] || '일반'}]\n${itemStat(it) || '소모품'}\n좌클릭: 장착/사용 · 우클릭: 강화/판매`;
-      div.onclick = () => { if (it.scroll) { toast('📜 강화할 아이템을 우클릭하세요'); return; } slotClick(String(i)); };
-      div.oncontextmenu = e => { e.preventDefault(); showEnhMenu(e.clientX, e.clientY, String(i)); };
+      div.onclick = () => { if (it.scroll) { toast('📜 주문서를 장비 위로 끌어다 놓으세요'); return; } slotClick(String(i)); };
+      div.oncontextmenu = e => { e.preventDefault(); showEnhMenu(e.clientX, e.clientY, itemId); };
+      let lpT = null;
+      div.addEventListener('touchstart', e => {
+        const t = e.changedTouches[0];
+        clearTimeout(lpT);
+        lpT = setTimeout(() => { lpT = null; showEnhMenu(t.clientX, t.clientY, itemId); }, 450);
+      }, { passive: true });
+      const cancelLp = () => clearTimeout(lpT);
+      div.addEventListener('touchmove', cancelLp, { passive: true });
+      div.addEventListener('touchend', e => {
+        if (lpT === null) e.preventDefault();
+        cancelLp();
+      });
+      if (it.heal || it.mana || it.scroll) {
+        div.draggable = true;
+        div.ondragstart = e => {
+          e.dataTransfer.setData('text/plain', itemId);
+          e.dataTransfer.effectAllowed = 'copy';
+          requestAnimationFrame(() => div.classList.add('dragging'));
+        };
+        div.ondragend = () => div.classList.remove('dragging');
+      } else {
+        div.ondragover = e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; div.classList.add('dropok'); };
+        div.ondragleave = () => div.classList.remove('dropok');
+        div.ondrop = e => {
+          e.preventDefault();
+          div.classList.remove('dropok');
+          const src = e.dataTransfer.getData('text/plain');
+          if (src && getItem(splitStack(src)[0]).scroll) openEnhModal(src, itemId);
+        };
+      }
     }
     grid.appendChild(div);
   }
@@ -2291,6 +2374,25 @@ function drawHeldWeapon(cls, wid) {
   }
 }
 
+const HEAD_KEYS = { warrior: ['H', 'h'], archer: ['C', 'c'], rogue: ['K', 'k'], mage: ['P', 'p'] };
+function eqSpriteName(cls, eq) {
+  const a = eq.armor ? getItem(eq.armor) : null;
+  const h = eq.helmet ? getItem(eq.helmet) : null;
+  const p = eq.pants ? getItem(eq.pants) : null;
+  if (!a && !h && !p) return cls;
+  const key = `${cls}|w${a?.color || ''}|h${h?.color || ''}|p${p?.color || ''}`;
+  if (!SPRITE_DEFS[key]) {
+    const bp = SPRITE_DEFS[cls];
+    const pal = { ...bp.pal };
+    if (a) { pal.A = a.color; pal.D = shade(a.color, .55); }
+    if (p) { pal.L = shade(p.color, 1.05); pal.l = shade(p.color, .45); }
+    const hk = HEAD_KEYS[cls];
+    if (h && hk && pal[hk[0]]) { pal[hk[0]] = h.color; pal[hk[1]] = shade(h.color, .55); }
+    SPRITE_DEFS[key] = { pal, rows: bp.rows };
+  }
+  return key;
+}
+
 function drawChar(o) {
   const now = Date.now();
   const moving = o.moving && !o.dead;
@@ -2307,6 +2409,7 @@ function drawChar(o) {
   }
 
   const sc = 4.3, sw2 = 12 * sc, sh2 = 15 * sc;
+  const eq = o.equipped || {};
   ctx.save();
   ctx.translate(o.x, o.y);
   if (o.dead) { ctx.globalAlpha = .45; ctx.rotate(Math.PI / 2); }
@@ -2314,32 +2417,8 @@ function drawChar(o) {
   if (flip) ctx.scale(-1, 1);
   ctx.imageSmoothingEnabled = false;
   const sy0 = -sh2 + 10 - bobY;
-  ctx.drawImage(buildSprite(o.cls || 'warrior').cv, -sw2 / 2, sy0, sw2, sh2);
-  const eq = o.equipped || {};
+  ctx.drawImage(buildSprite(eqSpriteName(o.cls || 'warrior', eq)).cv, -sw2 / 2, sy0, sw2, sh2);
   const px = -sw2 / 2;
-  if (eq.helmet) {
-    ctx.fillStyle = getItem(eq.helmet).color;
-    ctx.globalAlpha = .55;
-    ctx.fillRect(px + 1 * sc, sy0 + 1 * sc, 10 * sc, 2.6 * sc);
-    ctx.globalAlpha = 1;
-  }
-  if (eq.armor) {
-    ctx.fillStyle = getItem(eq.armor).color;
-    ctx.globalAlpha = .72;
-    ctx.fillRect(px + 1.2 * sc, sy0 + 7 * sc, 9.6 * sc, 4.6 * sc);
-    ctx.globalAlpha = 1;
-    ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 1.5;
-    ctx.strokeRect(px + 1.2 * sc, sy0 + 7 * sc, 9.6 * sc, 4.6 * sc);
-    ctx.fillStyle = 'rgba(255,255,255,.35)';
-    ctx.fillRect(px + 2.2 * sc, sy0 + 7.4 * sc, 7.6 * sc, 1.2 * sc);
-  }
-  if (eq.pants) {
-    ctx.fillStyle = getItem(eq.pants).color;
-    ctx.globalAlpha = .8;
-    ctx.fillRect(px + 1.6 * sc, sy0 + 11.6 * sc, 3.6 * sc, 2.4 * sc);
-    ctx.fillRect(px + 6.8 * sc, sy0 + 11.6 * sc, 3.6 * sc, 2.4 * sc);
-    ctx.globalAlpha = 1;
-  }
   if (eq.boots) {
     ctx.fillStyle = getItem(eq.boots).color;
     ctx.fillRect(px + 1.6 * sc, sy0 + 13 * sc, 3.8 * sc, 1.6 * sc);
@@ -2686,6 +2765,16 @@ function draw(now) {
 
   for (const s of sims) {
     if (!s.alive || s.map !== myMap()) continue;
+    if (s.id === attackTargetSimId) {
+      const r0 = sdef(s).r;
+      const sel = .55 + Math.sin(now / 160) * .3;
+      ctx.strokeStyle = `rgba(255,215,0,${sel})`;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.ellipse(s.x, s.y + 5, r0 * 1.45 + 4, (r0 * 1.45 + 4) * .52, 0, 0, 7); ctx.stroke();
+      ctx.fillStyle = 'rgba(255,215,0,.9)';
+      const ay = s.y - r0 * 1.6 - 14 - Math.sin(now / 200) * 2;
+      ctx.beginPath(); ctx.moveTo(s.x, ay + 7); ctx.lineTo(s.x - 5, ay); ctx.lineTo(s.x + 5, ay); ctx.closePath(); ctx.fill();
+    }
     const pk = s.punchT && now - s.punchT < 130 ? 1 + (1 - (now - s.punchT) / 130) * .17 : 1;
     ctx.save();
     if (pk !== 1) { ctx.translate(s.x, s.y); ctx.scale(pk, pk); ctx.translate(-s.x, -s.y); }
@@ -2815,6 +2904,16 @@ function draw(now) {
     mctx.fillRect(me.x * k - 2, me.y * k - 2, 4, 4);
     mctx.strokeStyle = 'rgba(255,255,255,.6)';
     mctx.strokeRect(cam.x * k - 48, cam.y * k - 36, 96, 72);
+  }
+
+  const hpR = (me.hp || 0) / maxHpOf();
+  if (!me.dead && hpR < .35) {
+    const vp = (.3 + Math.sin(now / 260) * .18) * clampN((.35 - hpR) / .35, 0, 1);
+    const vg = ctx.createRadialGradient(cv.width / 2, cv.height / 2, cv.height * .28, cv.width / 2, cv.height / 2, cv.height * .72);
+    vg.addColorStop(0, 'rgba(180,0,0,0)');
+    vg.addColorStop(1, `rgba(180,0,0,${vp})`);
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, cv.width, cv.height);
   }
 }
 
@@ -2946,6 +3045,12 @@ $('dexBtn').onclick = () => { sfx('click'); toggleDex(); };
 document.querySelectorAll('.stbtn').forEach(b => b.onclick = () => addStat(b.dataset.st));
 $('shopBtn').onclick = () => { sfx('click'); togglePanel('shopPanel'); };
 $('questBtn').onclick = () => { sfx('click'); togglePanel('questPanel'); };
+$('logoutBtn').onclick = async () => {
+  try { await signOut(auth); } catch (e) {}
+  location.reload();
+};
+$('hb1').onclick = () => useSkill(1);
+$('hb2').onclick = () => useSkill(2);
 document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => $(b.dataset.close).classList.remove('open'));
 
 addEventListener('keydown', e => {
@@ -2993,10 +3098,53 @@ addEventListener('mousemove', e => {
 });
 addEventListener('mouseup', () => mouseDown = false);
 
+/* ================= 터치 (모바일) ================= */
+let touchDownId = null;
+function tapWorld(x, y) {
+  if (!ready || me.dead || document.activeElement === chatInput) return;
+  chatInput.blur();
+  const w = screenToWorld(x, y);
+  const s = sims.find(v => v.alive && v.map === myMap() && Math.hypot(v.x - w.x, v.y - w.y) < v.def.r + 22);
+  if (s) {
+    dest = null;
+    attackTargetSimId = s.id;
+    if (Math.hypot(s.x - me.x, s.y - me.y) <= cdef().range * 1.05) tryAttack(Date.now(), s);
+  } else {
+    attackTargetSimId = null;
+    dest = w;
+  }
+}
+cv.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  touchDownId = t.identifier;
+  tapWorld(t.clientX, t.clientY);
+}, { passive: false });
+cv.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (attackTargetSimId != null) return;
+  const t = [...e.changedTouches].find(c => c.identifier === touchDownId);
+  if (t) dest = screenToWorld(t.clientX, t.clientY);
+}, { passive: false });
+for (const ev of ['touchend', 'touchcancel']) cv.addEventListener(ev, e => {
+  e.preventDefault();
+  if ([...e.changedTouches].some(c => c.identifier === touchDownId)) touchDownId = null;
+}, { passive: false });
+addEventListener('pointerdown', function unlockAudio() {
+  try { if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); } catch (e) {}
+}, { once: true });
+
 /* ================= 메인 루프 ================= */
 let lastT = 0;
+let lastLoopErr = '';
 function loop(t) {
   requestAnimationFrame(loop);
+  try { loopBody(t); } catch (err) {
+    const m = String(err && err.message || err);
+    if (m !== lastLoopErr) { lastLoopErr = m; console.error('[loop]', err); }
+  }
+}
+function loopBody(t) {
   const now = Date.now();
   const dt = Math.min(50, t - lastT);
   lastT = t;
@@ -3052,7 +3200,7 @@ function loop(t) {
   if (now - lastPosWrite > 150 || (hpDirty && now - lastPosWrite > 400)) {
     lastPosWrite = now;
     hpDirty = false;
-updateDoc(meRef, { x: me.x, y: me.y, hp: me.hp, ...(me.mp != null ? { mp: Math.round(me.mp) } : {}), power: totalAtk(), lastSeen: now }).catch(() => {});
+updateDoc(meRef, { x: me.x, y: me.y, hp: me.hp, ...(me.mp != null ? { mp: Math.round(me.mp) } : {}), ...(me.lastHurtAt ? { lastHurtAt: Math.round(me.lastHurtAt) } : {}), power: totalAtk(), lastSeen: now }).catch(() => {});
   }
 
   if (!me.dead && (me.mp ?? 0) < maxMpOf()) {
@@ -3060,7 +3208,7 @@ updateDoc(meRef, { x: me.x, y: me.y, hp: me.hp, ...(me.mp != null ? { mp: Math.r
     hpDirty = true;
   }
 
-  if (!me.dead && now - (me.lastHurtAt || 0) > 4000 && me.hp < maxHpOf()) {
+  if (!me.dead && now - loginAt > 5000 && now - (me.lastHurtAt || 0) > 4000 && me.hp < maxHpOf()) {
     me.hp = Math.min(maxHpOf(), me.hp + maxHpOf() * .02 * dt / 1000);
     hpDirty = true;
   }
@@ -3351,6 +3499,7 @@ async function init() {
   watchRank();
 
   ready = true;
+  loginAt = Date.now();
   window.__DBG = () => ({ page: myPage(), me: { x: Math.round(me.x), y: Math.round(me.y), lv: me.lv, map: me.map, bag: me.bagSize, conq: JSON.stringify(me.conq || {}) },
     sims: sims.filter(s => s.alive).slice(0, 20).map(s => ({ id: s.id, x: Math.round(s.x), y: Math.round(s.y), d: Math.round(Math.hypot(s.x - me.x, s.y - me.y)), boss: s.boss, lv: simLevel(s) })) });
   $('loading').style.display = 'none';
@@ -3360,6 +3509,13 @@ async function init() {
 }
 
 buildWorld();
+
+document.querySelectorAll('#invPanel h3.tog').forEach(h => {
+  const g = $(h.dataset.tog);
+  if (innerWidth <= 640) { g.classList.add('collapsed'); h.classList.add('closed'); }
+  h.onclick = () => { g.classList.toggle('collapsed'); h.classList.toggle('closed'); sfx('click'); };
+});
+
 init().catch(err => {
   $('loading').textContent = '초기화 실패: ' + err.message +
     '\n\nFirebase 콘솔에서 확인하세요:\n1. Authentication > Google 로그인 사용\n2. Cloud Firestore 생성\n3. 보안 규칙에서 로그인 사용자 읽기/쓰기 허용';

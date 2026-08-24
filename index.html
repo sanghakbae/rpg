@@ -185,6 +185,15 @@
   #wmClose { margin-top: 12px; padding: 8px 22px; background: #2b3547; color: #ccc; border-radius: 6px; font-size: 13px; }
   #wmClose:hover { background: #3a4a63; color: #fff; }
 
+  .dexrow { padding: 8px 10px; border-radius: 7px; margin-bottom: 6px; background: rgba(255,255,255,.04); border-left: 3px solid #445; }
+  .dexrow.dexconq { border-left-color: #2ecc71; }
+  .dexrow.dexcur { border-left-color: #ffd700; background: rgba(255,215,0,.07); }
+  .dexpage { color: #fff; font-size: 12.5px; font-weight: bold; margin-bottom: 4px; }
+  .dexok { color: #2ecc71; font-size: 10px; margin-left: 6px; }
+  .dexmons { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11px; color: #9ab; }
+  .dexmons .dexboss { color: #ff8a8a; font-weight: bold; }
+  .dexmons .dexuniq { color: #c9a0ff; }
+
   /* 푸터 + 개인정보처리방침 */
   #footer { position: fixed; bottom: 0; left: 0; right: 0; height: 20px; z-index: 8;
     background: rgba(5,8,14,.75); border-top: 1px solid rgba(255,255,255,.08);
@@ -237,6 +246,7 @@
     <button id="shopBtn">스킬샵 [B]</button>
     <button id="questBtn">퀘스트 [Q]</button>
     <button id="mapBtn">세계지도 [V]</button>
+    <button id="dexBtn">도감 [C]</button>
   </div>
 </div>
 
@@ -288,6 +298,11 @@
   <div style="font-size:11px;color:#889;">즉시 부활하면 자리에서 일어납니다</div>
 </div>
 
+<div id="dexPanel" class="sidepanel panel" style="right:190px;width:360px;">
+  <header><b>📖 몬스터 도감</b><button data-close="dexPanel">✕</button></header>
+  <div class="spbody" id="dexBody"></div>
+</div>
+
 <div id="toasts"></div>
 
 <div id="rankPanel" class="panel">
@@ -335,8 +350,8 @@
   </div>
 </div>
 
-<script src="firebase-config.js?v=15"></script>
-<script type="module" src="game.js?v=15"></script>
+<script src="firebase-config.js?v=16"></script>
+<script type="module" src="game.js?v=16"></script>
 <script>
   document.getElementById('privacyLink').onclick = () => document.getElementById('privacyModal').classList.add('open');
   document.getElementById('privacyClose').onclick = () => document.getElementById('privacyModal').classList.remove('open');

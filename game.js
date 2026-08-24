@@ -503,11 +503,16 @@ function hitFlashOverlay(c, s, now, d) {
 
 /* ================= 실시간 구독 ================= */
 let unsubMon = null;
+let pageRetryT = 0;
 function watchMonsters() {
   if (unsubMon) unsubMon();
   sims = [];
   othersPrev = {};
   unsubMon = onSnapshot(query(collection(db, 'monsters'), where('page', '==', myPage())), snap => {
+    if (snap.empty && Date.now() - pageRetryT > 8000) {
+      pageRetryT = Date.now();
+      ensurePage(pageNum()).catch(() => {});
+    }
     snap.forEach(dc => {
       const d = dc.data();
       let s = sims.find(x => x.id === dc.id);
@@ -571,11 +576,12 @@ function watchChat() {
 
 /* ================= 성장 ================= */
 function levelCalc(p, expGain) {
-  let lv = p.lv || 1, exp = (p.exp || 0) + expGain, leveled = 0;
-  while (lv < 100 && exp >= expNeed(lv)) { exp -= expNeed(lv); lv++; leveled++; }
-  const upd = { exp, lv };
-  if (leveled) upd.statPts = (p.statPts || 0) + 3 * leveled;
-  return { upd, leveled, nlv: lv };
+  return { upd: { exp: (p.exp || 0) + expGain }, leveled: 0, nlv: p.lv || 1 };
+}
+function simLevel(s) {
+  if (!s.page) return 1;
+  if (s.page.startsWith('p')) return +s.page.slice(1) || 1;
+  return s.page === 'm2' ? 2 : 1;
 }
 
 async function gainExp(expGain, kill = null) {
@@ -649,10 +655,24 @@ async function handleKill(sim) {
   if (sim.boss && sim.page && sim.page.startsWith('p')) {
     const pn2 = +sim.page.slice(1);
     if (!(me.conq || {})[pn2]) {
-      updateDoc(meRef, { ['conq.' + pn2]: true }).catch(() => {});
-      toast(`👑 ${pn2}구역 정복! ${pn2 < MAX_PAGE ? (pn2 + 1) + '구역 개방' : '모든 지역 정복 완료!'}`, 'sysq');
-      sysMsg(`👑 ${myName}님이 ${pn2}구역을 정복했습니다!`, 'q');
+      runTransaction(db, async tx => {
+        const snap = await tx.get(meRef);
+        if (!snap.exists()) return;
+        const p = snap.data();
+        tx.update(meRef, {
+          ['conq.' + pn2]: true,
+          lv: Math.min(100, (p.lv || 1) + 1),
+          statPts: (p.statPts || 0) + 3,
+        });
+      }).catch(() => {});
+      me.hp = maxHpOf();
+      updateDoc(meRef, { hp: me.hp }).catch(() => {});
+      toast(`👑 ${pn2}구역 정복! <b>레벨 +1</b> · 스탯 포인트 +3${pn2 < MAX_PAGE ? ' · ' + (pn2 + 1) + '구역 개방' : ' · 전 지역 정복 완료!'}`, 'sysq');
+      sysMsg(`👑 ${myName}님이 ${pn2}구역을 정복했습니다! (Lv +1)`, 'q');
       sfx('levelup');
+      rings.push({ x: me.x, y: me.y, r: 100, t: 0, max: 700, color: '255,215,0' });
+      fxSparks(me.x, me.y, 24, '#ffd700', 200);
+      float(me.x, me.y - 52, 'LEVEL UP!', '#ffd700', true);
     }
   }
   if (sim.uniq) {
@@ -668,6 +688,7 @@ async function handleKill(sim) {
 async function attackResult(sim, dmg, crit) {
   const r = await dealDamage(sim, dmg);
   if (r === null || r === undefined) return;
+  sim.angry = true;
   const kdx = sim.x - me.x, kdy = sim.y - me.y, kd = Math.hypot(kdx, kdy) || 1;
   sim.kbx = kdx / kd * (crit ? 7 : 4.2);
   sim.kby = kdy / kd * (crit ? 7 : 4.2);
@@ -1175,9 +1196,12 @@ function updateSims(now, dt) {
     }
     if (s.map !== myMap()) continue;
     let tgt = null, best = Infinity;
-    for (const t of targets) {
-      const d = Math.hypot(t.x - s.x, t.y - s.y);
-      if (d < s.def.aggro && d < best) { best = d; tgt = t; }
+    const canAggro = s.angry || simLevel(s) >= (me.lv || 1);
+    if (canAggro) {
+      for (const t of targets) {
+        const d = Math.hypot(t.x - s.x, t.y - s.y);
+        if (d < sdef(s).aggro && d < best) { best = d; tgt = t; }
+      }
     }
     if (tgt) {
       if (best > s.def.range) {
@@ -2058,7 +2082,7 @@ function drawChar(o) {
     ctx.beginPath(); ctx.ellipse(o.x, o.y + 11, 18, 7, 0, 0, 7); ctx.stroke();
   }
 
-  const sc = 4, sw2 = 12 * sc, sh2 = 15 * sc;
+  const sc = 4.3, sw2 = 12 * sc, sh2 = 15 * sc;
   ctx.save();
   ctx.translate(o.x, o.y);
   if (o.dead) { ctx.globalAlpha = .45; ctx.rotate(Math.PI / 2); }
@@ -2165,7 +2189,7 @@ function mobUI(s, wide) {
   ctx.textAlign = 'center';
   ctx.fillStyle = isU ? '#ff8a5c' : isBoss ? '#ffb8b8' : 'rgba(255,255,255,.88)';
   ctx.shadowColor = 'rgba(0,0,0,.8)'; ctx.shadowBlur = 3;
-  ctx.fillText(d2.name, s.x, s.y + r + (wide ? 24 : 15));
+  ctx.fillText(`Lv${simLevel(s)} ${d2.name}`, s.x, s.y + r + (wide ? 24 : 15));
   ctx.shadowBlur = 0;
 }
 
@@ -2185,7 +2209,7 @@ function drawSlime(s, now) {
   ctx.beginPath(); ctx.ellipse(s.x, s.y + 10, r0(s) * .95, r0(s) * .36, 0, 0, 7); ctx.fill();
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  drawSprite(s.sprId || 'slime', s.x, s.y + 9, s.uniq ? 5 : 4, { squashX: 1 + wob * .07, squashY: 1 - wob * .07, flash, bob: s.movingF ? Math.abs(Math.sin(now / 140 + s.blink)) * 3 : 0 });
+  drawSprite(s.sprId || 'slime', s.x, s.y + 9, s.uniq ? 5.6 : 4.5, { squashX: 1 + wob * .07, squashY: 1 - wob * .07, flash, bob: s.movingF ? Math.abs(Math.sin(now / 140 + s.blink)) * 3 : 0 });
   mobUI(s, false);
 }
 function r0(s) { return sdef(s).r; }
@@ -2195,7 +2219,7 @@ function drawGoblin(s, now) {
   ctx.beginPath(); ctx.ellipse(s.x, s.y + 12, r0(s) * .95, r0(s) * .36, 0, 0, 7); ctx.fill();
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  drawSprite(s.sprId || 'goblin', s.x, s.y + 11, s.uniq ? 5 : 4, { flash, bob: s.movingF ? Math.abs(Math.sin(now / 110)) * 3 : 0 });
+  drawSprite(s.sprId || 'goblin', s.x, s.y + 11, s.uniq ? 5.6 : 4.5, { flash, bob: s.movingF ? Math.abs(Math.sin(now / 110)) * 3 : 0 });
   mobUI(s, false);
 }
 
@@ -2205,7 +2229,7 @@ function drawWolf(s, now) {
   ctx.beginPath(); ctx.ellipse(s.x, s.y + 13, r0(s) * 1.2, r0(s) * .32, 0, 0, 7); ctx.fill();
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  drawSprite(s.sprId || 'wolf', s.x, s.y + 12, s.uniq ? 5 : 4, { flip: flip < 0, flash, bob: s.movingF ? Math.abs(Math.sin(now / 75)) * 2 : 0 });
+  drawSprite(s.sprId || 'wolf', s.x, s.y + 12, s.uniq ? 5.6 : 4.5, { flip: flip < 0, flash, bob: s.movingF ? Math.abs(Math.sin(now / 75)) * 2 : 0 });
   mobUI(s, false);
 }
 
@@ -2214,7 +2238,7 @@ function drawSkeleton(s, now) {
   ctx.beginPath(); ctx.ellipse(s.x, s.y + 12, r0(s) * .9, r0(s) * .34, 0, 0, 7); ctx.fill();
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  drawSprite(s.sprId || 'skeleton', s.x, s.y + 11, s.uniq ? 5.5 : 4.4, { flash, bob: s.movingF ? Math.abs(Math.sin(now / 120)) * 3 : 0 });
+  drawSprite(s.sprId || 'skeleton', s.x, s.y + 11, s.uniq ? 6.2 : 5, { flash, bob: s.movingF ? Math.abs(Math.sin(now / 120)) * 3 : 0 });
   mobUI(s, false);
 }
 
@@ -2238,7 +2262,7 @@ function drawLich(s, now) {
   ctx.beginPath(); ctx.ellipse(s.x, s.y + 14, r0(s) * .8, r0(s) * .3, 0, 0, 7); ctx.fill();
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  drawSprite(s.sprId || 'lich', s.x, s.y + 16 - fl, s.uniq ? 6 : 5, { flash });
+  drawSprite(s.sprId || 'lich', s.x, s.y + 16 - fl, s.uniq ? 6.6 : 5.5, { flash });
   for (let i = 0; i < 2; i++) {
     const a = now / 400 + i * Math.PI;
     ctx.fillStyle = '#8b6bff';
@@ -2277,7 +2301,7 @@ function drawBoss(s, now) {
   const swing = s.swingT && now - s.swingT < 320 ? (now - s.swingT) / 320 : -1;
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  drawSprite(s.sprId || 'orc', s.x, s.y + 16, s.uniq ? 6 : 5, { flash, bob: Math.sin(now / 300) * 2 });
+  drawSprite(s.sprId || 'orc', s.x, s.y + 16, s.uniq ? 6.6 : 5.5, { flash, bob: Math.sin(now / 300) * 2 });
 
   ctx.save();
   ctx.translate(s.x + r * .78, s.y - r * .28);
@@ -2588,6 +2612,32 @@ chatInput.addEventListener('keydown', e => {
   }
 });
 
+function toggleDex() {
+  const el = $('dexPanel');
+  const opening = !el.classList.contains('open');
+  document.querySelectorAll('.sidepanel').forEach(p => p.classList.remove('open'));
+  if (opening) { el.classList.add('open'); renderDex(); }
+}
+function renderDex() {
+  const body = $('dexBody');
+  let html = '';
+  for (let n = 1; n <= MAX_PAGE; n++) {
+    const pd = pageDef(n);
+    const conq = (me.conq || {})[n];
+    const cur = n === pageNum();
+    html += `<div class="dexrow ${conq ? 'dexconq' : ''} ${cur ? 'dexcur' : ''}">
+      <div class="dexpage">${conq ? '✅' : cur ? '📍' : '🔒'} ${pd.name} ${conq ? '<span class="dexok">정복 완료</span>' : ''}</div>
+      <div class="dexmons">
+        <span>Lv${n} ${pd.kinds[0].name}</span>
+        <span>Lv${n} ${pd.kinds[1].name}</span>
+        <span class="dexboss">BOSS Lv${n} ${pd.boss.name}</span>
+        <span class="dexuniq">★유니크 10%</span>
+      </div>
+    </div>`;
+  }
+  body.innerHTML = html;
+}
+
 function toggleWorldMap() {
   const el = $('worldMap');
   const open = !el.classList.contains('open');
@@ -2628,6 +2678,7 @@ function togglePanel(id) {
 const rb2 = $('reviveBtn');
 if (rb2) rb2.onclick = reviveNow;
 $('mapBtn').onclick = () => { sfx('click'); toggleWorldMap(); };
+$('dexBtn').onclick = () => { sfx('click'); toggleDex(); };
 document.querySelectorAll('.stbtn').forEach(b => b.onclick = () => addStat(b.dataset.st));
 $('shopBtn').onclick = () => { sfx('click'); togglePanel('shopPanel'); };
 $('questBtn').onclick = () => { sfx('click'); togglePanel('questPanel'); };
@@ -2651,6 +2702,7 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyQ') { sfx('click'); togglePanel('questPanel'); }
   if (e.code === 'KeyM') toggleMute();
   if (e.code === 'KeyV') { sfx('click'); toggleWorldMap(); }
+  if (e.code === 'KeyC') { sfx('click'); toggleDex(); }
 });
 addEventListener('keyup', e => keys[e.code] = false);
 
@@ -2988,6 +3040,7 @@ async function init() {
 
   await ensureWorld();
   await ensureWorldM2();
+  await ensurePage(pageNum());
 
   onSnapshot(meRef, s => {
     if (!s.exists()) return;

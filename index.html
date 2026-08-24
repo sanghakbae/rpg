@@ -35,7 +35,7 @@
     border-radius: 12px; text-align: center; cursor: pointer; transition: all .15s; }
   .ccard:hover { transform: translateY(-4px); border-color: #7788aa; }
   .ccard.sel { border-color: #ffd700; background: rgba(255,215,0,.08); box-shadow: 0 0 20px rgba(255,215,0,.25); }
-  .cicon { font-size: 40px; margin-bottom: 6px; }
+  .cicon { font-size: 46px; margin-bottom: 8px; filter: drop-shadow(0 0 8px rgba(255,215,0,.55)) drop-shadow(0 2px 3px rgba(0,0,0,.8)); }
   .cname { color: #fff; font-size: 18px; font-weight: bold; margin-bottom: 4px; }
   .cweap { color: #ffd700; font-size: 12px; margin-bottom: 8px; }
   .cstat { color: #99a; font-size: 11px; line-height: 1.6; }
@@ -47,38 +47,41 @@
     background: #000; color: #888; z-index: 99; font-size: 15px; white-space: pre-line; text-align: center; padding: 20px; }
 
   /* ===== HUD ===== */
-  #hud { position: fixed; top: 12px; left: 12px; width: 235px; padding: 10px 12px; z-index: 10; font-size: 13px; }
-  #hud .toprow { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
-  #hud .lv { color: #ffd700; font-size: 18px; font-weight: bold; }
-  #hud .cls { font-size: 11px; color: #7fc7ff; }
+  #hud { position: fixed; top: 12px; left: 12px; width: 400px; padding: 14px 16px; z-index: 10; font-size: 15px; }
+  #hud .toprow { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+  #hud .lv { color: #ffd700; font-size: 24px; font-weight: bold; }
+  #hud .cls { font-size: 13px; color: #7fc7ff; }
   #hud .name { color: #fff; flex: 1; overflow: hidden; text-overflow: ellipsis; }
-  .barwrap { height: 14px; background: #222; border-radius: 7px; overflow: hidden; margin-bottom: 5px; border: 1px solid #333; }
+  .barwrap { height: 19px; background: #222; border-radius: 10px; overflow: hidden; margin-bottom: 6px; border: 1px solid #333; }
   .bar { height: 100%; width: 100%; transition: width .2s; }
   #hpbar { background: linear-gradient(#e74c3c, #a93226); }
-  #expbar { background: linear-gradient(#3498db, #21618c); }
-  .bartext { font-size: 11px; color: #ccc; text-align: right; margin-top: -15px; margin-bottom: 6px; position: relative; }
-  #stats { color: #aaa; font-size: 12px; line-height: 1.55; }
+  #mpbar { background: linear-gradient(#3498db, #21618c); }
+  #expbar { background: linear-gradient(#f1c40f, #b7950b); }
+  .bartext { font-size: 13px; color: #ccc; text-align: right; margin-top: -22px; margin-bottom: 8px; position: relative; }
+  #stats { color: #aaa; font-size: 14px; line-height: 1.55; }
   #stats b { color: #eee; }
-  #goldRow { margin-top: 6px; padding-top: 6px; border-top: 1px solid #333; color: #ffd700; font-weight: bold; }
-  #btnRow { display: flex; gap: 6px; margin-top: 8px; }
-  #btnRow button { flex: 1; padding: 7px 0; font-size: 11.5px; font-weight: bold;
+  #goldRow { margin-top: 8px; padding-top: 8px; border-top: 1px solid #333; color: #ffd700; font-weight: bold; }
+  #btnRow { display: flex; gap: 7px; margin-top: 10px; }
+  #btnRow button { flex: 1; padding: 9px 0; font-size: 13px; font-weight: bold;
     background: linear-gradient(#c9a227, #8f6f14); color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.5); }
   #btnRow button:hover { filter: brightness(1.18); }
 
   /* 인벤토리 */
-  #invPanel { position: fixed; left: 12px; top: 218px; width: 235px; padding: 8px; z-index: 10; }
-  #invPanel h3 { font-size: 11px; color: #888; margin: 2px 0 6px 2px; letter-spacing: 1px; }
-  #equipGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-bottom: 8px; }
-  .eslot { height: 36px; background: rgba(255,255,255,.05); border: 1px dashed #555; border-radius: 5px;
+  #invPanel { position: fixed; left: 12px; top: 392px; width: 400px; padding: 12px; z-index: 10; }
+  #invPanel h3 { font-size: 13px; color: #888; margin: 2px 0 8px 2px; letter-spacing: 1px; }
+  #equipGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-bottom: 10px; }
+  .eslot { height: 48px; background: rgba(255,255,255,.05); border: 1px dashed #555; border-radius: 6px;
            display: flex; flex-direction: column; align-items: center; justify-content: center;
-           font-size: 10px; cursor: pointer; text-align: center; line-height: 1.25; overflow: hidden; padding: 0 2px; }
-  .eslot .slbl { font-size: 8px; color: #667; letter-spacing: 1px; }
+           font-size: 12px; cursor: pointer; text-align: center; line-height: 1.25; overflow: hidden; padding: 0 3px; }
+  .eslot .slbl { font-size: 9.5px; color: #667; letter-spacing: 1px; }
   .eslot:hover { border-color: #ffd700; }
-  #invGrid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; }
-  .islot { aspect-ratio: 1; background: rgba(255,255,255,.06); border: 1px solid #444; border-radius: 5px;
+  #invGrid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+  .islot { aspect-ratio: 1; background: rgba(255,255,255,.06); border: 1px solid #444; border-radius: 6px;
     display: flex; align-items: center; justify-content: center; cursor: pointer; position: relative; }
   .islot:hover { border-color: #ffd700; }
-  .islot .ic { font-size: 15px; font-weight: bold; pointer-events: none; }
+  .islot .ic { font-size: 21px; font-weight: bold; pointer-events: none; }
+  .islot .scnt { position: absolute; top: 2px; right: 4px; font-size: 14px; font-weight: bold; color: #ffd700;
+    text-shadow: 0 1px 2px #000, 0 0 5px rgba(0,0,0,.9); pointer-events: none; }
 
   /* 핫바 */
   #hotbar { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; z-index: 10; }
@@ -158,15 +161,16 @@
   .islot .ic { font-size: 17px; }
 
   /* 스탯 포인트 */
-  #statPtsRow { display: none; margin-top: 6px; padding-top: 6px; border-top: 1px solid #333; align-items: center; gap: 4px; flex-wrap: wrap; font-size: 12px; color: #ffd700; }
-  .stbtn { padding: 3px 7px; font-size: 10.5px; font-weight: bold; background: linear-gradient(#c9a227, #8f6f14); color: #fff; border-radius: 4px; }
+  #statPtsRow { display: none; margin-top: 8px; padding-top: 8px; border-top: 1px solid #333; align-items: center; gap: 5px; flex-wrap: wrap; font-size: 13.5px; color: #ffd700; }
+  .stbtn { padding: 4px 9px; font-size: 12px; font-weight: bold; background: linear-gradient(#c9a227, #8f6f14); color: #fff; border-radius: 4px; }
   .stbtn:hover { filter: brightness(1.2); }
 
   /* 랭킹 */
-  #rankPanel { position: fixed; right: 12px; top: 148px; width: 165px; z-index: 10; padding: 8px 10px; }
-  #rankPanel h3 { font-size: 11px; color: #888; margin-bottom: 5px; letter-spacing: 1px; }
-  #rankList { font-size: 11px; line-height: 1.8; color: #ccc; }
+  #rankPanel { position: fixed; right: 12px; top: 148px; width: 185px; z-index: 10; padding: 9px 11px; }
+  #rankPanel h3 { font-size: 11px; color: #aaa; margin-bottom: 6px; letter-spacing: 1px; }
+  #rankList { font-size: 12px; line-height: 1.9; color: #ddd; }
   #rankList div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #rankPanel button:hover { filter: brightness(1.2); }
 
   /* 세계지도 */
   #worldMap { position: fixed; inset: 0; z-index: 60; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.75); }
@@ -232,8 +236,10 @@
   </div>
   <div class="barwrap"><div class="bar" id="hpbar"></div></div>
   <div class="bartext" id="hpText"></div>
+  <div class="barwrap"><div class="bar" id="mpbar"></div></div>
+  <div class="bartext" style="margin-top:-22px;margin-bottom:8px;" id="mpText"></div>
   <div class="barwrap"><div class="bar" id="expbar"></div></div>
-  <div class="bartext" style="margin-top:-13px;margin-bottom:2px;" id="expText"></div>
+  <div class="bartext" style="margin-top:-22px;margin-bottom:3px;" id="expText"></div>
   <div id="stats">공격 <b id="uiAtk"></b> · 방어 <b id="uiDef"></b> · 치명타 <b id="uiCrit"></b>% · 속도 <b id="uiSpd"></b></div>
   <div id="goldRow">💰 <span id="uiGold">0</span> G</div>
   <div id="statPtsRow">✨ 포인트 <b id="uiPts">0</b>
@@ -306,7 +312,12 @@
 <div id="toasts"></div>
 
 <div id="rankPanel" class="panel">
-  <h3>🏆 레벨 랭킹</h3>
+  <h3>🏆 랭킹
+    <span style="float:right;display:flex;gap:3px;">
+      <button id="rankTabLv" style="padding:2px 6px;font-size:9px;border-radius:3px;color:#fff;">레벨</button>
+      <button id="rankTabAtk" style="padding:2px 6px;font-size:9px;border-radius:3px;color:#fff;">공격</button>
+    </span>
+  </h3>
   <div id="rankList"></div>
 </div>
 
@@ -351,7 +362,12 @@
 </div>
 
 <script src="firebase-config.js?v=16"></script>
-<script type="module" src="game.js?v=16"></script>
+<script type="module">
+  import(`./game.js?v=${Date.now()}`).catch(err => {
+    const el = document.getElementById('loading');
+    if (el) { el.style.display = 'flex'; el.textContent = '스크립트 로드 실패: ' + err.message; }
+  });
+</script>
 <script>
   document.getElementById('privacyLink').onclick = () => document.getElementById('privacyModal').classList.add('open');
   document.getElementById('privacyClose').onclick = () => document.getElementById('privacyModal').classList.remove('open');

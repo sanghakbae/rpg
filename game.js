@@ -1,5 +1,5 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
-import { getAuth, signInWithPopup, GoogleAuthProvider, signInAnonymously, connectAuthEmulator } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signInAnonymously, onAuthStateChanged, connectAuthEmulator, setPersistence, browserLocalPersistence } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import {
   getFirestore, doc, setDoc, updateDoc, onSnapshot, collection,
   query, orderBy, limit, addDoc, runTransaction, getDoc, writeBatch, increment, where,
@@ -38,8 +38,8 @@ const MONSTER_TYPES = {
   wolf:   { name: '늑대',   hp: 130, atk: 18, speed: 105, exp: 55, gold: 70, r: 20, color: '#95a5a6', aggro: 260, respawn: 10000, range: 50 },
 };
 const SPAWN_ZONES = [
-  { type: 'slime',  count: 8, cx: 350,  cy: 900, spread: 240 },
-  { type: 'goblin', count: 6, cx: 1100, cy: 800, spread: 220 },
+  { type: 'slime',  count: 8, cx: 540,  cy: 430, spread: 150 },
+  { type: 'goblin', count: 6, cx: 1060, cy: 770, spread: 150 },
   { type: 'wolf',   count: 5, cx: 1250, cy: 250, spread: 180 },
 ];
 const BOSS_DEF = { name: '오크 대족장', hp: 800, atk: 35, speed: 65, exp: 400, gold: 500, r: 42, color: '#c0392b', aggro: 420, respawn: 120000, range: 72 };
@@ -134,6 +134,8 @@ const SLOTS = [
   ['bracelet', '팔찌'], ['necklace', '목걸이'], ['ring', '반지'],
 ];
 const SLOT_ICONS = { weapon: '⚔', armor: '🛡', helmet: '🪖', pants: '👖', gloves: '🧤', boots: '🥾', bracelet: '📿', necklace: '🧿', ring: '💍' };
+const ITEM_ICONS = { potion: '🧪', potion_mp: '💧', potion_hi: '⚗️', potion_mm: '🔵', scroll_normal: '📜', scroll_adv: '📜', scroll_top: '📜' };
+const itemIcon = raw => ITEM_ICONS[splitStack(raw)[0]] || SLOT_ICONS[getItem(raw).slot] || '📦';
 
 const ITEMS = {
   sword_wood:    { name: '나무 검',   slot: 'weapon', atk: 3,  color: '#a0714f', rarity: 'common' },
@@ -160,16 +162,31 @@ const ITEMS = {
   necklace_ruby: { name: '루비 목걸이', slot: 'necklace', atk: 5, color: '#e74c3c', rarity: 'epic' },
   ring_leather:  { name: '가죽 반지', slot: 'ring', crit: .03, color: '#8b5a2b', rarity: 'uncommon' },
   ring_shadow:   { name: '그림자 반지', slot: 'ring', crit: .08, atk: 3, color: '#6c3483', rarity: 'legend' },
-  potion:        { name: 'HP 물약',   heal: 50, color: '#e74c3c', rarity: 'common' },
+  potion:        { name: '체력 물약', heal: 50, color: '#e74c3c', rarity: 'common' },
+  potion_mp:     { name: '마나 물약', mana: 40, color: '#3498db', rarity: 'common' },
+  potion_hi:     { name: '상급 체력 물약', heal: 150, color: '#ff6b81', rarity: 'uncommon' },
+  potion_mm:     { name: '상급 마나 물약', mana: 120, color: '#5dade2', rarity: 'uncommon' },
   crown_slime:   { name: '슬라임 킹의 왕관', slot: 'helmet', def: 8, spd: 10, color: '#2ecc71', rarity: 'unique' },
   club_chief:    { name: '고블린 대장의 몽둥이', slot: 'weapon', atk: 20, color: '#8a6b45', rarity: 'unique' },
   fang_neck:     { name: '알파 늑대의 송곳니', slot: 'necklace', atk: 9, crit: .06, color: '#e8e4d8', rarity: 'unique' },
   knight_sword:  { name: '해골 기사의 검', slot: 'weapon', atk: 24, def: 4, color: '#e8e4d8', rarity: 'unique' },
   orb_lich:      { name: '리치의 마구', slot: 'ring', atk: 12, crit: .10, color: '#8b6bff', rarity: 'unique' },
+  scroll_normal: { name: '일반 강화 주문서', scroll: true, grade: 'normal', color: '#cfd8dc', rarity: 'common' },
+  scroll_adv:    { name: '고급 강화 주문서', scroll: true, grade: 'adv', color: '#64b5f6', rarity: 'rare' },
+  scroll_top:    { name: '최고급 강화 주문서', scroll: true, grade: 'top', color: '#ffd700', rarity: 'legend' },
 };
 
+function splitStack(id) {
+  const s = String(id);
+  const i = s.indexOf('*');
+  return i < 0 ? [s, 1] : [s.slice(0, i), Math.max(1, +s.slice(i + 1) || 1)];
+}
+
 function getItem(id) {
-  const plus = String(id).indexOf('+');
+  id = String(id);
+  const star = id.indexOf('*');
+  if (star >= 0) id = id.slice(0, star);
+  const plus = id.indexOf('+');
   if (plus < 0) return ITEMS[id] || { name: id, rarity: 'common' };
   const baseId = String(id).slice(0, plus);
   const base = ITEMS[baseId];
@@ -186,31 +203,53 @@ function getItem(id) {
 }
 const RARITY_KR = { common: '일반', uncommon: '고급', rare: '희귀', epic: '영웅', legend: '전설', unique: '유니크' };
 const RARITY_COLOR = { common: '#aaa', uncommon: '#2ecc71', rare: '#3498db', epic: '#9b59b6', legend: '#ffd700', unique: '#ff4d4d' };
+const RARITY_RANK = { common: 0, uncommon: 1, rare: 2, epic: 3, legend: 4, unique: 5 };
+const RARITY_SELL = { common: 15, uncommon: 40, rare: 100, epic: 250, legend: 600, unique: 1500 };
+function sellPrice(rawId) {
+  const [bid, cnt] = splitStack(rawId);
+  const it = getItem(bid);
+  let u;
+  if (it.heal) u = Math.round(it.heal * .35);
+  else if (it.mana) u = Math.round(it.mana * .28);
+  else if (it.scroll) u = 25;
+  else {
+    u = Math.round(((RARITY_SELL[it.rarity] || 15) + (it.atk || 0) * 2 + (it.def || 0) * 2 + (it.crit || 0) * 400 + (it.spd || 0)) * (1 + (it._lv || 0) * .6));
+  }
+  return Math.max(1, u) * cnt;
+}
 const DROP_TABLE = {
-  slime:  [['potion', .30], ['sword_wood', .15], ['pants_cloth', .10], ['cap_cloth', .10], ['boots_cloth', .08], ['gloves_cloth', .08], ['bracelet_wood', .06]],
-  goblin: [['potion', .25], ['sword_iron', .12], ['armor_cloth', .12], ['gloves_leather', .10], ['cap_leather', .10], ['pants_leather', .10], ['necklace_copper', .08]],
-  wolf:   [['potion', .30], ['armor_leather', .12], ['boots_leather', .12], ['gloves_leather', .10], ['ring_leather', .08]],
-  boss:   [['sword_flame', 1], ['armor_plate', 1], ['pants_plate', .8], ['crown_gold', .8], ['gloves_steel', .8], ['boots_wind', .8], ['bracelet_jade', .8], ['necklace_ruby', .8], ['ring_shadow', .8]],
-  skeleton: [['potion', .30], ['sword_iron', .10], ['armor_leather', .10], ['boots_wind', .05], ['necklace_ruby', .04]],
-  lich:   [['crown_gold', 1], ['ring_shadow', 1], ['sword_flame', .7], ['armor_plate', .7], ['potion', .5]],
+  slime:  [['potion', .30], ['potion_mp', .12], ['sword_wood', .15], ['pants_cloth', .10], ['cap_cloth', .10], ['boots_cloth', .08], ['gloves_cloth', .08], ['bracelet_wood', .06], ['scroll_normal', .07]],
+  goblin: [['potion', .25], ['potion_mp', .10], ['sword_iron', .12], ['armor_cloth', .12], ['gloves_leather', .10], ['cap_leather', .10], ['pants_leather', .10], ['necklace_copper', .08], ['scroll_normal', .08]],
+  wolf:   [['potion', .30], ['potion_mp', .10], ['potion_hi', .04], ['armor_leather', .12], ['boots_leather', .12], ['gloves_leather', .10], ['ring_leather', .08], ['scroll_normal', .09], ['scroll_adv', .03]],
+  boss:   [['sword_flame', 1], ['armor_plate', 1], ['pants_plate', .8], ['gloves_steel', .8], ['boots_wind', .8], ['bracelet_jade', .8], ['necklace_ruby', .8], ['potion_hi', .8], ['potion_mm', .8], ['scroll_adv', .7], ['scroll_top', .25]],
+  skeleton: [['potion', .30], ['potion_mp', .10], ['potion_hi', .05], ['potion_mm', .04], ['sword_iron', .10], ['armor_leather', .10], ['boots_wind', .05], ['necklace_ruby', .04], ['scroll_normal', .09], ['scroll_adv', .04]],
+  lich:   [['sword_flame', .7], ['armor_plate', .7], ['potion', .5], ['potion_hi', .7], ['potion_mm', .7], ['scroll_adv', 1], ['scroll_top', .5]],
 };
+const LEGEND_POOL = ['crown_gold', 'ring_shadow'];
+const UNIQUE_POOL = ['crown_slime', 'club_chief', 'fang_neck', 'knight_sword', 'orb_lich'];
+const LEGEND_RATE = .01, UNIQUE_RATE = .0001;
 
 const SKILLS = {
-  power_strike: { cls: 'warrior', icon: '💥', name: '강타',         desc: '즉시 강력한 일격 (공격력 400%)',              type: 'active', cd: 6000,  cost: 400 },
+  power_strike: { cls: 'warrior', icon: '💥', name: '강타',         desc: '즉시 강력한 일격 (공격력 400%)',              type: 'active', cd: 6000,  cost: 400, mp: 15 },
   warcry:       { cls: 'warrior', icon: '🔥', name: '전투의 함성',   desc: '공격력 영구 증가 (+3)',                        type: 'passive', atk: 3,   cost: 500 },
   iron_body:    { cls: 'warrior', icon: '🛡', name: '철벽',         desc: '방어력 영구 증가 (+2)',                        type: 'passive', def: 2,   cost: 450 },
-  multishot:    { cls: 'archer',  icon: '🎯', name: '다중 사격',     desc: '주변 모든 적 타격 (공격력 150%)',              type: 'active', cd: 8000,  cost: 450 },
+  multishot:    { cls: 'archer',  icon: '🎯', name: '다중 사격',     desc: '주변 모든 적 타격 (공격력 150%)',              type: 'active', cd: 8000,  cost: 450, mp: 20 },
   sharpshooter: { cls: 'archer',  icon: '🔭', name: '정밀 조준',     desc: '공격력 영구 증가 (+3)',                        type: 'passive', atk: 3,   cost: 500 },
   swift_feet:   { cls: 'archer',  icon: '👟', name: '민첩',         desc: '이동속도 증가 (+15)',                          type: 'passive', spd: 15,  cost: 400 },
-  shadow_strike:{ cls: 'rogue',   icon: '🌑', name: '그림자 일격',   desc: '단일 처형 일격 (공격력 600%, 필중 크리티컬)',  type: 'active', cd: 7000,  cost: 450 },
+  shadow_strike:{ cls: 'rogue',   icon: '🌑', name: '그림자 일격',   desc: '단일 처형 일격 (공격력 600%, 필중 크리티컬)',  type: 'active', cd: 7000,  cost: 450, mp: 20 },
   assassination:{ cls: 'rogue',   icon: '🔪', name: '암살 본능',     desc: '치명타 확률 증가 (+7%p)',                      type: 'passive', crit: .07, cost: 550 },
   swift_feet2:  { cls: 'rogue',   icon: '👟', name: '신속',         desc: '이동속도 증가 (+15)',                          type: 'passive', spd: 15,  cost: 400 },
-  fireball:     { cls: 'mage',    icon: '☄', name: '화염구',       desc: '광역 폭발 피해 (공격력 220%)',                 type: 'active', cd: 9000,  cost: 500 },
+  fireball:     { cls: 'mage',    icon: '☄', name: '화염구',       desc: '광역 폭발 피해 (공격력 220%)',                 type: 'active', cd: 9000,  cost: 500, mp: 25 },
   magic_power:  { cls: 'mage',    icon: '📖', name: '마력 강화',     desc: '공격력 영구 증가 (+4)',                        type: 'passive', atk: 4,   cost: 550 },
   mana_shield:  { cls: 'mage',    icon: '🔮', name: '마나 보호막',   desc: '방어력 영구 증가 (+2)',                        type: 'passive', def: 2,   cost: 450 },
-  heal:         { cls: 'all',     icon: '💚', name: '회복술',       desc: '최대 HP의 40% 즉시 회복',                      type: 'active', cd: 20000, cost: 800 },
+  heal:         { cls: 'all',     icon: '💚', name: '회복술',       desc: '최대 HP의 40% 즉시 회복',                      type: 'active', cd: 20000, cost: 800, mp: 30 },
 };
-const POTION_COST = 50;
+const POTION_SHOP = [
+  ['potion',    '🧪', 50],
+  ['potion_mp', '💧', 50],
+  ['potion_hi', '⚗️', 180],
+  ['potion_mm', '🔵', 180],
+];
 const skillCost = (def, lv) => Math.round(def.cost * Math.pow(2, lv));
 
 const QUESTS = [
@@ -232,6 +271,7 @@ const QUESTS = [
 /* ================= 헬퍼 ================= */
 const expNeed = lv => Math.floor(25 * Math.pow(lv, 2.2));
 const maxHpOf = () => Math.round(cdef().hp + ((me.lv || 1) - 1) * 10 + (me.stHp || 0) * 15);
+const maxMpOf = () => 100 + ((me.lv || 1) - 1) * 5;
 const clampN = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const rand = (a, b) => a + Math.random() * (b - a);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -245,11 +285,17 @@ function shade(hex, f) {
   return `rgb(${r},${g},${b})`;
 }
 function sortInvMap(inv) {
+  const stacks = {};
   const items = [];
   for (let i = 0; i < 40; i++) {
     const id = inv[String(i)];
-    if (id) items.push(id);
+    if (!id) continue;
+    const [bid, cnt] = splitStack(id);
+    const it0 = getItem(bid);
+    if (!it0.slot && (it0.heal || it0.mana || it0.scroll)) stacks[bid] = (stacks[bid] || 0) + cnt;
+    else items.push(id);
   }
+  for (const [bid, cnt] of Object.entries(stacks)) items.push(cnt > 1 ? bid + '*' + cnt : bid);
   const slotOrder = {};
   SLOTS.forEach((s, i) => slotOrder[s[0]] = i);
   items.sort((a, b) => {
@@ -274,7 +320,7 @@ function roundRect(c, x, y, w, h, r) {
 
 /* ================= 사운드 (합성음) ================= */
 let AC = null;
-let muted = localStorage.getItem('mmorpg_mute') === '1';
+let muted = false;
 function tone(f0, f1, dur, type = 'sine', vol = .08, delay = 0) {
   if (muted || !AC) return;
   try {
@@ -310,7 +356,7 @@ function sfx(kind) {
 }
 function toggleMute() {
   muted = !muted;
-  localStorage.setItem('mmorpg_mute', muted ? '1' : '0');
+  if (meRef) updateDoc(meRef, { muted }).catch(() => {});
   toast(muted ? '🔇 소리 끔' : '🔊 소리 켬');
 }
 
@@ -394,7 +440,7 @@ async function ensurePage(n) {
   if ((await getDoc(flag)).exists()) return;
   const pd = pageDef(n);
   const batch = writeBatch(db);
-  const zones = [{ cx: 450, cy: 300, spread: 200 }, { cx: 1150, cy: 850, spread: 200 }];
+  const zones = [{ cx: 540, cy: 430, spread: 150 }, { cx: 1060, cy: 770, spread: 150 }];
   for (let zi = 0; zi < 2; zi++) {
     const k = pd.kinds[zi];
     for (let j = 0; j < 6; j++) {
@@ -454,7 +500,9 @@ function makeSim(id, d) {
     type = d.type || 'slime';
     sprId = type;
   }
-  return { id, type, page: isPage ? d.page : (id.startsWith('m2') ? 'm2' : 'm1'), boss: !!d.boss, sprId, uniq: !!d.uniq, def,
+  const mapId = isPage ? d.page : (id.startsWith('m2') ? 'm2' : 'm1');
+  return { id, type, page: mapId, map: mapId, boss: !!d.boss, sprId, uniq: !!d.uniq, def,
+    homeX: d.homeX ?? 800, homeY: d.homeY ?? 600,
     x: d.homeX, y: d.homeY, wa: rand(0, Math.PI * 2), nextWander: 0, atkCdUntil: 0, alive: !!d.alive,
     hp: typeof d.hp === 'number' ? d.hp : def.hp, maxHp: def.maxHp, respawnAt: d.respawnAt || 0,
     dirA: Math.PI / 2, movingF: false, aggroF: false, blink: rand(0, 4000) };
@@ -546,18 +594,26 @@ function watchLoot() {
   });
 }
 
+let rankMode = 'lv';
+let rankCache = [];
+function renderRank() {
+  const list = [...rankCache].sort((a, b) => rankMode === 'lv' ? (b.lv || 1) - (a.lv || 1) : (b.power || 0) - (a.power || 0)).slice(0, 10);
+  const rows = list.map((p, i) => {
+    const medal = ['🥇', '🥈', '🥉'][i] || `${i + 1}`;
+    const val = rankMode === 'lv' ? `Lv${p.lv || 1}` : `⚔${p.power || 0}`;
+    return `<div><span style="color:#889;display:inline-block;width:18px;">${medal}</span> ${esc(p.name || '?')} <b style="color:#ffd700">${val}</b> <span style="color:#667">${CLASSES[p.cls]?.icon || ''}</span></div>`;
+  }).join('');
+  const el = $('rankList');
+  if (el) el.innerHTML = rows || '<div style="color:#556">아직 없음</div>';
+  const t1 = $('rankTabLv'), t2 = $('rankTabAtk');
+  if (t1) t1.style.background = rankMode === 'lv' ? '#c9a227' : '#2b3547';
+  if (t2) t2.style.background = rankMode === 'atk' ? '#c9a227' : '#2b3547';
+}
 function watchRank() {
-  onSnapshot(query(collection(db, 'players'), orderBy('lv', 'desc'), limit(10)), snap => {
-    const rows = [];
-    let i = 0;
-    snap.forEach(dc => {
-      const p = dc.data();
-      i++;
-      const medal = ['🥇', '🥈', '🥉'][i - 1] || `${i}`;
-      rows.push(`<div><span style="color:#889">${medal}</span> ${esc(p.name || '?')} <b style="color:#ffd700">Lv${p.lv || 1}</b> <span style="color:#667">${CLASSES[p.cls]?.icon || ''}</span></div>`);
-    });
-    const el = $('rankList');
-    if (el) el.innerHTML = rows.join('');
+  onSnapshot(query(collection(db, 'players'), orderBy('lv', 'desc'), limit(30)), snap => {
+    rankCache = [];
+    snap.forEach(dc => rankCache.push(dc.data()));
+    renderRank();
   }, () => {});
 }
 
@@ -576,7 +632,13 @@ function watchChat() {
 
 /* ================= 성장 ================= */
 function levelCalc(p, expGain) {
-  return { upd: { exp: (p.exp || 0) + expGain }, leveled: 0, nlv: p.lv || 1 };
+  let exp = (p.exp || 0) + expGain;
+  let lv = p.lv || 1, leveled = 0;
+  while (lv < 100 && exp >= expNeed(lv)) { exp -= expNeed(lv); lv++; leveled++; }
+  if (lv >= 100) exp = Math.min(exp, expNeed(99));
+  const upd = { exp, lv };
+  if (leveled) upd.statPts = (p.statPts || 0) + 3 * leveled;
+  return { upd, leveled, nlv: lv };
 }
 function simLevel(s) {
   if (!s.page) return 1;
@@ -611,13 +673,11 @@ async function gainExp(expGain, kill = null) {
   }).catch(() => {});
 }
 
-const UNIQ_DROPS = {
-  slime: ['crown_slime'], goblin: ['club_chief'], wolf: ['fang_neck'],
-  skeleton: ['knight_sword'], boss: ['ring_shadow'], lich: ['orb_lich'],
-};
-
 function rollDrops(type) {
-  return (DROP_TABLE[type] || []).filter(([, p]) => Math.random() < p).map(([id]) => id);
+  const drops = (DROP_TABLE[type] || []).filter(([, p]) => Math.random() < p).map(([id]) => id);
+  if (Math.random() < UNIQUE_RATE) drops.push(UNIQUE_POOL[Math.floor(Math.random() * UNIQUE_POOL.length)]);
+  if (Math.random() < LEGEND_RATE) drops.push(LEGEND_POOL[Math.floor(Math.random() * LEGEND_POOL.length)]);
+  return drops;
 }
 
 async function dropLoot(type, x, y) {
@@ -676,11 +736,8 @@ async function handleKill(sim) {
     }
   }
   if (sim.uniq) {
-    for (const itemId of (UNIQ_DROPS[sim.type] || [])) {
-      await addDoc(collection(db, 'loot'), { itemId, x: sim.x + rand(-20, 20), y: sim.y + rand(-20, 20), map: myMap(), ts: Date.now() }).catch(() => {});
-    }
-    sysMsg(`★ 유니크 ${d2.name} 처치! 유니크 아이템 드롭! 🔥`, 'q');
-    toast(`★ 유니크 아이템 드롭!`, 'sysq');
+    sysMsg(`★ 유니크 ${d2.name} 처치!`, 'q');
+    toast(`★ 유니크 몬스터 처치!`, 'sysq');
   }
   sysMsg(`${myName}님이 ${d2.name}을(를) 처치했습니다!${sim.type === 'boss' || sim.type === 'lich' ? ' 👑👑👑' : ''}`);
 }
@@ -750,6 +807,8 @@ function useSkill(slot) {
   const def = SKILLS[id];
   if (skillLv(id) < 1) { float(me.x, me.y - 34, '미습득 스킬 (B: 샵)', '#aaa'); return; }
   if (now < (skillCdUntil[id] || 0)) return;
+  const mpc = def.mp || 0;
+  if ((me.mp ?? maxMpOf()) < mpc) { float(me.x, me.y - 34, '마나 부족!', '#5dade2'); return; }
 
   if (id === 'heal') {
     const amt = Math.round(me.maxHp * .4);
@@ -803,6 +862,10 @@ function useSkill(slot) {
       }
     }, 240);
   }
+  if (mpc) {
+    me.mp = (me.mp ?? maxMpOf()) - mpc;
+    updateDoc(meRef, { mp: Math.round(me.mp) }).catch(() => {});
+  }
   skillCdUntil[id] = now + def.cd;
 }
 
@@ -820,22 +883,25 @@ function renderShop() {
       <div class="si">${d.icon}</div>
       <div class="sm">
         <div><span class="st">${esc(d.name)}</span>${d.type === 'passive' ? `<span class="slv">${stat}</span>` : ''}<span class="slv">Lv ${lv}/${MAX_SKILL_LV}</span></div>
-        <div class="sd">${esc(d.desc)}${d.cd ? ` · 재사용 ${d.cd / 1000}s` : ''}</div>
+        <div class="sd">${esc(d.desc)}${d.mp ? ` · 마나 ${d.mp}` : ''}${d.cd ? ` · 재사용 ${d.cd / 1000}s` : ''}</div>
       </div>
       ${maxed ? `<button class="buyBtn" disabled>MAX</button>`
               : `<button class="buyBtn" data-buy="${id}" ${afford ? '' : 'disabled'}>${cost} G</button>`}
     </div>`;
   }).join('');
-  const affordP = (me.gold || 0) >= POTION_COST;
-  const bagFull = Object.keys(me.inv || {}).length >= bagSize();
-  html += `<div class="srow">
-      <div class="si">🧪</div>
+  for (const [pid, picon, pcost] of POTION_SHOP) {
+    const pd = ITEMS[pid];
+    const affordP = (me.gold || 0) >= pcost;
+    const bagFull = Object.keys(me.inv || {}).length >= bagSize();
+    html += `<div class="srow">
+      <div class="si">${picon}</div>
       <div class="sm">
-        <div><span class="st">HP 물약</span><span class="slv">HP +50 회복</span></div>
+        <div><span class="st">${esc(pd.name)}</span><span class="slv">${pd.heal ? 'HP +' + pd.heal : 'MP +' + pd.mana} 회복</span></div>
         <div class="sd">가방에 담아 클릭하면 사용 (${bagFull ? '가방 가득 참' : `${Object.keys(me.inv || {}).length}/${bagSize()}`})</div>
       </div>
-      <button class="buyBtn" id="buyPotion" ${affordP && !bagFull ? '' : 'disabled'}>${POTION_COST} G</button>
+      <button class="buyBtn" data-potion="${pid}" ${affordP && !bagFull ? '' : 'disabled'}>${pcost} G</button>
     </div>`;
+  }
   const canExpand = bagSize() < MAX_BAG;
   const upCost = bagUpCost();
   html += `<div class="srow">
@@ -849,8 +915,7 @@ function renderShop() {
     </div>`;
   body.innerHTML = html;
   body.querySelectorAll('[data-buy]').forEach(b => b.onclick = () => buySkill(b.dataset.buy));
-  const bp = $('buyPotion');
-  if (bp) bp.onclick = buyPotion;
+  body.querySelectorAll('[data-potion]').forEach(b => b.onclick = () => buyPotion(b.dataset.potion));
   const bb = $('buyBag');
   if (bb) bb.onclick = buyBag;
 }
@@ -892,22 +957,23 @@ function buySkill(id) {
   }).catch(() => {});
 }
 
-function buyPotion() {
+function buyPotion(itemId = 'potion') {
+  const pcost = (POTION_SHOP.find(([p]) => p === itemId) || [])[2] || 0;
   runTransaction(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return false;
     const p = snap.data();
-    if ((p.gold || 0) < POTION_COST) return false;
+    if ((p.gold || 0) < pcost) return false;
     const bs = p.bagSize || 18;
     if (Object.keys(p.inv || {}).length >= bs) return false;
     const inv = { ...(p.inv || {}) };
     for (let i = 0; i < bs; i++) {
-      if (inv[String(i)] == null) { inv[String(i)] = 'potion'; break; }
+      if (inv[String(i)] == null) { inv[String(i)] = itemId; break; }
     }
-    tx.update(meRef, { gold: p.gold - POTION_COST, inv: sortInvMap(inv) });
+    tx.update(meRef, { gold: p.gold - pcost, inv: sortInvMap(inv) });
     return true;
   }).then(ok => {
-    if (ok) { sfx('buy'); toast('🧪 HP 물약 구매'); flashInv(); renderShop(); }
+    if (ok) { sfx('buy'); toast(`🧪 ${ITEMS[itemId].name} 구매`); flashInv(); renderShop(); }
     else toast('구매 실패 (골드/가방 확인)');
   }).catch(() => {});
 }
@@ -965,7 +1031,7 @@ function claimQuest(id) {
 function itemStat(it) {
   return [it.atk ? `공격+${it.atk}` : '', it.def ? `방어+${it.def}` : '',
     it.crit ? `치명타+${Math.round(it.crit * 100)}%p` : '', it.spd ? `속도+${it.spd}` : '',
-    it.heal ? `HP+${it.heal} 회복` : ''].filter(Boolean).join(' · ');
+    it.heal ? `HP+${it.heal} 회복` : '', it.mana ? `MP+${it.mana} 회복` : ''].filter(Boolean).join(' · ');
 }
 
 async function pickup(lid, l) {
@@ -986,8 +1052,10 @@ async function pickup(lid, l) {
     const it = getItem(item.itemId);
     sfx('pickup');
     flashInv();
-    if (res === 'equipped') toast(`${SLOT_ICONS[it.slot] || '📦'} <b style="color:${it.color}">${esc(it.name)}</b> 획득 → <b>자동 장착!</b> <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span>`, 'sysq');
-    else toast(`${SLOT_ICONS[it.slot] || '📦'} <b style="color:${it.color}">${esc(it.name)}</b> 획득 <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span> → 가방 <b>${Object.keys(me.inv || {}).length}/${bagSize()}</b>`);
+    if (res === 'equipped') toast(`${itemIcon(item.itemId)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 → <b>자동 장착!</b> <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span>`, 'sysq');
+    else if (res === 'swapped') toast(`${itemIcon(item.itemId)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 → <b>등급 우위 자동 교체!</b> <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span>`, 'sysq');
+    else if (res === 'stacked') toast(`${itemIcon(item.itemId)} <b style="color:${it.color}">${esc(it.name)}</b> 보유 수량 +1 <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span>`);
+    else toast(`${itemIcon(item.itemId)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span> → 가방 <b>${Object.keys(me.inv || {}).length}/${bagSize()}</b>`);
     float(me.x, me.y - 30, `+ ${it.name}`, it.color);
   } finally { picking = false; }
 }
@@ -1000,19 +1068,41 @@ function addToInv(itemId) {
     const bs = p.bagSize || 18;
     const inv = { ...(p.inv || {}) };
     const eq = { ...(p.equipped || {}) };
-    const it = ITEMS[itemId];
+    const it = getItem(itemId);
+    const q = { ...(p.q || {}) };
+    q.items = (q.items || 0) + 1;
+    const upd = { q };
+    if (!it.slot && (it.heal || it.mana || it.scroll)) {
+      for (const [k, v] of Object.entries(inv)) {
+        const [bid, cnt] = splitStack(v);
+        if (bid === itemId) {
+          inv[k] = bid + '*' + (cnt + 1);
+          upd.inv = sortInvMap(inv);
+          tx.update(meRef, upd);
+          return 'stacked';
+        }
+      }
+    }
     let result = false;
     for (let i = 0; i < bs; i++) {
       if (inv[String(i)] == null) {
         inv[String(i)] = itemId;
-        const q = { ...(p.q || {}) };
-        q.items = (q.items || 0) + 1;
-        const upd = { q };
         if (it.slot && !eq[it.slot]) {
+          delete inv[String(i)];
           eq[it.slot] = itemId;
           upd.equipped = eq;
           upd['q.eqflag'] = 1;
           result = 'equipped';
+        } else if (it.slot && eq[it.slot]) {
+          const cur = getItem(eq[it.slot]);
+          const cR = RARITY_RANK[cur.rarity] ?? 0, nR = RARITY_RANK[it.rarity] ?? 0;
+          if (nR > cR || (nR === cR && (it._lv || 0) > (cur._lv || 0))) {
+            inv[String(i)] = eq[it.slot];
+            eq[it.slot] = itemId;
+            upd.equipped = eq;
+            upd['q.eqflag'] = 1;
+            result = 'swapped';
+          } else result = 'added';
         } else result = 'added';
         upd.inv = sortInvMap(inv);
         tx.update(meRef, upd);
@@ -1035,13 +1125,25 @@ function slotClick(idx) {
     const it = getItem(itemId);
     if (it.heal) {
       const nhp = Math.min(maxHpOf(), (me.hp || 0) + it.heal);
-      delete inv[String(idx)];
+      const [bid, cnt] = splitStack(itemId);
+      if (cnt > 1) inv[String(idx)] = bid + '*' + (cnt - 1); else delete inv[String(idx)];
       tx.update(meRef, { inv, hp: nhp });
       setTimeout(() => {
         me.hp = nhp;
         hpDirty = true;
         float(me.x, me.y - 30, `+${it.heal} HP`, '#2ecc71');
         rings.push({ x: me.x, y: me.y, r: 50, t: 0, max: 350, color: '46,204,113' });
+        sfx('potion');
+      }, 0);
+    } else if (it.mana) {
+      const nmp = Math.min(maxMpOf(), (me.mp ?? 0) + it.mana);
+      const [bid2, cnt2] = splitStack(itemId);
+      if (cnt2 > 1) inv[String(idx)] = bid2 + '*' + (cnt2 - 1); else delete inv[String(idx)];
+      tx.update(meRef, { inv, mp: Math.round(nmp) });
+      setTimeout(() => {
+        me.mp = nmp;
+        float(me.x, me.y - 30, `+${it.mana} MP`, '#3498db');
+        rings.push({ x: me.x, y: me.y, r: 50, t: 0, max: 350, color: '52,152,219' });
         sfx('potion');
       }, 0);
     } else {
@@ -1072,7 +1174,7 @@ function unequip(slot) {
   }).catch(() => {});
 }
 
-function enhanceItem(idx) {
+function sellItem(idx) {
   runTransaction(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return null;
@@ -1082,12 +1184,98 @@ function enhanceItem(idx) {
     const id = inv[String(idx)];
     if (!id) return null;
     const it = getItem(id);
-    if (it.heal) return 'potion';
+    const [, cnt] = splitStack(id);
+    let equippedSlot = null;
+    for (const [sl, eid] of Object.entries(eq)) if (eid === id) equippedSlot = sl;
+    const gain = sellPrice(id);
+    delete inv[String(idx)];
+    if (equippedSlot) delete eq[equippedSlot];
+    tx.update(meRef, { gold: (p.gold || 0) + gain, inv: sortInvMap(inv), equipped: eq });
+    return { gain, name: it.name, cnt };
+  }).then(r => {
+    if (!r) return;
+    sfx('coin');
+    toast(`💰 <b style="color:#ffd700">${esc(r.name)}</b>${r.cnt > 1 ? ` x${r.cnt}` : ''} 판매 → <b style="color:#ffd700">+${r.gain.toLocaleString()} G</b>`);
+    renderInvUI();
+  }).catch(() => {});
+}
+
+const ENH_BASE = lv => Math.max(70 - lv * 6, 15);
+const ENH_CHANCE = {
+  normal: lv => Math.max(ENH_BASE(lv), 5),
+  adv:    lv => Math.min(97, ENH_BASE(lv) + 20),
+  top:    lv => Math.min(99, ENH_BASE(lv) + 30),
+};
+const ENH_GRADES = [
+  ['normal', '일반 주문서', '#cfd8dc'],
+  ['adv',    '고급 주문서', '#64b5f6'],
+  ['top',    '최고급 주문서', '#ffd700'],
+];
+function countScrolls() {
+  const c = { normal: 0, adv: 0, top: 0 };
+  for (const v of Object.values(me.inv || {})) {
+    const [b, n] = splitStack(v);
+    const it = getItem(b);
+    if (it.scroll) c[it.grade || 'normal'] += n;
+  }
+  return c;
+}
+let enhMenuEl = null;
+function closeEnhMenu() { if (enhMenuEl) { enhMenuEl.remove(); enhMenuEl = null; document.removeEventListener('pointerdown', onEnhAway); } }
+function onEnhAway(e) { if (enhMenuEl && !enhMenuEl.contains(e.target)) closeEnhMenu(); }
+function showEnhMenu(x, y, idx) {
+  closeEnhMenu();
+  const c = countScrolls();
+  const raw = (me.inv || {})[idx] || '';
+  const it0 = getItem(raw);
+  const isConsumable = !!(it0.heal || it0.mana || it0.scroll);
+  const lv = it0._lv || 0;
+  enhMenuEl = document.createElement('div');
+  enhMenuEl.style.cssText = 'position:fixed;z-index:9999;background:#141a26;border:1px solid #3a4a66;border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:6px;box-shadow:0 8px 24px rgba(0,0,0,.6);min-width:180px;';
+  if (!isConsumable) for (const [g, label, col] of ENH_GRADES) {
+    const b = document.createElement('button');
+    b.style.cssText = `display:flex;justify-content:space-between;gap:12px;padding:7px 10px;font-size:13px;background:${c[g] ? '#1c2536' : '#161d2a'};color:${c[g] ? col : '#556'};border:1px solid #2b3547;border-radius:6px;cursor:${c[g] ? 'pointer' : 'not-allowed'};text-align:left;`;
+    b.innerHTML = `<span>${label}</span><span style="color:#889">${c[g]}개 · ${Math.round(ENH_CHANCE[g](lv))}%</span>`;
+    b.disabled = !c[g];
+    b.onclick = () => { closeEnhMenu(); enhanceItem(idx, g); };
+    enhMenuEl.appendChild(b);
+  }
+  const sb = document.createElement('button');
+  sb.style.cssText = 'display:flex;justify-content:space-between;gap:12px;padding:7px 10px;font-size:13px;background:#2a1620;color:#ff9b9b;border:1px solid #4a2530;border-radius:6px;cursor:pointer;text-align:left;';
+  sb.innerHTML = `<span>💰 판매${!isConsumable ? '' : ''}</span><span style="color:#889">+${sellPrice(raw).toLocaleString()} G</span>`;
+  sb.onclick = () => { closeEnhMenu(); sellItem(idx); };
+  enhMenuEl.appendChild(sb);
+  document.body.appendChild(enhMenuEl);
+  const r = enhMenuEl.getBoundingClientRect();
+  enhMenuEl.style.left = Math.min(x, innerWidth - r.width - 10) + 'px';
+  enhMenuEl.style.top = Math.min(y, innerHeight - r.height - 10) + 'px';
+  setTimeout(() => document.addEventListener('pointerdown', onEnhAway), 0);
+}
+
+function enhanceItem(idx, grade = 'normal') {
+  runTransaction(db, async tx => {
+    const snap = await tx.get(meRef);
+    if (!snap.exists()) return null;
+    const p = snap.data();
+    const inv = { ...(p.inv || {}) };
+    const eq = { ...(p.equipped || {}) };
+    const id = inv[String(idx)];
+    if (!id) return null;
+    const it = getItem(id);
+    if (it.heal || it.mana || it.scroll) return 'no';
+    let scIdx = null, scBase = null, scCnt = 0;
+    for (const [k, v] of Object.entries(inv)) {
+      const [b, c] = splitStack(v);
+      const sc = getItem(b);
+      if (sc.scroll && (sc.grade || 'normal') === grade) { scIdx = k; scBase = b; scCnt = c; break; }
+    }
+    if (scIdx === null) return 'noscroll';
     const lv = it._lv || 0;
     const rMul = it.rarity === 'unique' ? 4 : it.rarity === 'legend' ? 3 : it.rarity === 'epic' ? 2 : 1;
     const cost = 300 * (lv + 1) * rMul;
     if ((p.gold || 0) < cost) return 'poor';
-    const chance = clampN(92 - lv * 8, 25, 92);
+    const chance = ENH_CHANCE[grade](lv);
+    if (scCnt > 1) inv[scIdx] = scBase + '*' + (scCnt - 1); else delete inv[scIdx];
     let equippedSlot = null;
     for (const [sl, eid] of Object.entries(eq)) if (eid === id) equippedSlot = sl;
     let result;
@@ -1105,7 +1293,8 @@ function enhanceItem(idx) {
   }).then(r => {
     if (!r) return;
     if (r === 'poor') { toast('💰 골드가 부족합니다'); return; }
-    if (r === 'potion') { toast('소모품은 강화할 수 없습니다'); return; }
+    if (r === 'noscroll') { toast('📜 강화 주문서가 없습니다'); return; }
+    if (r === 'no' || r === null) return;
     if (r.ok) {
       sfx('levelup');
       toast(`🔨 강화 성공! <b style="color:${RARITY_COLOR[getItem(r.nid).rarity]}">${getItem(r.nid).name}</b>`, 'sysq');
@@ -1134,11 +1323,12 @@ function renderInvUI() {
     if (itemId) {
       count++;
       const it = getItem(itemId);
+      const [, scnt] = splitStack(itemId);
       div.dataset.r = it.rarity || 'common';
-      div.innerHTML = `<span class="ic">${SLOT_ICONS[it.slot] || '🧪'}</span>`;
-      div.title = `${it.name} [${RARITY_KR[it.rarity] || '일반'}]\n${itemStat(it)}\n좌클릭: 장착/사용 · 우클릭: 강화`;
-      div.onclick = () => slotClick(String(i));
-      div.oncontextmenu = e => { e.preventDefault(); enhanceItem(String(i)); };
+      div.innerHTML = `<span class="ic">${itemIcon(itemId)}</span>` + (scnt > 1 ? `<span class="scnt">${scnt}</span>` : '');
+      div.title = `${it.name} [${RARITY_KR[it.rarity] || '일반'}]\n${itemStat(it) || '소모품'}\n좌클릭: 장착/사용 · 우클릭: 강화/판매`;
+      div.onclick = () => { if (it.scroll) { toast('📜 강화할 아이템을 우클릭하세요'); return; } slotClick(String(i)); };
+      div.oncontextmenu = e => { e.preventDefault(); showEnhMenu(e.clientX, e.clientY, String(i)); };
     }
     grid.appendChild(div);
   }
@@ -1196,7 +1386,8 @@ function updateSims(now, dt) {
     }
     if (s.map !== myMap()) continue;
     let tgt = null, best = Infinity;
-    const canAggro = s.angry || simLevel(s) >= (me.lv || 1);
+    const homeD = Math.hypot(s.x - s.homeX, s.y - s.homeY);
+    const canAggro = (s.angry || simLevel(s) >= (me.lv || 1)) && homeD < 460;
     if (canAggro) {
       for (const t of targets) {
         const d = Math.hypot(t.x - s.x, t.y - s.y);
@@ -1217,13 +1408,24 @@ function updateSims(now, dt) {
         if (tgt.mine) monsterHitMe(s, now);
       }
     } else {
-      if (now >= s.nextWander) { s.nextWander = now + rand(1200, 3000); s.wa = rand(0, Math.PI * 2); }
-      const sp = s.def.speed * .45 * dt / 1000;
-      s.dirA = s.wa;
-      s.movingF = true;
-      s.aggroF = false;
-      s.x = clampN(s.x + Math.cos(s.wa) * sp, 40, WORLD.w - 40);
-      s.y = clampN(s.y + Math.sin(s.wa) * sp, 40, WORLD.h - 40);
+      const hd2 = Math.hypot(s.homeX - s.x, s.homeY - s.y);
+      if (hd2 > 600) { s.x = s.homeX; s.y = s.homeY; }
+      else if (hd2 > 240) {
+        s.dirA = Math.atan2(s.homeY - s.y, s.homeX - s.x);
+        s.movingF = true;
+        s.aggroF = false;
+        const sp = s.def.speed * .8 * dt / 1000;
+        s.x = clampN(s.x + Math.cos(s.dirA) * sp, 40, WORLD.w - 40);
+        s.y = clampN(s.y + Math.sin(s.dirA) * sp, 40, WORLD.h - 40);
+      } else {
+        if (now >= s.nextWander) { s.nextWander = now + rand(1200, 3000); s.wa = rand(0, Math.PI * 2); }
+        const sp = s.def.speed * .45 * dt / 1000;
+        s.dirA = s.wa;
+        s.movingF = true;
+        s.aggroF = false;
+        s.x = clampN(s.x + Math.cos(s.wa) * sp, 40, WORLD.w - 40);
+        s.y = clampN(s.y + Math.sin(s.wa) * sp, 40, WORLD.h - 40);
+      }
     }
   }
 }
@@ -1451,6 +1653,28 @@ const SPRITE_DEFS = {
     ],
   },
 };
+
+const ITEM_SHAPES = {
+  weapon: ['...L...', '..LLM..', '..MLM..', '..MLM..', '..MLM..', '..MLM..', '..MDM..', '.GGGGG.', '...G...', '...D...'],
+  armor:  ['MMM...MMM', 'MMMMMMMMM', 'MLMMMMMDM', 'MLMMMMMDM', '.MMMMMMM.', '.MMMMMMM.', '.MMMMMMM.', '.DMMMMMD.', '..DDDDD..'],
+  helmet: ['..MMMM..', '.MMMMMM.', '.MLMMDM.', '.MMMMMM.', '.MM..MM.', '.MM..MM.'],
+  pants:  ['.MMMMM.', '.MMMMM.', '.MLMDM.', '.MMMMM.', '.MM.MM.', '.MM.MM.', '.MM.MM.', '.DD.DD.'],
+  gloves: ['..MMM..', '.MMMMM.', '.MLMMM.', '.MMMMM.', '.MMMMM.', '.MMMMM.', '..DDD..'],
+  boots:  ['.MM..MM.', '.MM..MM.', '.MM..MM.', '.ML..MD.', '.MMMMMM.', '.DDDDDD.'],
+  bracelet: ['..MMMM..', '.MLLMDM.', '.ML..DM.', '.ML..DM.', '.MLLMDM.', '..MMMM..'],
+  necklace: ['G.......G', '.G.....G.', '.GG...GG.', '..GGGGG..', '....M....', '...MLM...', '...MMM...', '....D....'],
+  ring:   ['..LL..', '.LLLL.', '..MM..', '.M..M.', 'M....M', '.MMMM.'],
+  potion: ['..GGG..', '...G...', '..MMM..', '.MLMMD.', '.MMMMM.', '.MMMMM.', '.MMMMM.', '..DDD..'],
+  scroll: ['..WWW..', '.WWWWW.', '.WB.BW.', '.WWWWW.', '.W.BBW.', '.WWWWW.', '..WWW..'],
+};
+function itemSprite(id) {
+  const it = getItem(id);
+  const slotKey = it.scroll ? 'scroll' : it.heal ? 'potion' : (it.slot && ITEM_SHAPES[it.slot] ? it.slot : 'bracelet');
+  const col = it.color || '#ccc';
+  const key = 'itspr_' + slotKey + '_' + col;
+  if (!SPRITE_DEFS[key]) SPRITE_DEFS[key] = { pal: { M: col, D: shade(col, .55), L: shade(col, 1.5), G: '#d9b23c', W: '#e8e4d8', B: '#8a6b45' }, rows: ITEM_SHAPES[slotKey] };
+  return key;
+}
 
 const spriteCache = {};
 function buildSprite(name) {
@@ -2366,21 +2590,56 @@ function draw(now) {
     const it = getItem(l.itemId);
     if (!it) continue;
     const bob = Math.sin(now / 300 + l.x) * 3;
-    const glowCol = it.rarity === 'legend' ? '255,215,0' : it.rarity === 'epic' ? '155,89,182' : it.rarity === 'rare' ? '52,152,219' : '255,255,255';
+    const R = it.rarity;
+    const isU = R === 'unique', isL = R === 'legend';
+    const glowCol = isL ? '255,145,20' : R === 'epic' ? '155,89,182' : R === 'rare' ? '52,152,219' : isU ? '255,205,60' : '255,255,255';
     const pulse = .35 + Math.sin(now / 250 + l.x) * .2;
-    ctx.fillStyle = `rgba(${glowCol},${pulse * .5})`;
-    ctx.beginPath(); ctx.arc(l.x, l.y + bob, 14, 0, 7); ctx.fill();
-    ctx.save();
-    ctx.translate(l.x, l.y + bob);
-    ctx.rotate(Math.PI / 4);
-    const lg = ctx.createLinearGradient(-8, -8, 8, 8);
-    lg.addColorStop(0, shade(it.color, 1.3)); lg.addColorStop(1, shade(it.color, .75));
-    ctx.fillStyle = lg;
-    ctx.fillRect(-7, -7, 14, 14);
-    ctx.strokeStyle = `rgba(${glowCol},.95)`;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(-7, -7, 14, 14);
-    ctx.restore();
+    if (isU) {
+      const beamH = Math.max(340, l.y - view.y + 60);
+      const flick = .8 + Math.sin(now / 90 + l.x) * .12 + Math.sin(now / 231 + l.y) * .08;
+      const bw = 15 + Math.sin(now / 170 + l.x) * 3;
+      let g = ctx.createLinearGradient(0, l.y, 0, l.y - beamH);
+      g.addColorStop(0, `rgba(255,215,80,${.42 * flick})`);
+      g.addColorStop(.25, `rgba(255,225,120,${.24 * flick})`);
+      g.addColorStop(1, 'rgba(255,230,150,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(l.x - bw, l.y);
+      ctx.lineTo(l.x + bw, l.y);
+      ctx.lineTo(l.x + bw * .22, l.y - beamH);
+      ctx.lineTo(l.x - bw * .22, l.y - beamH);
+      ctx.closePath(); ctx.fill();
+      const g2 = ctx.createLinearGradient(0, l.y, 0, l.y - beamH);
+      g2.addColorStop(0, `rgba(255,245,190,${.75 * flick})`);
+      g2.addColorStop(1, 'rgba(255,245,190,0)');
+      ctx.fillStyle = g2;
+      ctx.fillRect(l.x - 2.5, l.y - beamH, 5, beamH);
+      for (let i = 0; i < 10; i++) {
+        const sd = l.x * 13.7 + i * 97.3;
+        const py = l.y - ((now * (.05 + (i % 4) * .018) + sd * 57) % beamH);
+        const px = l.x + Math.sin(sd + now / 700) * (bw + 8) * (.3 + (i % 5) / 5);
+        const tw = Math.max(0, Math.sin(now / 130 + i * 2.4 + sd));
+        if (tw < .15) continue;
+        const sz2 = 1.6 + (i % 3) * .9;
+        ctx.fillStyle = `rgba(255,240,170,${tw * .95})`;
+        ctx.fillRect(px - sz2 / 2, py - sz2 / 2, sz2, sz2);
+        ctx.fillRect(px - sz2 * .18, py - sz2 * 1.7, sz2 * .36, sz2 * 3.4);
+        ctx.fillRect(px - sz2 * 1.7, py - sz2 * .18, sz2 * 3.4, sz2 * .36);
+      }
+    }
+    ctx.fillStyle = `rgba(${glowCol},${pulse * .45})`;
+    ctx.beginPath(); ctx.arc(l.x, l.y - 4, 15 + bob * .5, 0, 7); ctx.fill();
+    if (isL) {
+      for (let i = 0; i < 2; i++) {
+        const rr = 10 + ((now / 2.6 + l.x + i * 13) % 30);
+        ctx.strokeStyle = `rgba(255,140,15,${clampN(1 - rr / 40, 0, 1) * .85})`;
+        ctx.lineWidth = 2.2;
+        ctx.beginPath(); ctx.ellipse(l.x, l.y + 1, rr, rr * .42, 0, 0, 7); ctx.stroke();
+      }
+    }
+    ctx.fillStyle = 'rgba(0,0,0,.30)';
+    ctx.beginPath(); ctx.ellipse(l.x, l.y + 2, 8, 3.2, 0, 0, 7); ctx.fill();
+    drawSprite(itemSprite(l.itemId), l.x, l.y - 4 + bob, 2.4, { rot: Math.sin(now / 500 + l.y) * .07 });
     ctx.font = '10px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillStyle = `rgba(${glowCol},.95)`;
@@ -2566,6 +2825,8 @@ function updateHUD() {
   $('uiName').textContent = myName;
   $('hpbar').style.width = clampN((me.hp || 0) / maxHpOf() * 100, 0, 100) + '%';
   $('hpText').textContent = `${Math.max(0, Math.ceil(me.hp || 0))} / ${maxHpOf()}`;
+  $('mpbar').style.width = clampN((me.mp ?? maxMpOf()) / maxMpOf() * 100, 0, 100) + '%';
+  $('mpText').textContent = `MP ${Math.floor(me.mp ?? maxMpOf())} / ${maxMpOf()}`;
   $('expbar').style.width = clampN((me.exp || 0) / expNeed(me.lv) * 100, 0, 100) + '%';
   $('expText').textContent = `EXP ${me.exp || 0} / ${expNeed(me.lv)}`;
   $('uiAtk').textContent = totalAtk();
@@ -2678,6 +2939,9 @@ function togglePanel(id) {
 const rb2 = $('reviveBtn');
 if (rb2) rb2.onclick = reviveNow;
 $('mapBtn').onclick = () => { sfx('click'); toggleWorldMap(); };
+const rtl = $('rankTabLv'), rta = $('rankTabAtk');
+if (rtl) rtl.onclick = () => { rankMode = 'lv'; renderRank(); };
+if (rta) rta.onclick = () => { rankMode = 'atk'; renderRank(); };
 $('dexBtn').onclick = () => { sfx('click'); toggleDex(); };
 document.querySelectorAll('.stbtn').forEach(b => b.onclick = () => addStat(b.dataset.st));
 $('shopBtn').onclick = () => { sfx('click'); togglePanel('shopPanel'); };
@@ -2788,7 +3052,12 @@ function loop(t) {
   if (now - lastPosWrite > 150 || (hpDirty && now - lastPosWrite > 400)) {
     lastPosWrite = now;
     hpDirty = false;
-    updateDoc(meRef, { x: me.x, y: me.y, hp: me.hp, lastSeen: now }).catch(() => {});
+updateDoc(meRef, { x: me.x, y: me.y, hp: me.hp, ...(me.mp != null ? { mp: Math.round(me.mp) } : {}), power: totalAtk(), lastSeen: now }).catch(() => {});
+  }
+
+  if (!me.dead && (me.mp ?? 0) < maxMpOf()) {
+    me.mp = Math.min(maxMpOf(), (me.mp ?? 0) + maxMpOf() * .03 * dt / 1000);
+    hpDirty = true;
   }
 
   if (!me.dead && now - (me.lastHurtAt || 0) > 4000 && me.hp < maxHpOf()) {
@@ -2964,6 +3233,14 @@ function waitForLoginClick() {
       try {
         resolve(await signInWithPopup(auth, new GoogleAuthProvider()).then(c => c.user));
       } catch (e) {
+        if (['auth/popup-blocked', 'auth/operation-not-supported-in-this-environment'].includes(e.code)) {
+          try {
+            $('loading').textContent = '구글 로그인 페이지로 이동 중...';
+            await setPersistence(auth, browserLocalPersistence);
+            await signInWithRedirect(auth, new GoogleAuthProvider());
+            return;
+          } catch (e2) { e = e2; }
+        }
         btn.disabled = false;
         btn.innerHTML = '<span style="font-size:20px;">🅶</span>&nbsp; Google로 계속하기';
         reject(e);
@@ -2991,7 +3268,13 @@ window.addEventListener('error', ev => {
 });
 
 async function init() {
-  let user = auth.currentUser;
+  try {
+    await setPersistence(auth, browserLocalPersistence);
+    await getRedirectResult(auth);
+  } catch (e) { /* 저장소 차단 환경 - 무시 */ }
+  let user = await new Promise(resolve => {
+    const un = onAuthStateChanged(auth, u => { un(); resolve(u); });
+  });
   if (!user) {
     if (location.search.includes('dev=1')) {
       $('loading').textContent = '테스트 계정으로 접속 중...';
@@ -3025,17 +3308,18 @@ async function init() {
       name: myName, cls: choice.cls, x: SPAWN.x, y: SPAWN.y,
       lv: 1, exp: 0, hp: c.hp, maxHp: c.hp, atk: c.atk,
       gold: 100, inv: {}, equipped: {}, skills: {}, q: {}, qc: {},
-      dead: false, color: colorOf(uid), map: 'p1', conq: {}, statPts: 0, lastSeen: Date.now(),
+      dead: false, color: colorOf(uid), map: 'p1', conq: {}, statPts: 0, lastSeen: Date.now(), mp: maxMpOf(),
     });
     await sysMsg(`${myName}(${c.name})님이 월드에 입장했습니다.`);
   } else {
     const d = snap.data();
     myName = d.name;
     myCls = d.cls || 'warrior';
+    muted = !!d.muted;
     if (!d.cls) await updateDoc(meRef, { cls: 'warrior' });
     me.x = d.x || SPAWN.x; me.y = d.y || SPAWN.y;
     cam.x = me.x; cam.y = me.y;
-    await updateDoc(meRef, { lastSeen: Date.now(), dead: false });
+    await updateDoc(meRef, { lastSeen: Date.now(), dead: false, ...(d.mp == null ? { mp: maxMpOf() } : {}) });
   }
 
   await ensureWorld();
@@ -3047,6 +3331,16 @@ async function init() {
     const d = s.data();
     const { x, y, hp, ...rest } = d;
     me = { ...me, ...rest };
+    if (d.inv) {
+      const eqVals = Object.values(d.equipped || {});
+      const cleaned = {};
+      for (const [k, v] of Object.entries(d.inv)) if (!eqVals.includes(v)) cleaned[k] = v;
+      const merged = sortInvMap(cleaned);
+      const ck = Object.keys(d.inv), mk = Object.keys(merged);
+      const same = ck.length === mk.length && ck.every(k => d.inv[k] === merged[k]);
+      if (!same) updateDoc(meRef, { inv: merged }).catch(() => {});
+      me.inv = merged;
+    }
     renderInvUI();
   });
 
@@ -3057,6 +3351,8 @@ async function init() {
   watchRank();
 
   ready = true;
+  window.__DBG = () => ({ page: myPage(), me: { x: Math.round(me.x), y: Math.round(me.y), lv: me.lv, map: me.map, bag: me.bagSize, conq: JSON.stringify(me.conq || {}) },
+    sims: sims.filter(s => s.alive).slice(0, 20).map(s => ({ id: s.id, x: Math.round(s.x), y: Math.round(s.y), d: Math.round(Math.hypot(s.x - me.x, s.y - me.y)), boss: s.boss, lv: simLevel(s) })) });
   $('loading').style.display = 'none';
   const mn = $('mapName');
   if (mn) mn.textContent = pageDef(pageNum()).name;

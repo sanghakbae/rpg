@@ -157,6 +157,50 @@
   .eslot[data-r="unique"] { border-color: #ff4d4d; border-style: solid; box-shadow: 0 0 8px rgba(255,77,77,.4); }
   .islot .ic { font-size: 17px; }
 
+  /* 스탯 포인트 */
+  #statPtsRow { display: none; margin-top: 6px; padding-top: 6px; border-top: 1px solid #333; align-items: center; gap: 4px; flex-wrap: wrap; font-size: 12px; color: #ffd700; }
+  .stbtn { padding: 3px 7px; font-size: 10.5px; font-weight: bold; background: linear-gradient(#c9a227, #8f6f14); color: #fff; border-radius: 4px; }
+  .stbtn:hover { filter: brightness(1.2); }
+
+  /* 랭킹 */
+  #rankPanel { position: fixed; right: 12px; top: 148px; width: 165px; z-index: 10; padding: 8px 10px; }
+  #rankPanel h3 { font-size: 11px; color: #888; margin-bottom: 5px; letter-spacing: 1px; }
+  #rankList { font-size: 11px; line-height: 1.8; color: #ccc; }
+  #rankList div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* 세계지도 */
+  #worldMap { position: fixed; inset: 0; z-index: 60; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.75); }
+  #worldMap.open { display: flex; }
+  #wmBox { width: 560px; max-height: 86vh; overflow-y: auto; padding: 18px 22px; }
+  #wmBox h2 { color: #ffd700; font-size: 18px; letter-spacing: 2px; margin-bottom: 4px; }
+  #wmInfo { color: #8aa; font-size: 12px; margin-bottom: 12px; }
+  #wmGrid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; }
+  .wmcell { aspect-ratio: 1; border-radius: 4px; display: flex; align-items: center; justify-content: center;
+    font-size: 10px; cursor: pointer; border: 1px solid #333; color: #fff; text-shadow: 0 1px 2px #000; }
+  .wmcell.wmconq { background: var(--bc); border-color: rgba(255,215,0,.55); }
+  .wmcell.wmconq:hover { transform: scale(1.12); border-color: #ffd700; }
+  .wmcell.wmcur { background: var(--bc); border: 2px solid #fff; animation: wmpulse 1s infinite; }
+  .wmcell.wmlock { background: #15181e; color: #445; cursor: not-allowed; }
+  @keyframes wmpulse { 50% { box-shadow: 0 0 10px #fff; } }
+  #wmClose { margin-top: 12px; padding: 8px 22px; background: #2b3547; color: #ccc; border-radius: 6px; font-size: 13px; }
+  #wmClose:hover { background: #3a4a63; color: #fff; }
+
+  /* 푸터 + 개인정보처리방침 */
+  #footer { position: fixed; bottom: 0; left: 0; right: 0; height: 20px; z-index: 8;
+    background: rgba(5,8,14,.75); border-top: 1px solid rgba(255,255,255,.08);
+    display: flex; align-items: center; justify-content: flex-end; padding: 0 14px; gap: 14px; }
+  #footer span { font-size: 10px; color: #667; }
+  #footer a { font-size: 10px; color: #7fc7ff; cursor: pointer; text-decoration: underline; }
+  #privacyModal { position: fixed; inset: 0; z-index: 200; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.8); }
+  #privacyModal.open { display: flex; }
+  #privacyBox { width: 620px; max-width: 92vw; max-height: 84vh; overflow-y: auto; padding: 26px 30px; color: #cdd; }
+  #privacyBox h2 { color: #ffd700; font-size: 20px; margin-bottom: 14px; letter-spacing: 2px; }
+  #privacyBox h3 { color: #9fd; font-size: 14px; margin: 16px 0 6px; }
+  #privacyBox p, #privacyBox li { font-size: 12.5px; line-height: 1.8; color: #aab; }
+  #privacyBox .closeRow { text-align: center; margin-top: 18px; }
+  #privacyBox button { padding: 9px 30px; background: #2b3547; color: #ccc; border-radius: 6px; font-size: 13px; }
+  #privacyBox button:hover { background: #3a4a63; color: #fff; }
+
   /* 효과 */
 </style>
 </head>
@@ -183,9 +227,16 @@
   <div class="bartext" style="margin-top:-13px;margin-bottom:2px;" id="expText"></div>
   <div id="stats">공격 <b id="uiAtk"></b> · 방어 <b id="uiDef"></b> · 치명타 <b id="uiCrit"></b>% · 속도 <b id="uiSpd"></b></div>
   <div id="goldRow">💰 <span id="uiGold">0</span> G</div>
+  <div id="statPtsRow">✨ 포인트 <b id="uiPts">0</b>
+    <button class="stbtn" data-st="stAtk">힘 +2공</button>
+    <button class="stbtn" data-st="stHp">체력 +15HP</button>
+    <button class="stbtn" data-st="stDef">방어 +1</button>
+    <button class="stbtn" data-st="stSpd">민첩 +4속</button>
+  </div>
   <div id="btnRow">
     <button id="shopBtn">스킬샵 [B]</button>
     <button id="questBtn">퀘스트 [Q]</button>
+    <button id="mapBtn">세계지도 [V]</button>
   </div>
 </div>
 
@@ -239,7 +290,60 @@
 
 <div id="toasts"></div>
 
-<script src="firebase-config.js?v=14"></script>
-<script type="module" src="game.js?v=14"></script>
+<div id="rankPanel" class="panel">
+  <h3>🏆 레벨 랭킹</h3>
+  <div id="rankList"></div>
+</div>
+
+<div id="worldMap">
+  <div id="wmBox" class="panel">
+    <h2>🌍 세계지도</h2>
+    <div id="wmInfo"></div>
+    <div id="wmGrid"></div>
+    <div style="text-align:center;"><button id="wmClose">닫기 [V]</button></div>
+  </div>
+</div>
+
+<footer id="footer">
+  <span>© 2026 미니 MMORPG</span>
+  <a id="privacyLink">개인정보처리방침</a>
+  <a href="privacy.html" target="_blank">전체 보기</a>
+</footer>
+
+<div id="privacyModal">
+  <div id="privacyBox" class="panel">
+    <h2>개인정보처리방침</h2>
+    <p style="color:#667;font-size:12px;">미니 MMORPG (rpg.sanghak.kr) · 시행일: 2026년 8월 24일 · <a href="privacy.html" target="_blank" style="color:#7fc7ff;">전체 페이지 보기</a></p>
+    <h3>1. 수집하는 개인정보</h3>
+    <p>· Google 로그인: 이메일, 이름(표시 이름), 고유 사용자 ID<br>
+       · 게임 데이터: 캐릭터명, 직업, 레벨, 골드, 아이템, 장비, 좌표, 접속 시각<br>
+       · 멀티플레이: 채팅 메시지 및 공개 캐릭터 정보</p>
+    <h3>2. 수집 목적</h3>
+    <p>· Google OAuth 계정 식별 및 로그인<br>
+       · 게임 진행 상황 저장 및 복구, 랭킹 서비스 제공, 멀티플레이 동기화</p>
+    <h3>3. 보유 기간</h3>
+    <p>서비스 이용 중 보유하며, 삭제 요청 시 지체 없이 파기합니다.</p>
+    <h3>4. 제3자 제공 및 처리 위탁</h3>
+    <p>외부 제3자에게 제공하지 않으며, Google Cloud(Firebase) 인프라에서 처리됩니다.</p>
+    <h3>5. 이용자 권리</h3>
+    <p>열람·정정·삭제를 요구할 수 있습니다.</p>
+    <div class="resp" style="background:rgba(255,215,0,.06);border:1px solid rgba(255,215,0,.25);border-radius:8px;padding:14px 18px;margin-top:14px;">
+      <p><b style="color:#ffd700;">개인정보최고책임자: 배상학 (bae@sanghak.kr)</b></p>
+      <p style="margin-top:4px;color:#889;">요청 접수 후 7일 이내 회신</p>
+    </div>
+    <div class="closeRow"><button id="privacyClose">닫기</button></div>
+  </div>
+</div>
+
+<script src="firebase-config.js?v=15"></script>
+<script type="module" src="game.js?v=15"></script>
+<script>
+  document.getElementById('privacyLink').onclick = () => document.getElementById('privacyModal').classList.add('open');
+  document.getElementById('privacyClose').onclick = () => document.getElementById('privacyModal').classList.remove('open');
+  document.getElementById('privacyModal').addEventListener('click', e => {
+    if (e.target.id === 'privacyModal') e.target.classList.remove('open');
+  });
+  document.getElementById('wmClose').onclick = () => document.getElementById('worldMap').classList.remove('open');
+</script>
 </body>
 </html>

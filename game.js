@@ -2,7 +2,7 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getAuth, signInWithPopup, GoogleAuthProvider, signInAnonymously, connectAuthEmulator } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import {
   getFirestore, doc, setDoc, updateDoc, onSnapshot, collection,
-  query, orderBy, limit, addDoc, runTransaction, getDoc, writeBatch, increment,
+  query, orderBy, limit, addDoc, runTransaction, getDoc, writeBatch, increment, where,
   connectFirestoreEmulator
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
@@ -49,11 +49,84 @@ const M2_ZONES = [
   { type: 'skeleton', count: 8, cx: 450, cy: 300, spread: 200 },
   { type: 'skeleton', count: 6, cx: 1150, cy: 850, spread: 200 },
 ];
-const MAPS = {
-  m1: { name: '초원', req: null, spawn: SPAWN, portal: { x: 1490, y: 600, label: '저주받은 묘지', to: 'm2' } },
-  m2: { name: '저주받은 묘지', req: 'q5', spawn: { x: 170, y: 600 }, portal: { x: 90, y: 600, label: '초원', to: 'm1' } },
+const KINDS = {
+  slime:      { base: 'slime', name: '슬라임', main: '#2ecc71', shade: '#1e8449' },
+  rslime:     { base: 'slime', name: '레드 슬라임', main: '#e74c3c', shade: '#a93226' },
+  islime:     { base: 'slime', name: '서리 슬라임', main: '#5dade2', shade: '#2e86c1' },
+  pslime:     { base: 'slime', name: '독 슬라임', main: '#a040b0', shade: '#6c3483' },
+  dslime:     { base: 'slime', name: '암흑 슬라임', main: '#4a4a5a', shade: '#2a2a38' },
+  goblin:     { base: 'goblin', name: '고블린', main: '#6da34d', shade: '#4f7a36' },
+  hob:        { base: 'goblin', name: '홉고블린', main: '#c8a03c', shade: '#9a7828' },
+  orcwar:     { base: 'goblin', name: '오크 전사', main: '#5d8a41', shade: '#3f5c33' },
+  madorc:     { base: 'goblin', name: '광포한 오크', main: '#b05030', shade: '#7a3418' },
+  wolf:       { base: 'wolf', name: '늑대', main: '#9aa2a8', shade: '#6f777c' },
+  hound:      { base: 'wolf', name: '지옥견', main: '#c0392b', shade: '#7a2418' },
+  frost:      { base: 'wolf', name: '서리늑대', main: '#aed6f1', shade: '#5dade2' },
+  nightmare:  { base: 'wolf', name: '몽마', main: '#7d5fff', shade: '#4a2fa8' },
+  skeleton:   { base: 'skeleton', name: '스켈레톤', main: '#e8e4d8', shade: '#b8b4a8' },
+  skarcher:   { base: 'skeleton', name: '해골 궁수', main: '#d4c8a8', shade: '#a89878' },
+  knight:     { base: 'skeleton', name: '죽음의 기사', main: '#8d93a1', shade: '#565c68' },
+  wraith:     { base: 'skeleton', name: '사령', main: '#a8d8d8', shade: '#6aa8a8' },
+  orcchief:   { base: 'orc', name: '오크 족장', main: '#5d8a41', shade: '#3f5c33' },
+  troll:      { base: 'orc', name: '트롤', main: '#3d7a5c', shade: '#2a5540' },
+  ogre:       { base: 'orc', name: '오거', main: '#b07030', shade: '#7a4c18' },
+  cyclops:    { base: 'orc', name: '사이클롭스', main: '#8a6b45', shade: '#5c4527' },
+  demon:      { base: 'orc', name: '마귀', main: '#a03050', shade: '#6a1830' },
+  lich:       { base: 'lich', name: '리치 왕', main: '#8b6bff', shade: '#5a3fd4' },
+  lichlord:   { base: 'lich', name: '리치 로드', main: '#c05fff', shade: '#8a2fd4' },
+  deathlord:  { base: 'lich', name: '죽음 군주', main: '#40c090', shade: '#208a60' },
+  archlich:   { base: 'lich', name: '대마령', main: '#ff6b9a', shade: '#d43a6a' },
 };
-const myMap = () => me.map || 'm1';
+const KIND_BASE = {
+  slime:    { hp: 35, atk: 6, exp: 12, gold: 15, r: 16, aggro: 160, speed: 45, respawn: 8000, range: 42 },
+  goblin:   { hp: 70, atk: 11, exp: 28, gold: 35, r: 18, aggro: 200, speed: 70, respawn: 9000, range: 46 },
+  wolf:     { hp: 130, atk: 18, exp: 55, gold: 70, r: 20, aggro: 260, speed: 105, respawn: 10000, range: 50 },
+  skeleton: { hp: 220, atk: 26, exp: 90, gold: 110, r: 19, aggro: 240, speed: 75, respawn: 12000, range: 50 },
+  orc:      { hp: 800, atk: 35, exp: 400, gold: 500, r: 42, aggro: 420, speed: 65, respawn: 120000, range: 72 },
+  lich:     { hp: 2000, atk: 55, exp: 1500, gold: 2500, r: 46, aggro: 460, speed: 55, respawn: 180000, range: 80 },
+};
+const BIOMES = [
+  { name: '초원', style: 'meadow', kinds: ['slime', 'goblin', 'wolf'], boss: 'orcchief' },
+  { name: '어두운 숲', style: 'grave', kinds: ['wolf', 'goblin', 'pslime'], boss: 'troll' },
+  { name: '사막', style: 'meadow', kinds: ['hob', 'skeleton', 'hound'], boss: 'ogre' },
+  { name: '설원', style: 'meadow', kinds: ['frost', 'islime', 'wolf'], boss: 'knight' },
+  { name: '못가', style: 'grave', kinds: ['pslime', 'goblin', 'wraith'], boss: 'wraith' },
+  { name: '화산', style: 'meadow', kinds: ['hound', 'madorc', 'rslime'], boss: 'demon' },
+  { name: '동굴', style: 'grave', kinds: ['skeleton', 'madorc', 'dslime'], boss: 'cyclops' },
+  { name: '폐허', style: 'grave', kinds: ['knight', 'skarcher', 'wolf'], boss: 'orcwar' },
+  { name: '마계', style: 'grave', kinds: ['demon', 'nightmare', 'knight'], boss: 'archlich' },
+  { name: '천공', style: 'meadow', kinds: ['dslime', 'frost', 'wraith'], boss: 'lichlord' },
+];
+const MAX_PAGE = 100;
+const pageId = n => 'p' + n;
+const myPage = () => { const m = me.map || 'm1'; return m.startsWith('p') ? m : 'p1'; };
+const pageNum = () => +myPage().slice(1) || 1;
+const pageDiff = n => 1 + (n - 1) * .45;
+const pageExp = n => 1 + (n - 1) * .6;
+function pageDef(n) {
+  const bio = BIOMES[Math.min(9, Math.floor((n - 1) / 10))];
+  const tier = (n - 1) % 10;
+  const dh = pageDiff(n), de = pageExp(n);
+  const mk = kindId => {
+    const k = KINDS[kindId], b = KIND_BASE[k.base];
+    const km = 1 + tier * .18;
+    return { ...k, hp: Math.round(b.hp * dh * km), atk: Math.round(b.atk * dh * km * .9),
+      exp: Math.round(b.exp * de * km), gold: Math.round(b.gold * de * km),
+      r: b.r, aggro: b.aggro, speed: b.speed, respawn: b.respawn, range: b.range };
+  };
+  const bossKind = mk(bio.boss);
+  bossKind.hp = Math.round(bossKind.hp * 3);
+  bossKind.exp = Math.round(bossKind.exp * 2.2);
+  bossKind.gold = Math.round(bossKind.gold * 2);
+  bossKind.r = Math.round(KIND_BASE[KINDS[bio.boss].base].r * 1.15);
+  return {
+    n, id: pageId(n), name: `${bio.name} ${tier + 1}구역`, bio,
+    kinds: [mk(bio.kinds[0]), mk(bio.kinds[1])], boss: bossKind,
+    spawn: { x: n === 1 ? 800 : 170, y: 600 },
+  };
+}
+const myMap = myPage;
+
 
 const SLOTS = [
   ['weapon', '무기'], ['armor', '갑옷'], ['helmet', '모자'],
@@ -157,7 +230,8 @@ const QUESTS = [
 ];
 
 /* ================= 헬퍼 ================= */
-const expNeed = lv => lv * lv * 30;
+const expNeed = lv => Math.floor(25 * Math.pow(lv, 2.2));
+const maxHpOf = () => Math.round(cdef().hp + ((me.lv || 1) - 1) * 10 + (me.stHp || 0) * 15);
 const clampN = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const rand = (a, b) => a + Math.random() * (b - a);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -265,10 +339,10 @@ const skillLv = id => (me.skills || {})[id] || 0;
 const passSum = f => Object.keys(SKILLS).reduce((a, id) => a + (SKILLS[id][f] || 0) * skillLv(id), 0);
 const eqStats = f => Object.values(me.equipped || {}).reduce((a, id) => a + (getItem(id)[f] || 0), 0);
 const cdef = () => CLASSES[myCls] || CLASSES.warrior;
-const totalAtk = () => (me.atk || 10) + eqStats('atk') + passSum('atk');
-const totalDef = () => eqStats('def') + passSum('def');
+const totalAtk = () => (me.atk || 10) + (me.stAtk || 0) * 2 + eqStats('atk') + passSum('atk');
+const totalDef = () => (me.stDef || 0) + eqStats('def') + passSum('def');
 const totalCrit = () => cdef().crit + passSum('crit') + eqStats('crit');
-const moveSpd = () => cdef().speed + passSum('spd') + eqStats('spd');
+const moveSpd = () => cdef().speed + (me.stSpd || 0) * 4 + passSum('spd') + eqStats('spd');
 const classActiveId = () => Object.keys(SKILLS).find(k => SKILLS[k].cls === myCls && SKILLS[k].type === 'active');
 
 function float(x, y, text, color = '#fff', big = false) { floats.push({ x, y, text, color, t: 0, big }); }
@@ -314,6 +388,31 @@ async function ensureWorld() {
   try { await batch.commit(); } catch (e) {}
 }
 
+async function ensurePage(n) {
+  const pid = pageId(n);
+  const flag = doc(db, 'world', 'init_' + pid);
+  if ((await getDoc(flag)).exists()) return;
+  const pd = pageDef(n);
+  const batch = writeBatch(db);
+  const zones = [{ cx: 450, cy: 300, spread: 200 }, { cx: 1150, cy: 850, spread: 200 }];
+  for (let zi = 0; zi < 2; zi++) {
+    const k = pd.kinds[zi];
+    for (let j = 0; j < 6; j++) {
+      batch.set(doc(db, 'monsters', `${pid}_z${zi}_${j}`), {
+        page: pid, kind: k.name, hp: k.hp, maxHp: k.hp, alive: true,
+        homeX: clampN(zones[zi].cx + rand(-zones[zi].spread, zones[zi].spread), 60, WORLD.w - 60),
+        homeY: clampN(zones[zi].cy + rand(-zones[zi].spread, zones[zi].spread), 60, WORLD.h - 60),
+      });
+    }
+  }
+  batch.set(doc(db, 'monsters', pid + '_boss'), {
+    page: pid, kind: pd.boss.name, boss: true, hp: pd.boss.hp, maxHp: pd.boss.hp, alive: true,
+    homeX: 800, homeY: 1000,
+  });
+  batch.set(flag, { ts: Date.now() });
+  try { await batch.commit(); } catch (e) {}
+}
+
 async function ensureWorldM2() {
   const flag = doc(db, 'world', 'init_m2');
   if ((await getDoc(flag)).exists()) return;
@@ -332,12 +431,37 @@ async function ensureWorldM2() {
   try { await batch.commit(); } catch (e) {}
 }
 
+function kindByName(name) {
+  return Object.values(KINDS).find(k => k.name === name) || KINDS.slime;
+}
 function makeSim(id, d) {
-  const def = d.type === 'boss' ? BOSS_DEF : d.type === 'skeleton' ? SKELETON_DEF : d.type === 'lich' ? LICH_DEF : MONSTER_TYPES[d.type];
-  return { id, type: d.type, map: id.startsWith('m2') ? 'm2' : 'm1', uniq: !!d.uniq, def, x: d.homeX, y: d.homeY, wa: rand(0, Math.PI * 2), nextWander: 0, atkCdUntil: 0, alive: !!d.alive, uniq: !!d.uniq, hp: typeof d.hp === 'number' ? d.hp : def.hp, respawnAt: d.respawnAt || 0, dirA: Math.PI / 2, movingF: false, aggroF: false, blink: rand(0, 4000) };
+  const isPage = (d.page || '').startsWith('p');
+  let def, type, sprId;
+  if (isPage) {
+    const k = kindByName(d.kind || '슬라임');
+    type = k.base;
+    sprId = k.base + '::' + k.name;
+    def = { name: k.name, hp: d.maxHp || d.hp || 100, maxHp: d.maxHp || d.hp || 100, atk: 10, exp: 10, gold: 10,
+      r: KIND_BASE[k.base].r * (d.boss ? 1.2 : 1), aggro: KIND_BASE[k.base].aggro,
+      speed: KIND_BASE[k.base].speed, respawn: KIND_BASE[k.base].respawn, range: KIND_BASE[k.base].range };
+    if (!SPRITE_DEFS[sprId]) {
+      const bp = SPRITE_DEFS[k.base].pal;
+      const keys = Object.keys(bp);
+      SPRITE_DEFS[sprId] = { pal: { ...bp, [keys[1]]: k.main, [keys[2]]: k.shade }, rows: SPRITE_DEFS[k.base].rows };
+    }
+  } else {
+    def = d.type === 'boss' ? BOSS_DEF : d.type === 'skeleton' ? SKELETON_DEF : d.type === 'lich' ? LICH_DEF : (MONSTER_TYPES[d.type] || MONSTER_TYPES.slime);
+    type = d.type || 'slime';
+    sprId = type;
+  }
+  return { id, type, page: isPage ? d.page : (id.startsWith('m2') ? 'm2' : 'm1'), boss: !!d.boss, sprId, uniq: !!d.uniq, def,
+    x: d.homeX, y: d.homeY, wa: rand(0, Math.PI * 2), nextWander: 0, atkCdUntil: 0, alive: !!d.alive,
+    hp: typeof d.hp === 'number' ? d.hp : def.hp, maxHp: def.maxHp, respawnAt: d.respawnAt || 0,
+    dirA: Math.PI / 2, movingF: false, aggroF: false, blink: rand(0, 4000) };
 }
 
 function sdef(s) {
+  if (s.maxHp && s.def.hp !== s.maxHp) s.def.hp = s.maxHp;
   if (!s.uniq) return s.def;
   if (!s._ud) s._ud = { ...s.def, name: '★' + s.def.name, hp: Math.round(s.def.hp * 6), maxHp: Math.round(s.def.hp * 6), atk: Math.round(s.def.atk * 1.8), exp: s.def.exp * 8, gold: s.def.gold * 15, r: Math.round(s.def.r * 1.25), aggro: Math.round(s.def.aggro * 1.3) };
   return s._ud;
@@ -378,8 +502,12 @@ function hitFlashOverlay(c, s, now, d) {
 }
 
 /* ================= 실시간 구독 ================= */
+let unsubMon = null;
 function watchMonsters() {
-  onSnapshot(collection(db, 'monsters'), snap => {
+  if (unsubMon) unsubMon();
+  sims = [];
+  othersPrev = {};
+  unsubMon = onSnapshot(query(collection(db, 'monsters'), where('page', '==', myPage())), snap => {
     snap.forEach(dc => {
       const d = dc.data();
       let s = sims.find(x => x.id === dc.id);
@@ -396,7 +524,7 @@ function watchMonsters() {
       s.hp = typeof d.hp === 'number' ? d.hp : sdef(s).hp;
       s.respawnAt = d.respawnAt || 0;
     });
-    bossWasAlive = (sims.find(s => s.id === 'boss') || { alive: true }).alive;
+    bossWasAlive = (sims.find(s => s.boss) || { alive: true }).alive;
   });
 }
 
@@ -411,6 +539,21 @@ function watchLoot() {
     lootItems = {};
     snap.forEach(dc => lootItems[dc.id] = dc.data());
   });
+}
+
+function watchRank() {
+  onSnapshot(query(collection(db, 'players'), orderBy('lv', 'desc'), limit(10)), snap => {
+    const rows = [];
+    let i = 0;
+    snap.forEach(dc => {
+      const p = dc.data();
+      i++;
+      const medal = ['🥇', '🥈', '🥉'][i - 1] || `${i}`;
+      rows.push(`<div><span style="color:#889">${medal}</span> ${esc(p.name || '?')} <b style="color:#ffd700">Lv${p.lv || 1}</b> <span style="color:#667">${CLASSES[p.cls]?.icon || ''}</span></div>`);
+    });
+    const el = $('rankList');
+    if (el) el.innerHTML = rows.join('');
+  }, () => {});
 }
 
 function watchChat() {
@@ -428,10 +571,10 @@ function watchChat() {
 
 /* ================= 성장 ================= */
 function levelCalc(p, expGain) {
-  let lv = p.lv || 1, exp = (p.exp || 0) + expGain, maxHp = p.maxHp || 100, atk = p.atk || 10, leveled = 0;
-  while (exp >= expNeed(lv)) { exp -= expNeed(lv); lv++; maxHp += 20; atk += 2; leveled++; }
-  const upd = { exp, lv, maxHp, atk };
-  if (leveled) upd.hp = maxHp;
+  let lv = p.lv || 1, exp = (p.exp || 0) + expGain, leveled = 0;
+  while (lv < 100 && exp >= expNeed(lv)) { exp -= expNeed(lv); lv++; leveled++; }
+  const upd = { exp, lv };
+  if (leveled) upd.statPts = (p.statPts || 0) + 3 * leveled;
   return { upd, leveled, nlv: lv };
 }
 
@@ -453,6 +596,7 @@ async function gainExp(expGain, kill = null) {
     tx.update(meRef, { ...upd, gold, q });
     if (leveled) setTimeout(() => {
       float(me.x, me.y - 52, `LEVEL UP! Lv ${nlv}`, '#ffd700', true);
+      toast(`✨ 레벨업! 스탯 포인트 +${3 * leveled} (좌측 상단에서 분배)`, 'sysq');
       rings.push({ x: me.x, y: me.y, r: 90, t: 0, max: 600, color: '255,215,0' });
       fxSparks(me.x, me.y, 22, '#ffd700', 180);
       sfx('levelup');
@@ -502,6 +646,15 @@ async function handleKill(sim) {
   sfx('coin');
   await gainExp(d2.exp, { type: sim.type, gold });
   dropLoot(sim.type, sim.x, sim.y);
+  if (sim.boss && sim.page && sim.page.startsWith('p')) {
+    const pn2 = +sim.page.slice(1);
+    if (!(me.conq || {})[pn2]) {
+      updateDoc(meRef, { ['conq.' + pn2]: true }).catch(() => {});
+      toast(`👑 ${pn2}구역 정복! ${pn2 < MAX_PAGE ? (pn2 + 1) + '구역 개방' : '모든 지역 정복 완료!'}`, 'sysq');
+      sysMsg(`👑 ${myName}님이 ${pn2}구역을 정복했습니다!`, 'q');
+      sfx('levelup');
+    }
+  }
   if (sim.uniq) {
     for (const itemId of (UNIQ_DROPS[sim.type] || [])) {
       await addDoc(collection(db, 'loot'), { itemId, x: sim.x + rand(-20, 20), y: sim.y + rand(-20, 20), map: myMap(), ts: Date.now() }).catch(() => {});
@@ -579,7 +732,7 @@ function useSkill(slot) {
 
   if (id === 'heal') {
     const amt = Math.round(me.maxHp * .4);
-    me.hp = Math.min(me.maxHp, (me.hp || 0) + amt);
+    me.hp = Math.min(maxHpOf(), (me.hp || 0) + amt);
     updateDoc(meRef, { hp: me.hp }).catch(() => {});
     float(me.x, me.y - 34, `+${amt} HP`, '#2ecc71');
     rings.push({ x: me.x, y: me.y, r: 70, t: 0, max: 450, color: '46,204,113' });
@@ -860,7 +1013,7 @@ function slotClick(idx) {
     if (!itemId) return;
     const it = getItem(itemId);
     if (it.heal) {
-      const nhp = Math.min(me.maxHp, (me.hp || 0) + it.heal);
+      const nhp = Math.min(maxHpOf(), (me.hp || 0) + it.heal);
       delete inv[String(idx)];
       tx.update(meRef, { inv, hp: nhp });
       setTimeout(() => {
@@ -1690,23 +1843,25 @@ function buildWorldM2() {
   return cv2;
 }
 
-function gotoMap(to) {
-  if (mapFading || !MAPS[to]) return;
+function gotoPage(n) {
+  if (mapFading || n < 1 || n > MAX_PAGE) return;
   mapFading = true;
   const ov = $('mapFade');
   if (ov) ov.style.opacity = 1;
   sfx('boom');
   doShake(5);
-  setTimeout(() => {
-    me.map = to;
-    const sp = MAPS[to].spawn;
+  setTimeout(async () => {
+    await ensurePage(n);
+    me.map = pageId(n);
+    const sp = pageDef(n).spawn;
     me.x = sp.x; me.y = sp.y;
     dest = null; attackTargetSimId = null;
     cam.x = sp.x; cam.y = sp.y;
-    updateDoc(meRef, { map: to, x: sp.x, y: sp.y }).catch(() => {});
+    updateDoc(meRef, { map: pageId(n), x: sp.x, y: sp.y }).catch(() => {});
     const mn = $('mapName');
-    if (mn) mn.textContent = MAPS[to].name;
-    sysMsg(`${myName}님이 ${MAPS[to].name}(으)로 이동했습니다.`);
+    if (mn) mn.textContent = pageDef(n).name;
+    watchMonsters();
+    sysMsg(`${myName}님이 ${pageDef(n).name}(으)로 이동했습니다.`);
     setTimeout(() => { if (ov) ov.style.opacity = 0; mapFading = false; }, 300);
   }, 380);
 }
@@ -2030,7 +2185,7 @@ function drawSlime(s, now) {
   ctx.beginPath(); ctx.ellipse(s.x, s.y + 10, r0(s) * .95, r0(s) * .36, 0, 0, 7); ctx.fill();
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  drawSprite('slime', s.x, s.y + 9, s.uniq ? 5 : 4, { squashX: 1 + wob * .07, squashY: 1 - wob * .07, flash, bob: s.movingF ? Math.abs(Math.sin(now / 140 + s.blink)) * 3 : 0 });
+  drawSprite(s.sprId || 'slime', s.x, s.y + 9, s.uniq ? 5 : 4, { squashX: 1 + wob * .07, squashY: 1 - wob * .07, flash, bob: s.movingF ? Math.abs(Math.sin(now / 140 + s.blink)) * 3 : 0 });
   mobUI(s, false);
 }
 function r0(s) { return sdef(s).r; }
@@ -2040,7 +2195,7 @@ function drawGoblin(s, now) {
   ctx.beginPath(); ctx.ellipse(s.x, s.y + 12, r0(s) * .95, r0(s) * .36, 0, 0, 7); ctx.fill();
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  drawSprite('goblin', s.x, s.y + 11, s.uniq ? 5 : 4, { flash, bob: s.movingF ? Math.abs(Math.sin(now / 110)) * 3 : 0 });
+  drawSprite(s.sprId || 'goblin', s.x, s.y + 11, s.uniq ? 5 : 4, { flash, bob: s.movingF ? Math.abs(Math.sin(now / 110)) * 3 : 0 });
   mobUI(s, false);
 }
 
@@ -2050,7 +2205,7 @@ function drawWolf(s, now) {
   ctx.beginPath(); ctx.ellipse(s.x, s.y + 13, r0(s) * 1.2, r0(s) * .32, 0, 0, 7); ctx.fill();
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  drawSprite('wolf', s.x, s.y + 12, s.uniq ? 5 : 4, { flip: flip < 0, flash, bob: s.movingF ? Math.abs(Math.sin(now / 75)) * 2 : 0 });
+  drawSprite(s.sprId || 'wolf', s.x, s.y + 12, s.uniq ? 5 : 4, { flip: flip < 0, flash, bob: s.movingF ? Math.abs(Math.sin(now / 75)) * 2 : 0 });
   mobUI(s, false);
 }
 
@@ -2059,7 +2214,7 @@ function drawSkeleton(s, now) {
   ctx.beginPath(); ctx.ellipse(s.x, s.y + 12, r0(s) * .9, r0(s) * .34, 0, 0, 7); ctx.fill();
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  drawSprite('skeleton', s.x, s.y + 11, s.uniq ? 5.5 : 4.4, { flash, bob: s.movingF ? Math.abs(Math.sin(now / 120)) * 3 : 0 });
+  drawSprite(s.sprId || 'skeleton', s.x, s.y + 11, s.uniq ? 5.5 : 4.4, { flash, bob: s.movingF ? Math.abs(Math.sin(now / 120)) * 3 : 0 });
   mobUI(s, false);
 }
 
@@ -2083,7 +2238,7 @@ function drawLich(s, now) {
   ctx.beginPath(); ctx.ellipse(s.x, s.y + 14, r0(s) * .8, r0(s) * .3, 0, 0, 7); ctx.fill();
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  drawSprite('lich', s.x, s.y + 16 - fl, s.uniq ? 6 : 5, { flash });
+  drawSprite(s.sprId || 'lich', s.x, s.y + 16 - fl, s.uniq ? 6 : 5, { flash });
   for (let i = 0; i < 2; i++) {
     const a = now / 400 + i * Math.PI;
     ctx.fillStyle = '#8b6bff';
@@ -2122,7 +2277,7 @@ function drawBoss(s, now) {
   const swing = s.swingT && now - s.swingT < 320 ? (now - s.swingT) / 320 : -1;
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  drawSprite('orc', s.x, s.y + 16, s.uniq ? 6 : 5, { flash, bob: Math.sin(now / 300) * 2 });
+  drawSprite(s.sprId || 'orc', s.x, s.y + 16, s.uniq ? 6 : 5, { flash, bob: Math.sin(now / 300) * 2 });
 
   ctx.save();
   ctx.translate(s.x + r * .78, s.y - r * .28);
@@ -2210,14 +2365,12 @@ function draw(now) {
     ctx.shadowBlur = 0;
   }
 
-  const curPortal = MAPS[myMap()].portal;
-  if (curPortal) {
-    const toMap = MAPS[curPortal.to];
-    const locked = toMap.req && !(me.qc || {})[toMap.req];
+  const pn = pageNum();
+  const drawPortal = (px, label, locked, dirRight) => {
     const glow = .5 + Math.sin(now / 300) * .25;
     const pc2 = locked ? '120,120,140' : '160,90,255';
     ctx.save();
-    ctx.translate(curPortal.x, curPortal.y);
+    ctx.translate(px, 600);
     const pg = ctx.createRadialGradient(0, 0, 4, 0, 0, 48);
     pg.addColorStop(0, `rgba(${pc2},${.45 * glow})`);
     pg.addColorStop(1, 'transparent');
@@ -2229,11 +2382,11 @@ function draw(now) {
     ctx.strokeStyle = `rgba(${pc2},${.4 + glow * .3})`;
     ctx.lineWidth = 2;
     ctx.setLineDash([10, 8]);
-    ctx.lineDashOffset = -now / 28;
+    ctx.lineDashOffset = (dirRight ? -1 : 1) * now / 28;
     ctx.beginPath(); ctx.ellipse(0, 0, 21, 31, 0, 0, 7); ctx.stroke();
     ctx.setLineDash([]);
-    for (let i = 0; i < 3; i++) {
-      const a = now / 480 + i * 2.1;
+    for (let i2 = 0; i2 < 3; i2++) {
+      const a = now / 480 + i2 * 2.1;
       ctx.fillStyle = `rgba(${pc2},.9)`;
       ctx.beginPath(); ctx.arc(Math.cos(a) * 13, Math.sin(a) * 21, 2.5, 0, 7); ctx.fill();
     }
@@ -2242,9 +2395,11 @@ function draw(now) {
     ctx.textAlign = 'center';
     ctx.fillStyle = locked ? '#9a9aa8' : `rgb(${pc2})`;
     ctx.shadowColor = 'rgba(0,0,0,.9)'; ctx.shadowBlur = 4;
-    ctx.fillText((locked ? '🔒 ' : '포탈 → ') + curPortal.label, curPortal.x, curPortal.y - 54);
+    ctx.fillText((locked ? '🔒 ' : (dirRight ? '▶ ' : '◀ ')) + label, px, 546);
     ctx.shadowBlur = 0;
-  }
+  };
+  if (pn < MAX_PAGE) drawPortal(1490, pageDef(pn + 1).name, !(me.conq || {})[pn], true);
+  if (pn > 1) drawPortal(100, pageDef(pn - 1).name, false, false);
 
   for (const s of sims) {
     if (!s.alive || s.map !== myMap()) continue;
@@ -2385,8 +2540,8 @@ function updateHUD() {
   $('uiLv').textContent = me.lv;
   $('uiCls').textContent = cdef().icon + ' ' + cdef().name;
   $('uiName').textContent = myName;
-  $('hpbar').style.width = clampN((me.hp || 0) / me.maxHp * 100, 0, 100) + '%';
-  $('hpText').textContent = `${Math.max(0, Math.ceil(me.hp || 0))} / ${me.maxHp}`;
+  $('hpbar').style.width = clampN((me.hp || 0) / maxHpOf() * 100, 0, 100) + '%';
+  $('hpText').textContent = `${Math.max(0, Math.ceil(me.hp || 0))} / ${maxHpOf()}`;
   $('expbar').style.width = clampN((me.exp || 0) / expNeed(me.lv) * 100, 0, 100) + '%';
   $('expText').textContent = `EXP ${me.exp || 0} / ${expNeed(me.lv)}`;
   $('uiAtk').textContent = totalAtk();
@@ -2394,6 +2549,12 @@ function updateHUD() {
   $('uiCrit').textContent = Math.round(totalCrit() * 100);
   $('uiSpd').textContent = Math.round(moveSpd());
   $('uiGold').textContent = (me.gold || 0).toLocaleString();
+  const pr = $('statPtsRow');
+  if (pr) {
+    const pts = me.statPts || 0;
+    pr.style.display = pts > 0 ? 'flex' : 'none';
+    if (pts > 0) $('uiPts').textContent = pts;
+  }
 }
 
 function updateHotbar(now) {
@@ -2427,6 +2588,33 @@ chatInput.addEventListener('keydown', e => {
   }
 });
 
+function toggleWorldMap() {
+  const el = $('worldMap');
+  const open = !el.classList.contains('open');
+  el.classList.toggle('open', open);
+  if (open) renderWorldMap();
+}
+const BIO_COLORS = ['#2e8455', '#1f6039', '#c9a227', '#aed6f1', '#4a7a5c', '#c0392b', '#5d656e', '#7d8790', '#6c3483', '#5dade2'];
+function renderWorldMap() {
+  const grid = $('wmGrid');
+  let html = '';
+  for (let n = 1; n <= MAX_PAGE; n++) {
+    const conq = (me.conq || {})[n];
+    const cur = n === pageNum();
+    const bio = BIOMES[Math.min(9, Math.floor((n - 1) / 10))];
+    const cls = cur ? 'wmcur' : conq ? 'wmconq' : 'wmlock';
+    html += `<div class="wmcell ${cls}" data-p="${n}" title="${pageDef(n).name}" style="--bc:${BIO_COLORS[BIOMES.indexOf(bio)]}">${n}</div>`;
+  }
+  grid.innerHTML = html;
+  $('wmInfo').textContent = `정복 ${Object.keys(me.conq || {}).filter(k => me.conq[k]).length} / ${MAX_PAGE} · 현재: ${pageDef(pageNum()).name}`;
+  grid.querySelectorAll('.wmcell').forEach(c => c.onclick = () => {
+    const n = +c.dataset.p;
+    if (n === pageNum()) { toggleWorldMap(); return; }
+    if (n === 1 || (me.conq || {})[n]) { toggleWorldMap(); gotoPage(n); }
+    else toast('🔒 정복하지 않은 구역입니다');
+  });
+}
+
 function togglePanel(id) {
   const el = $(id);
   const opening = !el.classList.contains('open');
@@ -2439,6 +2627,8 @@ function togglePanel(id) {
 }
 const rb2 = $('reviveBtn');
 if (rb2) rb2.onclick = reviveNow;
+$('mapBtn').onclick = () => { sfx('click'); toggleWorldMap(); };
+document.querySelectorAll('.stbtn').forEach(b => b.onclick = () => addStat(b.dataset.st));
 $('shopBtn').onclick = () => { sfx('click'); togglePanel('shopPanel'); };
 $('questBtn').onclick = () => { sfx('click'); togglePanel('questPanel'); };
 document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => $(b.dataset.close).classList.remove('open'));
@@ -2460,6 +2650,7 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyB') { sfx('click'); togglePanel('shopPanel'); }
   if (e.code === 'KeyQ') { sfx('click'); togglePanel('questPanel'); }
   if (e.code === 'KeyM') toggleMute();
+  if (e.code === 'KeyV') { sfx('click'); toggleWorldMap(); }
 });
 addEventListener('keyup', e => keys[e.code] = false);
 
@@ -2548,13 +2739,13 @@ function loop(t) {
     updateDoc(meRef, { x: me.x, y: me.y, hp: me.hp, lastSeen: now }).catch(() => {});
   }
 
-  if (!me.dead && now - (me.lastHurtAt || 0) > 4000 && me.hp < me.maxHp) {
-    me.hp = Math.min(me.maxHp, me.hp + me.maxHp * .02 * dt / 1000);
+  if (!me.dead && now - (me.lastHurtAt || 0) > 4000 && me.hp < maxHpOf()) {
+    me.hp = Math.min(maxHpOf(), me.hp + maxHpOf() * .02 * dt / 1000);
     hpDirty = true;
   }
 
   if (me.dead && me.deadUntil && now > me.deadUntil) {
-    me.dead = false; me.hp = me.maxHp;
+    me.dead = false; me.hp = maxHpOf();
     me.x = SPAWN.x; me.y = SPAWN.y;
     updateDoc(meRef, { dead: false, hp: me.hp, x: me.x, y: me.y, lastSeen: now }).catch(() => {});
     $('deadOv').style.display = 'none';
@@ -2583,12 +2774,12 @@ function loop(t) {
   cam.y += (me.y - cam.y) * Math.min(1, dt * .01);
 
   if (!me.dead && !mapFading) {
-    const portal = MAPS[myMap()].portal;
-    if (portal && Math.hypot(me.x - portal.x, me.y - portal.y) < 48) {
-      const to = portal.to, req = MAPS[to].req;
-      if (!req || (me.qc || {})[req]) gotoMap(to);
-      else if (now - portalHintT > 3000) { portalHintT = now; float(me.x, me.y - 44, '🔒 「보스 사냥」 퀘스트 필요', '#ff9a9a'); }
+    const pn = pageNum();
+    if (pn < MAX_PAGE && Math.hypot(me.x - 1490, me.y - 600) < 48) {
+      if ((me.conq || {})[pn]) gotoPage(pn + 1);
+      else if (now - portalHintT > 3000) { portalHintT = now; float(me.x, me.y - 44, `🔒 ${pn}구역 보스 처치 필요`, '#ff9a9a'); }
     }
+    if (pn > 1 && Math.hypot(me.x - 100, me.y - 600) < 48) gotoPage(pn - 1);
   }
   if (!goldHintShown && (me.gold || 0) >= 400 && Object.keys(me.skills || {}).length === 0) {
     goldHintShown = true;
@@ -2631,6 +2822,27 @@ function reviveNow() {
     fxSparks(me.x, me.y, 16, '#ffd700', 150);
     sfx('levelup');
     float(me.x, me.y - 40, '즉시 부활!', '#ffd700');
+  }).catch(() => {});
+}
+
+function addStat(k) {
+  if (!(me.statPts > 0)) return;
+  runTransaction(db, async tx => {
+    const snap = await tx.get(meRef);
+    if (!snap.exists()) return false;
+    const p = snap.data();
+    if ((p.statPts || 0) <= 0) return false;
+    tx.update(meRef, { statPts: p.statPts - 1, [k]: (p[k] || 0) + 1 });
+    return true;
+  }).then(ok => {
+    if (!ok) return;
+    sfx('buy');
+    if (k === 'stHp') {
+      me.hp = Math.min(maxHpOf(), (me.hp || 0) + 15);
+      updateDoc(meRef, { hp: me.hp }).catch(() => {});
+    }
+    const NM = { stAtk: '힘', stHp: '체력', stDef: '방어', stSpd: '민첩' };
+    float(me.x, me.y - 30, `${NM[k]} +1`, '#7fe3a0');
   }).catch(() => {});
 }
 
@@ -2761,7 +2973,7 @@ async function init() {
       name: myName, cls: choice.cls, x: SPAWN.x, y: SPAWN.y,
       lv: 1, exp: 0, hp: c.hp, maxHp: c.hp, atk: c.atk,
       gold: 100, inv: {}, equipped: {}, skills: {}, q: {}, qc: {},
-      dead: false, color: colorOf(uid), map: 'm1', lastSeen: Date.now(),
+      dead: false, color: colorOf(uid), map: 'p1', conq: {}, statPts: 0, lastSeen: Date.now(),
     });
     await sysMsg(`${myName}(${c.name})님이 월드에 입장했습니다.`);
   } else {
@@ -2789,11 +3001,12 @@ async function init() {
   watchMonsters();
   watchLoot();
   watchChat();
+  watchRank();
 
   ready = true;
   $('loading').style.display = 'none';
   const mn = $('mapName');
-  if (mn) mn.textContent = MAPS[myMap()].name;
+  if (mn) mn.textContent = pageDef(pageNum()).name;
   renderInvUI();
 }
 

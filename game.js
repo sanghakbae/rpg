@@ -1134,20 +1134,21 @@ function addToInv(itemId) {
   }).catch(() => null);
 }
 
-function slotClick(idx) {
+function slotClick(rawId) {
   runTransaction(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return;
     const p = snap.data();
     const inv = { ...(p.inv || {}) };
     const eq = { ...(p.equipped || {}) };
-    const itemId = inv[String(idx)];
-    if (!itemId) return;
+    const key = findInvKey(inv, rawId);
+    if (!key) return;
+    const itemId = inv[key];
     const it = getItem(itemId);
     if (it.heal) {
       const nhp = Math.min(maxHpOf(), (me.hp || 0) + it.heal);
       const [bid, cnt] = splitStack(itemId);
-      if (cnt > 1) inv[String(idx)] = bid + '*' + (cnt - 1); else delete inv[String(idx)];
+      if (cnt > 1) inv[key] = bid + '*' + (cnt - 1); else delete inv[key];
       tx.update(meRef, { inv, hp: nhp });
       setTimeout(() => {
         me.hp = nhp;
@@ -1159,7 +1160,7 @@ function slotClick(idx) {
     } else if (it.mana) {
       const nmp = Math.min(maxMpOf(), (me.mp ?? 0) + it.mana);
       const [bid2, cnt2] = splitStack(itemId);
-      if (cnt2 > 1) inv[String(idx)] = bid2 + '*' + (cnt2 - 1); else delete inv[String(idx)];
+      if (cnt2 > 1) inv[key] = bid2 + '*' + (cnt2 - 1); else delete inv[key];
       tx.update(meRef, { inv, mp: Math.round(nmp) });
       setTimeout(() => {
         me.mp = nmp;
@@ -1170,7 +1171,7 @@ function slotClick(idx) {
     } else {
       const old = eq[it.slot];
       eq[it.slot] = itemId;
-      if (old) inv[String(idx)] = old; else delete inv[String(idx)];
+      if (old) inv[key] = old; else delete inv[key];
       tx.update(meRef, { inv: sortInvMap(inv), equipped: eq, 'q.eqflag': 1 });
       setTimeout(() => sfx('buy'), 0);
     }
@@ -1396,7 +1397,7 @@ function renderInvUI() {
       div.dataset.r = it.rarity || 'common';
       div.innerHTML = `<span class="ic">${itemIcon(itemId)}</span>` + (scnt > 1 ? `<span class="scnt">${scnt}</span>` : '');
       div.title = `${it.name} [${RARITY_KR[it.rarity] || '일반'}]\n${itemStat(it) || '소모품'}\n좌클릭: 장착/사용 · 우클릭: 강화/판매`;
-      div.onclick = () => { if (it.scroll) { toast('📜 주문서를 장비 위로 끌어다 놓으세요'); return; } slotClick(String(i)); };
+      div.onclick = () => { if (it.scroll) { toast('📜 주문서를 장비 위로 끌어다 놓으세요'); return; } slotClick(itemId); };
       div.oncontextmenu = e => { e.preventDefault(); showEnhMenu(e.clientX, e.clientY, itemId); };
       let lpT = null;
       div.addEventListener('touchstart', e => {

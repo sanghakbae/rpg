@@ -99,29 +99,42 @@
   #enhBox { background: #141a26; border: 1px solid #3a4a66; border-radius: 12px; padding: 18px 20px;
     width: min(330px, 90vw); box-shadow: 0 10px 40px rgba(0,0,0,.7); font-size: 14px; color: #ccd; line-height: 1.6; }
 
-  /* 모바일 (아이폰 등) */
+  /* 모바일 (아이폰 등): 상단 상태바 / 중앙 플레이 / 하단 액션바 */
   @media (max-width: 640px) {
     body { overflow: hidden; }
     canvas#game { touch-action: none; -webkit-user-select: none; user-select: none; }
-    #hud { width: calc(100vw - 16px); left: 8px; top: 8px; padding: 8px 10px; font-size: 11.5px; }
-    #hud .lv { font-size: 16px; }
-    #hud .cls { font-size: 10.5px; }
-    .barwrap { height: 12px; margin-bottom: 3px; border-radius: 6px; }
-    .bartext, #mpText { font-size: 9.5px; margin-top: -13px; margin-bottom: 3px; }
-    #expText { margin-top: -13px; margin-bottom: 1px; }
-    #stats { font-size: 10.5px; }
-    #goldRow { margin-top: 4px; padding-top: 4px; }
-    #statPtsRow { font-size: 11px; gap: 3px; }
-    .stbtn { padding: 3px 5px; font-size: 10px; }
-    #btnRow { margin-top: 5px; gap: 4px; }
-    #btnRow button { font-size: 10.5px; padding: 6px 0; }
-    #invPanel { width: calc(100vw - 16px); left: 8px; top: auto; bottom: 8px; padding: 6px 8px;
-      max-height: 40vh; overflow-y: auto; background: rgba(10,14,22,.78); }
-    #invPanel h3 { font-size: 10.5px; margin-bottom: 4px; }
-    .eslot { height: 34px; font-size: 9.5px; }
-    .eslot .slbl { font-size: 7.5px; }
-    .islot .ic { font-size: 16px; }
-    .islot .scnt { font-size: 11px; top: 0; right: 2px; }
+    #hud { width: calc(100vw - 12px); left: 6px; top: 6px; padding: 7px 9px; font-size: 11px; }
+    #hud .lv { font-size: 15px; }
+    #hud .cls { font-size: 10px; }
+    .barwrap { height: 11px; margin-bottom: 2px; border-radius: 6px; }
+    .bartext, #mpText, #expText { font-size: 9px; margin-top: -12px; margin-bottom: 2px; }
+    #stats, #btnRow { display: none; }
+    #goldRow { margin-top: 3px; padding-top: 3px; font-size: 11.5px; }
+    #statPtsRow { font-size: 10.5px; gap: 3px; }
+    .stbtn { padding: 2px 5px; font-size: 9.5px; }
+
+    /* 하단 액션 바 */
+    #mobileBar { display: flex; position: fixed; bottom: 0; left: 0; right: 0;
+      height: calc(54px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom);
+      background: rgba(10,14,22,.96); border-top: 1px solid rgba(255,255,255,.13); z-index: 40;
+      align-items: stretch; }
+    #mobileBar button { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 1px; font-size: 18px; color: #9fb0c8; background: none; border: none; border-right: 1px solid rgba(255,255,255,.07); }
+    #mobileBar button:last-child { border-right: none; }
+    #mobileBar button span { font-size: 9.5px; letter-spacing: 1px; }
+    #mobileBar button:active { background: rgba(255,215,0,.12); }
+
+    #hotbar { bottom: calc(62px + env(safe-area-inset-bottom)); gap: 8px; z-index: 35; }
+    .hslot { width: 48px; height: 48px; }
+
+    /* 가방 = 하단 시트 (가방 버튼으로 열고 닫음) */
+    #invPanel { display: none; left: 6px; width: calc(100vw - 12px); top: auto; bottom: calc(60px + env(safe-area-inset-bottom));
+      max-height: 46vh; overflow-y: auto; z-index: 45; background: rgba(10,14,22,.95); }
+    #invPanel.open { display: block; }
+
+    /* 사이드 패널들 = 중앙 오버레이 */
+    .sidepanel { left: 8px !important; right: 8px !important; width: auto !important; top: 64px !important;
+      bottom: calc(62px + env(safe-area-inset-bottom)) !important; max-height: none !important; z-index: 50; }
   }
 
   /* 핫바 */
@@ -318,6 +331,14 @@
 <div id="hotbar">
   <div class="hslot panel" id="hb1"><span class="key">1</span><span class="ic2">✦</span><span class="nm">-</span><div class="cd" style="display:none"></div></div>
   <div class="hslot panel" id="hb2"><span class="key">2</span><span class="ic2">💚</span><span class="nm">회복술</span><div class="cd" style="display:none"></div></div>
+</div>
+
+<div id="mobileBar">
+  <button data-mb="inv">🎒<span>가방</span></button>
+  <button data-mb="shopPanel">⚔<span>샵</span></button>
+  <button data-mb="questPanel">📜<span>퀘스트</span></button>
+  <button data-mb="map">🗺<span>지도</span></button>
+  <button data-mb="dex">📖<span>도감</span></button>
 </div>
 
 <canvas id="minimap" width="160" height="120" class="panel"></canvas>

@@ -559,6 +559,23 @@ let unsubMon = null;
 let pageRetryT = 0;
 let monErr = '';
 let monWarned = false;
+let quotaWarned = false;
+function noteErr(e) {
+  const code = String((e && (e.code || e.message)) || e || '');
+  if (code.includes('resource-exhausted') || code.toLowerCase().includes('quota')) {
+    if (!quotaWarned) { quotaWarned = true; toast('⛔ 서버 일일 한도 초과 — 내일 자정(태평양)까지 일부 기능 제한', 'sysq'); }
+    return true;
+  }
+  return false;
+}
+function onSnapSafe(label, q, cb) {
+  const sub = () => onSnapshot(q, s => cb(s), err => {
+    console.error('[' + label + ']', err);
+    noteErr(err);
+    setTimeout(sub, 5000);
+  });
+  sub();
+}
 function watchMonsters() {
   if (unsubMon) unsubMon();
   sims = [];
@@ -603,13 +620,13 @@ function watchMonsters() {
 }
 
 function watchPlayers() {
-  onSnapshot(collection(db, 'players'), snap => {
+  onSnapSafe('players', collection(db, 'players'), snap => {
     snap.forEach(dc => { if (dc.id !== uid) others[dc.id] = dc.data(); });
   });
 }
 
 function watchLoot() {
-  onSnapshot(collection(db, 'loot'), snap => {
+  onSnapSafe('loot', collection(db, 'loot'), snap => {
     lootItems = {};
     snap.forEach(dc => lootItems[dc.id] = dc.data());
   });
@@ -631,7 +648,7 @@ function renderRank() {
   if (t2) t2.style.background = rankMode === 'atk' ? '#c9a227' : '#2b3547';
 }
 function watchRank() {
-  onSnapshot(query(collection(db, 'players'), orderBy('lv', 'desc'), limit(30)), snap => {
+  onSnapSafe('rank', query(collection(db, 'players'), orderBy('lv', 'desc'), limit(30)), snap => {
     rankCache = [];
     snap.forEach(dc => rankCache.push(dc.data()));
     renderRank();
@@ -640,7 +657,7 @@ function watchRank() {
 
 function watchChat() {
   const log = $('chatLog');
-  onSnapshot(query(collection(db, 'chat'), orderBy('ts', 'desc'), limit(40)), snap => {
+  onSnapSafe('chat', query(collection(db, 'chat'), orderBy('ts', 'desc'), limit(40)), snap => {
     const msgs = [];
     snap.forEach(d => msgs.push(d.data()));
     msgs.reverse();
@@ -788,11 +805,20 @@ function nearestSim(maxD) {
   return best;
 }
 
+function angLerp(a, b, t) {
+  let d = b - a;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return a + d * Math.min(1, t);
+}
 function stepToward(pt, sp) {
-  me.face = Math.atan2(pt.y - me.y, pt.x - me.x);
+  const ta = Math.atan2(pt.y - me.y, pt.x - me.x);
+  me.face = angLerp(me.face, ta, .28);
   const d = Math.hypot(pt.x - me.x, pt.y - me.y) || 1;
-  me.x = clampN(me.x + (pt.x - me.x) / d * sp, 40, WORLD.w - 40);
-  me.y = clampN(me.y + (pt.y - me.y) / d * sp, 40, WORLD.h - 40);
+  const ease = d < 46 ? Math.max(.4, d / 46) : 1;
+  const step = Math.min(sp * ease, d);
+  me.x = clampN(me.x + Math.cos(me.face) * step, 40, WORLD.w - 40);
+  me.y = clampN(me.y + Math.sin(me.face) * step, 40, WORLD.h - 40);
 }
 
 function fireShot(tx, ty, color, dur, size = 5) {
@@ -1188,11 +1214,16 @@ function unequip(slot) {
     if (!itemId) return;
     const bs = p.bagSize || 18;
     const inv = { ...(p.inv || {}) };
+    let placed = false;
     for (let i = 0; i < bs; i++) {
-      if (inv[String(i)] == null) { inv[String(i)] = itemId; break; }
+      if (inv[String(i)] == null) { inv[String(i)] = itemId; placed = true; break; }
     }
+    if (!placed) return 'full';
     delete eq[slot];
     tx.update(meRef, { inv: sortInvMap(inv), equipped: eq });
+    return true;
+  }).then(r => {
+    if (r === 'full') toast('🎒 가방이 가득 해제할 수 없습니다');
   }).catch(() => {});
 }
 
@@ -1497,11 +1528,11 @@ function updateSims(now, dt) {
     if (tgt) {
       if (best > s.def.range) {
         const sp = s.def.speed * dt / 1000;
-        s.dirA = Math.atan2(tgt.y - s.y, tgt.x - s.x);
+        s.dirA = angLerp(s.dirA, Math.atan2(tgt.y - s.y, tgt.x - s.x), dt * .012);
         s.movingF = true;
         s.aggroF = true;
-        s.x = clampN(s.x + (tgt.x - s.x) / best * sp, 40, WORLD.w - 40);
-        s.y = clampN(s.y + (tgt.y - s.y) / best * sp, 40, WORLD.h - 40);
+        s.x = clampN(s.x + Math.cos(s.dirA) * sp, 40, WORLD.w - 40);
+        s.y = clampN(s.y + Math.sin(s.dirA) * sp, 40, WORLD.h - 40);
       } else if (now >= s.atkCdUntil) {
         s.atkCdUntil = now + (s.type === 'boss' ? 1800 : 1300);
         s.swingT = now;
@@ -1511,20 +1542,36 @@ function updateSims(now, dt) {
       const hd2 = Math.hypot(s.homeX - s.x, s.homeY - s.y);
       if (hd2 > 600) { s.x = s.homeX; s.y = s.homeY; }
       else if (hd2 > 240) {
-        s.dirA = Math.atan2(s.homeY - s.y, s.homeX - s.x);
+        s.dirA = angLerp(s.dirA, Math.atan2(s.homeY - s.y, s.homeX - s.x), dt * .01);
         s.movingF = true;
         s.aggroF = false;
         const sp = s.def.speed * .8 * dt / 1000;
         s.x = clampN(s.x + Math.cos(s.dirA) * sp, 40, WORLD.w - 40);
         s.y = clampN(s.y + Math.sin(s.dirA) * sp, 40, WORLD.h - 40);
       } else {
-        if (now >= s.nextWander) { s.nextWander = now + rand(1200, 3000); s.wa = rand(0, Math.PI * 2); }
+        if (now >= s.nextWander) { s.nextWander = now + rand(1400, 3200); s.wa = s.dirA + rand(-1.7, 1.7); }
         const sp = s.def.speed * .45 * dt / 1000;
-        s.dirA = s.wa;
+        s.dirA = angLerp(s.dirA, s.wa, dt * .006);
         s.movingF = true;
         s.aggroF = false;
-        s.x = clampN(s.x + Math.cos(s.wa) * sp, 40, WORLD.w - 40);
-        s.y = clampN(s.y + Math.sin(s.wa) * sp, 40, WORLD.h - 40);
+        s.x = clampN(s.x + Math.cos(s.dirA) * sp, 40, WORLD.w - 40);
+        s.y = clampN(s.y + Math.sin(s.dirA) * sp, 40, WORLD.h - 40);
+      }
+    }
+  }
+  for (let i = 0; i < sims.length; i++) {
+    const a = sims[i];
+    if (!a.alive || a.map !== myMap()) continue;
+    for (let j = i + 1; j < sims.length; j++) {
+      const b = sims[j];
+      if (!b.alive || b.map !== myMap()) continue;
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const rr = (sdef(a).r + sdef(b).r) * .9;
+      const dd = dx * dx + dy * dy;
+      if (dd > .01 && dd < rr * rr) {
+        const dist = Math.sqrt(dd), push = (rr - dist) / 2 / dist;
+        a.x -= dx * push; a.y -= dy * push;
+        b.x += dx * push; b.y += dy * push;
       }
     }
   }
@@ -3066,6 +3113,14 @@ $('logoutBtn').onclick = async () => {
   try { await signOut(auth); } catch (e) {}
   location.reload();
 };
+document.querySelectorAll('#mobileBar [data-mb]').forEach(b => b.onclick = () => {
+  sfx('click');
+  const k = b.dataset.mb;
+  if (k === 'inv') $('invPanel').classList.toggle('open');
+  else if (k === 'map') toggleWorldMap();
+  else if (k === 'dex') toggleDex();
+  else togglePanel(k);
+});
 $('hb1').onclick = () => useSkill(1);
 $('hb2').onclick = () => useSkill(2);
 document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => $(b.dataset.close).classList.remove('open'));

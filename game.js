@@ -364,7 +364,7 @@ function toggleMute() {
 
 /* ================= 상태 ================= */
 let uid = null, myName = '', meRef = null, myCls = 'warrior', googleName = '';
-let me = { x: SPAWN.x, y: SPAWN.y, lv: 1, exp: 0, hp: 100, maxHp: 100, atk: 10, gold: 0, inv: {}, equipped: {}, skills: {}, q: {}, qc: {}, dead: false };
+let me = { x: SPAWN.x, y: SPAWN.y, face: Math.PI / 2, lv: 1, exp: 0, hp: 100, maxHp: 100, atk: 10, gold: 0, inv: {}, equipped: {}, skills: {}, q: {}, qc: {}, dead: false };
 let others = {}, lootItems = {};
 let sims = [], bossWasAlive = true;
 let keys = {};
@@ -806,6 +806,7 @@ function nearestSim(maxD) {
 }
 
 function angLerp(a, b, t) {
+  if (!Number.isFinite(a)) return b;
   let d = b - a;
   while (d > Math.PI) d -= Math.PI * 2;
   while (d < -Math.PI) d += Math.PI * 2;
@@ -2711,6 +2712,30 @@ function drawBoss(s, now) {
 }
 
 /* ================= 메인 드로잉 ================= */
+/* 고정 UI 실측 인셋 — 데스크톱: 좌우(HUD/장비창/미니맵/랭킹), 모바일: 상하(HUD/하단 액션바) */
+let uiInsetCache = { L: 0, R: 0, T: 0, B: 0, t: 0 };
+function uiInsets(now) {
+  if (now - uiInsetCache.t > 500) {
+    let L = 0, R = 0, T = 0, B = 0;
+    if (innerWidth > 640) {
+      for (const id of ['hud', 'invPanel']) {
+        const r = $(id)?.getBoundingClientRect();
+        if (r && r.width && r.left < innerWidth * .4) L = Math.max(L, r.right + 12);
+      }
+      for (const id of ['minimap', 'rankPanel']) {
+        const r = $(id)?.getBoundingClientRect();
+        if (r && r.width && r.right > innerWidth * .6) R = Math.max(R, innerWidth - r.left + 12);
+      }
+    } else {
+      const h = $('hud')?.getBoundingClientRect();
+      if (h && h.height) T = h.bottom + 8;
+      const mb = $('mobileBar')?.getBoundingClientRect();
+      if (mb && mb.height) B = innerHeight - mb.top + 8;
+    }
+    uiInsetCache = { L, R, T, B, t: now };
+  }
+  return uiInsetCache;
+}
 function draw(now) {
   const vw = cv.width, vh = cv.height;
   let shx = 0, shy = 0;
@@ -2718,8 +2743,14 @@ function draw(now) {
     const p = (1 - (now - shakeT) / 180) * shakePow;
     shx = rand(-p, p); shy = rand(-p, p);
   } else shakePow = 0;
-  const cx = WORLD.w >= vw ? clampN(cam.x - vw / 2, 0, WORLD.w - vw) : (WORLD.w - vw) / 2;
-  const cy = WORLD.h >= vh ? clampN(cam.y - vh / 2, 0, WORLD.h - vh) : (WORLD.h - vh) / 2;
+  /* 고정 UI를 제외한 밴드를 실제 뷰포트로 사용: 부족하면 밴드 안에서 스크롤, 넉넉하면 밴드 중앙 정렬 */
+  const { L, R, T, B } = uiInsets(now);
+  const availW = vw - L - R, availH = vh - T - B;
+  let cx, cy;
+  if (WORLD.w >= availW) cx = clampN(cam.x - L - availW / 2, -L, WORLD.w - vw + R);
+  else cx = -(L + (availW - WORLD.w) / 2);
+  if (WORLD.h >= availH) cy = clampN(cam.y - T - availH / 2, -T, WORLD.h - vh + B);
+  else cy = -(T + (availH - WORLD.h) / 2);
   view.x = cx; view.y = cy;
 
   ctx.fillStyle = '#000';
@@ -3107,7 +3138,13 @@ if (rtl) rtl.onclick = () => { rankMode = 'lv'; renderRank(); };
 if (rta) rta.onclick = () => { rankMode = 'atk'; renderRank(); };
 $('dexBtn').onclick = () => { sfx('click'); toggleDex(); };
 document.querySelectorAll('.stbtn').forEach(b => b.onclick = () => addStat(b.dataset.st));
+$('invBtn').onclick = () => { sfx('click'); $('invPanel').classList.toggle('open'); };
 $('shopBtn').onclick = () => { sfx('click'); togglePanel('shopPanel'); };
+document.querySelector('#rankPanel h3').addEventListener('click', e => {
+  if (e.target.tagName === 'BUTTON') return;
+  sfx('click');
+  $('rankPanel').classList.toggle('folded');
+});
 $('questBtn').onclick = () => { sfx('click'); togglePanel('questPanel'); };
 $('logoutBtn').onclick = async () => {
   try { await signOut(auth); } catch (e) {}
@@ -3139,6 +3176,7 @@ addEventListener('keydown', e => {
   if (e.code === 'Space') tryAttack(Date.now());
   if (e.code === 'Digit1') useSkill(1);
   if (e.code === 'Digit2') useSkill(2);
+  if (e.code === 'KeyI') { sfx('click'); $('invPanel').classList.toggle('open'); }
   if (e.code === 'KeyB') { sfx('click'); togglePanel('shopPanel'); }
   if (e.code === 'KeyQ') { sfx('click'); togglePanel('questPanel'); }
   if (e.code === 'KeyM') toggleMute();
@@ -3272,6 +3310,7 @@ function loopBody(t) {
   } else meMovingNow = false;
   if (moved) resolveCollide();
 
+  if (!Number.isFinite(me.x) || !Number.isFinite(me.y)) { me.x = SPAWN.x; me.y = SPAWN.y; cam.x = me.x; cam.y = me.y; }
   const movedFar = Math.abs(me.x - sentX) + Math.abs(me.y - sentY) > 2;
   const hpChanged = Math.round(me.hp || 0) !== sentHp;
   const mpChanged = me.mp != null && Math.round(me.mp) !== sentMp;
@@ -3544,7 +3583,8 @@ async function init() {
     myCls = d.cls || 'warrior';
     muted = !!d.muted;
     if (!d.cls) await updateDoc(meRef, { cls: 'warrior' });
-    me.x = d.x || SPAWN.x; me.y = d.y || SPAWN.y;
+    me.x = Number.isFinite(d.x) ? d.x : SPAWN.x;
+    me.y = Number.isFinite(d.y) ? d.y : SPAWN.y;
     cam.x = me.x; cam.y = me.y;
     await updateDoc(meRef, { lastSeen: Date.now(), dead: false, ...(d.mp == null ? { mp: maxMpOf() } : {}) });
   }

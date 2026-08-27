@@ -3154,6 +3154,13 @@ if (rtl) rtl.onclick = () => { rankMode = 'lv'; renderRank(); };
 if (rta) rta.onclick = () => { rankMode = 'atk'; renderRank(); };
 $('dexBtn').onclick = () => { sfx('click'); toggleDex(); };
 document.querySelectorAll('.stbtn').forEach(b => b.onclick = () => addStat(b.dataset.st));
+$('hudTop').onclick = () => {
+  sfx('click');
+  const mini = $('hud').classList.toggle('mini');
+  uiInsetCache.t = 0; /* --hudB(장비패널/모바일 배치·카메라 밴드) 즉시 갱신 */
+  try { localStorage.setItem('hudMini', mini ? '1' : ''); } catch (e) {}
+};
+try { if (localStorage.getItem('hudMini')) $('hud').classList.add('mini'); } catch (e) {}
 function toggleInv() { sfx('click'); $('invPanel').classList.toggle('open'); }
 $('invBtn').onclick = toggleInv;
 $('shopBtn').onclick = () => { sfx('click'); togglePanel('shopPanel'); };

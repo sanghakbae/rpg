@@ -131,7 +131,7 @@
 
     /* 미니맵/카운터: HUD 아래로, 랭킹은 숨김 (body 접두사/!important는 뒤의 기본·인라인 규칙보다 우선하기 위함) */
     body #minimap { width: 90px; height: 68px; top: 153px; right: 6px; opacity: .85; }
-    #onlineCnt { top: 153px !important; left: 6px !important; transform: none !important; }
+    #onlineCnt { left: 6px !important; transform: none !important; } /* top은 JS(uiInsets)가 HUD 높이에 맞춰 설정 */
     #rankPanel { display: none; }
 
     /* 채팅: 액션바 위, 핫바 열 비워둠 */
@@ -234,6 +234,7 @@
   #statPtsRow { display: none; margin-top: 8px; padding-top: 8px; border-top: 1px solid #333; align-items: center; gap: 5px; flex-wrap: wrap; font-size: 13.5px; color: #ffd700; }
   .stbtn { padding: 4px 9px; font-size: 12px; font-weight: bold; background: linear-gradient(#c9a227, #8f6f14); color: #fff; border-radius: 4px; }
   .stbtn:hover { filter: brightness(1.2); }
+  .stbtn.rec { outline: 1.5px solid #ffd700; box-shadow: 0 0 7px rgba(255,215,0,.45); } /* 직업 추천 스탯 */
 
   /* 랭킹 */
   #rankPanel { position: fixed; right: 12px; top: 148px; width: 185px; z-index: 10; padding: 9px 11px; }
@@ -320,6 +321,8 @@
     <button class="stbtn" data-st="stHp">체력 +15HP</button>
     <button class="stbtn" data-st="stDef">방어 +1</button>
     <button class="stbtn" data-st="stSpd">민첩 +4속</button>
+    <button class="stbtn" data-st="stWis">지혜 +12MP·스킬%</button>
+    <button class="stbtn" data-st="stCrit">치명 +1%</button>
   </div>
   <div id="btnRow">
     <button id="invBtn">가방 [I]</button>

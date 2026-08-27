@@ -271,7 +271,7 @@ const QUESTS = [
 /* ================= 헬퍼 ================= */
 const expNeed = lv => Math.floor(25 * Math.pow(lv, 2.2));
 const maxHpOf = () => Math.round(cdef().hp + ((me.lv || 1) - 1) * 10 + (me.stHp || 0) * 15);
-const maxMpOf = () => 100 + ((me.lv || 1) - 1) * 5;
+const maxMpOf = () => 100 + ((me.lv || 1) - 1) * 5 + (me.stWis || 0) * 12;
 const clampN = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const rand = (a, b) => a + Math.random() * (b - a);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -391,7 +391,8 @@ const eqStats = f => Object.values(me.equipped || {}).reduce((a, id) => a + (get
 const cdef = () => CLASSES[myCls] || CLASSES.warrior;
 const totalAtk = () => (me.atk || 10) + (me.stAtk || 0) * 2 + eqStats('atk') + passSum('atk');
 const totalDef = () => (me.stDef || 0) + eqStats('def') + passSum('def');
-const totalCrit = () => cdef().crit + passSum('crit') + eqStats('crit');
+const totalCrit = () => cdef().crit + (me.stCrit || 0) * .01 + passSum('crit') + eqStats('crit');
+const skillPow = () => 1 + (me.stWis || 0) * .03; /* 지혜: 스킬 피해/회복 +3%씩 */
 const moveSpd = () => cdef().speed + (me.stSpd || 0) * 4 + passSum('spd') + eqStats('spd');
 const classActiveId = () => Object.keys(SKILLS).find(k => SKILLS[k].cls === myCls && SKILLS[k].type === 'active');
 
@@ -859,7 +860,7 @@ function useSkill(slot) {
   if ((me.mp ?? maxMpOf()) < mpc) { float(me.x, me.y - 34, '마나 부족!', '#5dade2'); return; }
 
   if (id === 'heal') {
-    const amt = Math.round(me.maxHp * .4);
+    const amt = Math.round(me.maxHp * .4 * skillPow());
     me.hp = Math.min(maxHpOf(), (me.hp || 0) + amt);
     updateDoc(meRef, { hp: me.hp }).catch(() => {});
     float(me.x, me.y - 34, `+${amt} HP`, '#2ecc71');
@@ -873,13 +874,13 @@ function useSkill(slot) {
     rings.push({ x: t.x, y: t.y, r: 48, t: 0, max: 320, color: '255,140,0' });
     fxSparks(t.x, t.y, 14, '#ffb347', 160);
     doShake(6); sfx('crit');
-    attackResult(t, Math.max(1, Math.round(totalAtk() * 4 * rand(.9, 1.1))), true);
+    attackResult(t, Math.max(1, Math.round(totalAtk() * 4 * skillPow() * rand(.9, 1.1))), true);
   } else if (id === 'multishot') {
     const targets = sims.filter(s => s.alive && Math.hypot(s.x - me.x, s.y - me.y) < 240);
     if (!targets.length) { float(me.x, me.y - 34, '대상 없음', '#aaa'); return; }
     for (const t of targets) {
       fireShot(t.x, t.y, '#e8d9a0', Math.hypot(t.x - me.x, t.y - me.y) / 520 * 1000 + 60, 4);
-      const dmg = Math.max(1, Math.round(totalAtk() * 1.5 * rand(.9, 1.1)));
+      const dmg = Math.max(1, Math.round(totalAtk() * 1.5 * skillPow() * rand(.9, 1.1)));
       setTimeout(() => attackResult(t, dmg, false), 140);
     }
     sfx('swing');
@@ -893,7 +894,7 @@ function useSkill(slot) {
     slashes.push({ x: me.x, y: me.y, a: Math.atan2(t.y - me.y, t.x - me.x), t: 0, w: 7, len: 50, color: '#b388ff' });
     fxSparks(t.x, t.y, 16, '#9b59b6', 170);
     doShake(6); sfx('boom');
-    attackResult(t, Math.max(1, Math.round(totalAtk() * 6)), true);
+    attackResult(t, Math.max(1, Math.round(totalAtk() * 6 * skillPow())), true);
   } else if (id === 'fireball') {
     const t = nearestSim(340);
     if (!t) { float(me.x, me.y - 34, '대상 없음', '#aaa'); return; }
@@ -905,7 +906,7 @@ function useSkill(slot) {
       doShake(9); sfx('boom');
       const victims = sims.filter(s => s.alive && Math.hypot(s.x - t.x, s.y - t.y) < 145);
       for (const v of victims) {
-        const dmg = Math.max(1, Math.round(totalAtk() * 2.2 * rand(.9, 1.1)));
+        const dmg = Math.max(1, Math.round(totalAtk() * 2.2 * skillPow() * rand(.9, 1.1)));
         attackResult(v, dmg, false);
       }
     }, 240);
@@ -2087,21 +2088,43 @@ function buildWorld() {
     c.fillStyle = '#5a4030';
     c.beginPath(); c.arc(x, y, 2.2, 0, 7); c.fill();
   }
-  const stone = (x, y, w, h) => {
+  drawBrickBorder(c, 213, 9);
+}
+
+/* 외곽 벽돌 테두리: 얇은 폭(16px), 벽돌별 명암 지터 + 베벨 + 줄눈 + 균열/이끼 디테일 */
+function drawBrickBorder(c, hue, sat) {
+  const BW = 16, STEP = 30;
+  const srr = n => { const v = Math.sin(n * 127.1 + 311.7) * 43758.5453; return v - Math.floor(v); };
+  const brick = (x, y, w, h, seed) => {
+    const l = 36 + (srr(seed) - .5) * 13;
     const g = c.createLinearGradient(x, y, x, y + h);
-    g.addColorStop(0, '#7d8790'); g.addColorStop(1, '#565f68');
+    g.addColorStop(0, `hsl(${hue},${sat}%,${l + 8}%)`);
+    g.addColorStop(1, `hsl(${hue},${sat}%,${l - 6}%)`);
     c.fillStyle = g;
-    c.fillRect(x, y, w, h);
-    c.strokeStyle = 'rgba(0,0,0,.35)';
-    c.strokeRect(x + .5, y + .5, w - 1, h - 1);
-    c.fillStyle = 'rgba(255,255,255,.14)';
-    c.fillRect(x + 2, y + 2, w - 4, 3);
+    c.beginPath(); c.roundRect(x + 1, y + 1, w - 2, h - 2, 2.5); c.fill();
+    c.strokeStyle = 'rgba(0,0,0,.45)'; c.lineWidth = 1; c.stroke();
+    c.fillStyle = 'rgba(255,255,255,.2)';
+    c.fillRect(x + 3, y + 2.2, w - 6, 1.5);
+    c.fillStyle = 'rgba(0,0,0,.22)';
+    c.fillRect(x + 3, y + h - 3.6, w - 6, 1.5);
+    if (srr(seed * 3.7) > .82) {
+      c.strokeStyle = 'rgba(0,0,0,.28)'; c.lineWidth = .8;
+      c.beginPath(); c.moveTo(x + w * .32, y + 2.5); c.lineTo(x + w * .52, y + h - 3.5); c.stroke();
+    }
+    if (srr(seed * 5.3) > .86) {
+      c.fillStyle = 'rgba(95,145,85,.42)';
+      c.beginPath(); c.arc(x + w * (.25 + srr(seed * 7.1) * .5), y + h - 4.2, 1.7, 0, 7); c.fill();
+    }
   };
-  for (let x = 0; x < WORLD.w; x += 40) { stone(x, 0, 38, 26); stone(x + 20, WORLD.h - 26, 38, 26); }
-  for (let y = 26; y < WORLD.h - 26; y += 40) { stone(0, y, 26, 38); stone(WORLD.w - 26, y + 20, 26, 38); }
+  c.fillStyle = `hsl(${hue},${Math.max(0, sat - 3)}%,15%)`;
+  c.fillRect(0, 0, WORLD.w, BW); c.fillRect(0, WORLD.h - BW, WORLD.w, BW);
+  c.fillRect(0, 0, BW, WORLD.h); c.fillRect(WORLD.w - BW, 0, BW, WORLD.h);
+  let i = 0;
+  for (let x = 0; x < WORLD.w; x += STEP, i++) { brick(x, 0, STEP - 2, BW, i * 2.13); brick(x - STEP / 2, WORLD.h - BW, STEP - 2, BW, i * 2.31 + 97); }
+  for (let y = BW; y < WORLD.h - BW; y += STEP, i++) { brick(0, y, BW, STEP - 2, i * 2.71 + 511); brick(WORLD.w - BW, y, BW, STEP - 2, i * 2.97 + 977); }
   c.fillStyle = 'rgba(0,0,0,.22)';
-  c.fillRect(26, 26, WORLD.w - 52, 8);
-  c.fillRect(26, 26, 8, WORLD.h - 52);
+  c.fillRect(BW, BW, WORLD.w - BW * 2, 5);
+  c.fillRect(BW, BW, 5, WORLD.h - BW * 2);
 }
 
 const worldColliders = { m1: [], m2: [] };
@@ -2224,18 +2247,7 @@ function buildWorldM2() {
     c.fillStyle = g;
     c.fillRect(x - 140, y - 140, 280, 280);
   }
-  const stone = (x, y, w, h) => {
-    const g = c.createLinearGradient(x, y, x, y + h);
-    g.addColorStop(0, '#6d6d7d'); g.addColorStop(1, '#454552');
-    c.fillStyle = g;
-    c.fillRect(x, y, w, h);
-    c.strokeStyle = 'rgba(0,0,0,.4)';
-    c.strokeRect(x + .5, y + .5, w - 1, h - 1);
-    c.fillStyle = 'rgba(255,255,255,.1)';
-    c.fillRect(x + 2, y + 2, w - 4, 3);
-  };
-  for (let x = 0; x < WORLD.w; x += 40) { stone(x, 0, 38, 26); stone(x + 20, WORLD.h - 26, 38, 26); }
-  for (let y = 26; y < WORLD.h - 26; y += 40) { stone(0, y, 26, 38); stone(WORLD.w - 26, y + 20, 26, 38); }
+  drawBrickBorder(c, 252, 10);
   return cv2;
 }
 
@@ -2478,6 +2490,7 @@ function drawChar(o) {
   ctx.save();
   ctx.translate(o.x, o.y);
   if (o.dead) { ctx.globalAlpha = .45; ctx.rotate(Math.PI / 2); }
+  else if (moving) ctx.rotate(Math.sin(now / 85) * .055); /* 걸음 스웨이 */
   ctx.save();
   if (flip) ctx.scale(-1, 1);
   ctx.imageSmoothingEnabled = false;
@@ -2712,27 +2725,27 @@ function drawBoss(s, now) {
 }
 
 /* ================= 메인 드로잉 ================= */
-/* 고정 UI 실측 인셋 — 데스크톱: 좌우(HUD/장비창/미니맵/랭킹), 모바일: 상하(HUD/하단 액션바) */
+/* UI 인셋 — PC: 스테이지 항상 정중앙(인셋 없음), 모바일: 상하(HUD/하단 액션바)만 회피 */
 let uiInsetCache = { L: 0, R: 0, T: 0, B: 0, t: 0 };
 function uiInsets(now) {
   if (now - uiInsetCache.t > 500) {
-    let L = 0, R = 0, T = 0, B = 0;
-    if (innerWidth > 640) {
-      for (const id of ['hud', 'invPanel']) {
-        const r = $(id)?.getBoundingClientRect();
-        if (r && r.width && r.left < innerWidth * .4) L = Math.max(L, r.right + 12);
-      }
-      for (const id of ['minimap', 'rankPanel']) {
-        const r = $(id)?.getBoundingClientRect();
-        if (r && r.width && r.right > innerWidth * .6) R = Math.max(R, innerWidth - r.left + 12);
-      }
-    } else {
+    let T = 0, B = 0;
+    const oc = $('onlineCnt'), mm = $('minimap');
+    if (innerWidth <= 640) {
       const h = $('hud')?.getBoundingClientRect();
-      if (h && h.height) T = h.bottom + 8;
+      if (h && h.height) {
+        T = h.bottom + 8;
+        /* HUD 높이(스탯버튼 줄수)에 따라 카운터/미니맵을 HUD 바로 아래로 */
+        if (oc) oc.style.top = (h.bottom + 4) + 'px';
+        if (mm) mm.style.top = (h.bottom + 4) + 'px';
+      }
       const mb = $('mobileBar')?.getBoundingClientRect();
       if (mb && mb.height) B = innerHeight - mb.top + 8;
+    } else {
+      if (oc) oc.style.top = '12px'; /* 데스크톱 기본 위치 복원 */
+      if (mm) mm.style.top = '';
     }
-    uiInsetCache = { L, R, T, B, t: now };
+    uiInsetCache = { L: 0, R: 0, T, B, t: now };
   }
   return uiInsetCache;
 }
@@ -2884,14 +2897,15 @@ function draw(now) {
 
   for (const [id, o] of Object.entries(others)) {
     if (Date.now() - (o.lastSeen || 0) >= OFFLINE_MS || (o.map || 'm1') !== myMap()) continue;
-    const pv = othersPrev[id];
-    const mv = pv ? Math.hypot(o.x - pv.x, o.y - pv.y) > .6 : false;
-    let fc;
-    if (mv) fc = Math.atan2(o.y - pv.y, o.x - pv.x);
-    else if (pv?.f != null) fc = pv.f;
-    else fc = Math.PI / 2;
-    othersPrev[id] = { x: o.x, y: o.y, f: fc };
-    drawChar({ x: o.x, y: o.y, color: o.color || colorOf(id), name: o.name, hp: o.hp, maxHp: o.maxHp, dead: o.dead, equipped: o.equipped, cls: o.cls || 'warrior', isSelf: false, face: fc, moving: mv });
+    /* 네트워크 위치(600ms+ 간격)를 화면 위치로 보간 — 순간이동 대신 부드러운 이동 */
+    let pv = othersPrev[id];
+    if (!pv || Math.hypot(o.x - pv.x, o.y - pv.y) > 320) pv = { x: o.x, y: o.y, f: Math.PI / 2 };
+    const ddx = o.x - pv.x, ddy = o.y - pv.y, dd = Math.hypot(ddx, ddy);
+    const sx2 = pv.x + ddx * .14, sy2 = pv.y + ddy * .14;
+    const mv = dd > 2.5;
+    const fc = mv ? Math.atan2(ddy, ddx) : (pv.f ?? Math.PI / 2);
+    othersPrev[id] = { x: sx2, y: sy2, f: fc };
+    drawChar({ x: sx2, y: sy2, color: o.color || colorOf(id), name: o.name, hp: o.hp, maxHp: o.maxHp, dead: o.dead, equipped: o.equipped, cls: o.cls || 'warrior', isSelf: false, face: fc, moving: mv });
   }
   if (ready) drawChar({ x: me.x, y: me.y, color: '#fff', name: myName, hp: me.hp, maxHp: me.maxHp, dead: me.dead, equipped: me.equipped, cls: myCls, isSelf: true, face: me.face ?? Math.PI / 2, moving: meMovingNow, swing: lastAttackAt });
 
@@ -3428,7 +3442,7 @@ function addStat(k) {
       me.hp = Math.min(maxHpOf(), (me.hp || 0) + 15);
       updateDoc(meRef, { hp: me.hp }).catch(() => {});
     }
-    const NM = { stAtk: '힘', stHp: '체력', stDef: '방어', stSpd: '민첩' };
+    const NM = { stAtk: '힘', stHp: '체력', stDef: '방어', stSpd: '민첩', stWis: '지혜', stCrit: '치명' };
     float(me.x, me.y - 30, `${NM[k]} +1`, '#7fe3a0');
   }).catch(() => {});
 }
@@ -3622,6 +3636,8 @@ async function init() {
   window.__DBG = () => ({ page: myPage(), me: { x: Math.round(me.x), y: Math.round(me.y), lv: me.lv, map: me.map, bag: me.bagSize, conq: JSON.stringify(me.conq || {}) },
     sims: sims.filter(s => s.alive).slice(0, 20).map(s => ({ id: s.id, x: Math.round(s.x), y: Math.round(s.y), d: Math.round(Math.hypot(s.x - me.x, s.y - me.y)), boss: s.boss, lv: simLevel(s) })) });
   $('loading').style.display = 'none';
+  const REC_STAT = { warrior: 'stAtk', archer: 'stSpd', rogue: 'stCrit', mage: 'stWis' };
+  document.querySelector(`.stbtn[data-st="${REC_STAT[myCls]}"]`)?.classList.add('rec');
   const mn = $('mapName');
   if (mn) mn.textContent = pageDef(pageNum()).name;
   renderInvUI();

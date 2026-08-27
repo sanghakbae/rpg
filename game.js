@@ -1417,7 +1417,12 @@ function enhanceItem(itemId, grade = 'normal') {
   }).catch(() => {});
 }
 
+let invUIKey = '';
 function renderInvUI() {
+  /* 위치 저장 에코 스냅샷마다 호출되므로 실제 내용이 바뀐 경우에만 DOM 재구축 */
+  const key = JSON.stringify([me.inv, me.equipped, me.bagSize, me.skills]);
+  if (key === invUIKey) return;
+  invUIKey = key;
   const grid = $('invGrid');
   grid.innerHTML = '';
   let count = 0;
@@ -3029,27 +3034,29 @@ function draw(now) {
 }
 
 /* ================= HUD ================= */
+/* 매 프레임 호출되므로 값이 바뀐 경우에만 DOM에 씀 — 동일 값 재대입도 레이아웃을 오염시켜 모바일 스터터 유발 */
+const domCache = {};
+function setTxt(id, v) { if (domCache['t' + id] !== v) { domCache['t' + id] = v; $(id).textContent = v; } }
+function setBarW(id, pct) { const v = pct.toFixed(1) + '%'; if (domCache['w' + id] !== v) { domCache['w' + id] = v; $(id).style.width = v; } }
 function updateHUD() {
-  $('uiLv').textContent = me.lv;
-  $('uiCls').textContent = cdef().icon + ' ' + cdef().name;
-  $('uiName').textContent = myName;
-  $('hpbar').style.width = clampN((me.hp || 0) / maxHpOf() * 100, 0, 100) + '%';
-  $('hpText').textContent = `${Math.max(0, Math.ceil(me.hp || 0))} / ${maxHpOf()}`;
-  $('mpbar').style.width = clampN((me.mp ?? maxMpOf()) / maxMpOf() * 100, 0, 100) + '%';
-  $('mpText').textContent = `MP ${Math.floor(me.mp ?? maxMpOf())} / ${maxMpOf()}`;
-  $('expbar').style.width = clampN((me.exp || 0) / expNeed(me.lv) * 100, 0, 100) + '%';
-  $('expText').textContent = `EXP ${me.exp || 0} / ${expNeed(me.lv)}`;
-  $('uiAtk').textContent = totalAtk();
-  $('uiDef').textContent = totalDef();
-  $('uiCrit').textContent = Math.round(totalCrit() * 100);
-  $('uiSpd').textContent = Math.round(moveSpd());
-  $('uiGold').textContent = (me.gold || 0).toLocaleString();
-  const pr = $('statPtsRow');
-  if (pr) {
-    const pts = me.statPts || 0;
-    pr.style.display = pts > 0 ? 'flex' : 'none';
-    if (pts > 0) $('uiPts').textContent = pts;
-  }
+  setTxt('uiLv', String(me.lv));
+  setTxt('uiCls', cdef().icon + ' ' + cdef().name);
+  setTxt('uiName', myName);
+  setBarW('hpbar', clampN((me.hp || 0) / maxHpOf() * 100, 0, 100));
+  setTxt('hpText', `${Math.max(0, Math.ceil(me.hp || 0))} / ${maxHpOf()}`);
+  setBarW('mpbar', clampN((me.mp ?? maxMpOf()) / maxMpOf() * 100, 0, 100));
+  setTxt('mpText', `MP ${Math.floor(me.mp ?? maxMpOf())} / ${maxMpOf()}`);
+  setBarW('expbar', clampN((me.exp || 0) / expNeed(me.lv) * 100, 0, 100));
+  setTxt('expText', `EXP ${me.exp || 0} / ${expNeed(me.lv)}`);
+  setTxt('uiAtk', String(totalAtk()));
+  setTxt('uiDef', String(totalDef()));
+  setTxt('uiCrit', String(Math.round(totalCrit() * 100)));
+  setTxt('uiSpd', String(Math.round(moveSpd())));
+  setTxt('uiGold', (me.gold || 0).toLocaleString());
+  const pts = me.statPts || 0;
+  const disp = pts > 0 ? 'flex' : 'none';
+  if (domCache.ptsDisp !== disp) { domCache.ptsDisp = disp; $('statPtsRow').style.display = disp; uiInsetCache.t = 0; /* HUD 높이 변동 즉시 반영 */ }
+  if (pts > 0) setTxt('uiPts', String(pts));
 }
 
 function updateHotbar(now) {
@@ -3060,13 +3067,19 @@ function updateHotbar(now) {
     const nm = box.querySelector('.nm'), ic = box.querySelector('.ic2'), cdEl = box.querySelector('.cd');
     if (!id) { nm.textContent = '-'; ic.textContent = '?'; return; }
     const def = SKILLS[id];
+    const k = 'hb' + el;
+    const locked = skillLv(id) < 1;
+    const remain = (skillCdUntil[id] || 0) - now;
+    const cdSec = remain > 0 && !locked ? Math.ceil(remain / 1000) : 0;
+    const sig = `${id}|${locked}|${cdSec}`;
+    if (domCache[k] === sig) return; /* 변화 없으면 DOM 접근 생략 (매 프레임 호출) */
+    domCache[k] = sig;
     ic.textContent = def.icon;
     nm.textContent = def.name;
-    box.classList.toggle('locked', skillLv(id) < 1);
-    const remain = (skillCdUntil[id] || 0) - now;
-    if (remain > 0 && skillLv(id) >= 1) {
+    box.classList.toggle('locked', locked);
+    if (cdSec > 0) {
       cdEl.style.display = 'flex';
-      cdEl.textContent = Math.ceil(remain / 1000);
+      cdEl.textContent = cdSec;
     } else cdEl.style.display = 'none';
   });
 }

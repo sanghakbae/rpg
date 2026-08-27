@@ -25,10 +25,10 @@ const bagUpCost = () => 500 * Math.pow(2, (bagSize() - BASE_BAG) / 6);
 const MAX_SKILL_LV = 5;
 
 const CLASSES = {
-  warrior: { name: '전사',   icon: '⚔', weaponName: '장검',   hp: 160, atk: 13, speed: 230, range: 95,  atkCd: 520, crit: .05, color: '#e74c3c', melee: true },
-  archer:  { name: '아처',   icon: '🏹', weaponName: '활',     hp: 110, atk: 11, speed: 255, range: 290, atkCd: 560, crit: .10, color: '#27ae60', proj: 'arrow' },
-  rogue:   { name: '로그',   icon: '🗡', weaponName: '단검',   hp: 95,  atk: 9,  speed: 290, range: 66,  atkCd: 300, crit: .25, color: '#f39c12', melee: true },
-  mage:    { name: '마법사', icon: '🪄', weaponName: '지팡이', hp: 85,  atk: 18, speed: 225, range: 270, atkCd: 850, crit: .05, color: '#9b59b6', proj: 'bolt' },
+  warrior: { name: '전사',   icon: '⚔', weaponName: '장검',   hp: 160, atk: 13, speed: 230, range: 95,  atkCd: 520, crit: .05, color: '#e74c3c', melee: true, rec: 'stAtk' },
+  archer:  { name: '아처',   icon: '🏹', weaponName: '활',     hp: 110, atk: 11, speed: 255, range: 290, atkCd: 560, crit: .10, color: '#27ae60', proj: 'arrow', rec: 'stSpd' },
+  rogue:   { name: '로그',   icon: '🗡', weaponName: '단검',   hp: 95,  atk: 9,  speed: 290, range: 66,  atkCd: 300, crit: .25, color: '#f39c12', melee: true, rec: 'stCrit' },
+  mage:    { name: '마법사', icon: '🪄', weaponName: '지팡이', hp: 85,  atk: 18, speed: 225, range: 270, atkCd: 850, crit: .05, color: '#9b59b6', proj: 'bolt', rec: 'stWis' },
 };
 const CLASS_ORDER = ['warrior', 'archer', 'rogue', 'mage'];
 
@@ -411,11 +411,13 @@ function toast(html, kind = '') {
   while (box.children.length > 6) box.firstChild.remove();
 }
 function flashInv() {
-  const p = $('invPanel');
-  if (!p) return;
-  p.classList.remove('flash');
-  void p.offsetWidth;
-  p.classList.add('flash');
+  for (const id of ['invPanel', 'invBtn']) { /* 패널이 닫혀 있으면 가방 버튼이 대신 번쩍 */
+    const p = $(id);
+    if (!p) continue;
+    p.classList.remove('flash');
+    void p.offsetWidth;
+    p.classList.add('flash');
+  }
 }
 function doShake(pow) { shakePow = Math.max(shakePow, pow); shakeT = Date.now(); }
 
@@ -860,7 +862,7 @@ function useSkill(slot) {
   if ((me.mp ?? maxMpOf()) < mpc) { float(me.x, me.y - 34, '마나 부족!', '#5dade2'); return; }
 
   if (id === 'heal') {
-    const amt = Math.round(me.maxHp * .4 * skillPow());
+    const amt = Math.round(maxHpOf() * .4 * skillPow()); /* me.maxHp는 생성 시점 값이라 낡음 */
     me.hp = Math.min(maxHpOf(), (me.hp || 0) + amt);
     updateDoc(meRef, { hp: me.hp }).catch(() => {});
     float(me.x, me.y - 34, `+${amt} HP`, '#2ecc71');
@@ -2094,33 +2096,33 @@ function buildWorld() {
 /* 외곽 벽돌 테두리: 얇은 폭(16px), 벽돌별 명암 지터 + 베벨 + 줄눈 + 균열/이끼 디테일 */
 function drawBrickBorder(c, hue, sat) {
   const BW = 16, STEP = 30;
-  const srr = n => { const v = Math.sin(n * 127.1 + 311.7) * 43758.5453; return v - Math.floor(v); };
   const brick = (x, y, w, h, seed) => {
-    const l = 36 + (srr(seed) - .5) * 13;
+    const l = 36 + (sr(seed + 2.45) - .5) * 13;
     const g = c.createLinearGradient(x, y, x, y + h);
     g.addColorStop(0, `hsl(${hue},${sat}%,${l + 8}%)`);
     g.addColorStop(1, `hsl(${hue},${sat}%,${l - 6}%)`);
     c.fillStyle = g;
-    c.beginPath(); c.roundRect(x + 1, y + 1, w - 2, h - 2, 2.5); c.fill();
+    roundRect(c, x + 1, y + 1, w - 2, h - 2, 2.5); /* 네이티브 c.roundRect는 구형 모바일 Safari에 없음 */
+    c.fill();
     c.strokeStyle = 'rgba(0,0,0,.45)'; c.lineWidth = 1; c.stroke();
     c.fillStyle = 'rgba(255,255,255,.2)';
     c.fillRect(x + 3, y + 2.2, w - 6, 1.5);
     c.fillStyle = 'rgba(0,0,0,.22)';
     c.fillRect(x + 3, y + h - 3.6, w - 6, 1.5);
-    if (srr(seed * 3.7) > .82) {
+    if (sr(seed * 3.7) > .82) {
       c.strokeStyle = 'rgba(0,0,0,.28)'; c.lineWidth = .8;
       c.beginPath(); c.moveTo(x + w * .32, y + 2.5); c.lineTo(x + w * .52, y + h - 3.5); c.stroke();
     }
-    if (srr(seed * 5.3) > .86) {
+    if (sr(seed * 5.3) > .86) {
       c.fillStyle = 'rgba(95,145,85,.42)';
-      c.beginPath(); c.arc(x + w * (.25 + srr(seed * 7.1) * .5), y + h - 4.2, 1.7, 0, 7); c.fill();
+      c.beginPath(); c.arc(x + w * (.25 + sr(seed * 7.1) * .5), y + h - 4.2, 1.7, 0, 7); c.fill();
     }
   };
   c.fillStyle = `hsl(${hue},${Math.max(0, sat - 3)}%,15%)`;
   c.fillRect(0, 0, WORLD.w, BW); c.fillRect(0, WORLD.h - BW, WORLD.w, BW);
   c.fillRect(0, 0, BW, WORLD.h); c.fillRect(WORLD.w - BW, 0, BW, WORLD.h);
   let i = 0;
-  for (let x = 0; x < WORLD.w; x += STEP, i++) { brick(x, 0, STEP - 2, BW, i * 2.13); brick(x - STEP / 2, WORLD.h - BW, STEP - 2, BW, i * 2.31 + 97); }
+  for (let x = 0; x < WORLD.w + STEP / 2; x += STEP, i++) { brick(x, 0, STEP - 2, BW, i * 2.13); brick(x - STEP / 2, WORLD.h - BW, STEP - 2, BW, i * 2.31 + 97); }
   for (let y = BW; y < WORLD.h - BW; y += STEP, i++) { brick(0, y, BW, STEP - 2, i * 2.71 + 511); brick(WORLD.w - BW, y, BW, STEP - 2, i * 2.97 + 977); }
   c.fillStyle = 'rgba(0,0,0,.22)';
   c.fillRect(BW, BW, WORLD.w - BW * 2, 5);
@@ -2725,30 +2727,29 @@ function drawBoss(s, now) {
 }
 
 /* ================= 메인 드로잉 ================= */
-/* UI 인셋 — PC: 스테이지 항상 정중앙(인셋 없음), 모바일: 상하(HUD/하단 액션바)만 회피 */
-let uiInsetCache = { L: 0, R: 0, T: 0, B: 0, t: 0 };
+/* UI 인셋 — PC: 스테이지 항상 정중앙(인셋 없음), 모바일: 상하(HUD/하단 액션바)만 회피
+   모바일에선 HUD 실제 높이를 CSS 변수 --hudB로 내보내 카운터/미니맵이 CSS에서 따라가게 함 */
+const isMobileUI = () => innerWidth <= 640; /* index.html @media (max-width:640px)와 동기 유지 */
+let uiInsetCache = { T: 0, B: 0, t: 0, hb: -1 };
 function uiInsets(now) {
   if (now - uiInsetCache.t > 500) {
     let T = 0, B = 0;
-    const oc = $('onlineCnt'), mm = $('minimap');
-    if (innerWidth <= 640) {
-      const h = $('hud')?.getBoundingClientRect();
-      if (h && h.height) {
-        T = h.bottom + 8;
-        /* HUD 높이(스탯버튼 줄수)에 따라 카운터/미니맵을 HUD 바로 아래로 */
-        if (oc) oc.style.top = (h.bottom + 4) + 'px';
-        if (mm) mm.style.top = (h.bottom + 4) + 'px';
-      }
+    const h = $('hud')?.getBoundingClientRect();
+    if (h && h.height) {
+      /* HUD 실측 높이를 CSS 변수로 발행 — 장비패널(top)·모바일 카운터/미니맵이 CSS에서 따라감 */
+      const hb = Math.round(h.bottom);
+      if (hb !== uiInsetCache.hb) { uiInsetCache.hb = hb; document.documentElement.style.setProperty('--hudB', hb + 'px'); }
+      if (isMobileUI()) T = h.bottom + 8;
+    }
+    if (isMobileUI()) {
       const mb = $('mobileBar')?.getBoundingClientRect();
       if (mb && mb.height) B = innerHeight - mb.top + 8;
-    } else {
-      if (oc) oc.style.top = '12px'; /* 데스크톱 기본 위치 복원 */
-      if (mm) mm.style.top = '';
     }
-    uiInsetCache = { L: 0, R: 0, T, B, t: now };
+    uiInsetCache.T = T; uiInsetCache.B = B; uiInsetCache.t = now;
   }
   return uiInsetCache;
 }
+addEventListener('resize', () => { uiInsetCache.t = 0; }); /* 회전/리사이즈 시 인셋 즉시 재계산 */
 function draw(now) {
   const vw = cv.width, vh = cv.height;
   let shx = 0, shy = 0;
@@ -2756,12 +2757,11 @@ function draw(now) {
     const p = (1 - (now - shakeT) / 180) * shakePow;
     shx = rand(-p, p); shy = rand(-p, p);
   } else shakePow = 0;
-  /* 고정 UI를 제외한 밴드를 실제 뷰포트로 사용: 부족하면 밴드 안에서 스크롤, 넉넉하면 밴드 중앙 정렬 */
-  const { L, R, T, B } = uiInsets(now);
-  const availW = vw - L - R, availH = vh - T - B;
-  let cx, cy;
-  if (WORLD.w >= availW) cx = clampN(cam.x - L - availW / 2, -L, WORLD.w - vw + R);
-  else cx = -(L + (availW - WORLD.w) / 2);
+  /* 가로: 항상 정중앙(부족하면 스크롤). 세로: 모바일 상하 UI를 제외한 밴드 기준 */
+  const { T, B } = uiInsets(now);
+  const availH = vh - T - B;
+  const cx = WORLD.w >= vw ? clampN(cam.x - vw / 2, 0, WORLD.w - vw) : (WORLD.w - vw) / 2;
+  let cy;
   if (WORLD.h >= availH) cy = clampN(cam.y - T - availH / 2, -T, WORLD.h - vh + B);
   else cy = -(T + (availH - WORLD.h) / 2);
   view.x = cx; view.y = cy;
@@ -2896,16 +2896,18 @@ function draw(now) {
   }
 
   for (const [id, o] of Object.entries(others)) {
-    if (Date.now() - (o.lastSeen || 0) >= OFFLINE_MS || (o.map || 'm1') !== myMap()) continue;
-    /* 네트워크 위치(600ms+ 간격)를 화면 위치로 보간 — 순간이동 대신 부드러운 이동 */
+    if (Date.now() - (o.lastSeen || 0) >= OFFLINE_MS || (o.map || 'm1') !== myMap()) { delete othersPrev[id]; continue; }
+    /* 네트워크 위치(600ms+ 간격)를 화면 위치로 시간기반 보간 — 순간이동 대신 부드러운 이동 */
     let pv = othersPrev[id];
-    if (!pv || Math.hypot(o.x - pv.x, o.y - pv.y) > 320) pv = { x: o.x, y: o.y, f: Math.PI / 2 };
+    if (!pv) pv = othersPrev[id] = { x: o.x, y: o.y, f: Math.PI / 2, t: now };
     const ddx = o.x - pv.x, ddy = o.y - pv.y, dd = Math.hypot(ddx, ddy);
-    const sx2 = pv.x + ddx * .14, sy2 = pv.y + ddy * .14;
-    const mv = dd > 2.5;
-    const fc = mv ? Math.atan2(ddy, ddx) : (pv.f ?? Math.PI / 2);
-    othersPrev[id] = { x: sx2, y: sy2, f: fc };
-    drawChar({ x: sx2, y: sy2, color: o.color || colorOf(id), name: o.name, hp: o.hp, maxHp: o.maxHp, dead: o.dead, equipped: o.equipped, cls: o.cls || 'warrior', isSelf: false, face: fc, moving: mv });
+    const k2 = 1 - Math.exp(-(now - pv.t) / 110); /* 주사율 무관 수렴 속도 */
+    pv.t = now;
+    if (dd > 320) { pv.x = o.x; pv.y = o.y; } /* 텔레포트/맵이동은 스냅 */
+    else { pv.x += ddx * k2; pv.y += ddy * k2; }
+    if (dd > 2.5) { pv.mvT = now; pv.f = angLerp(pv.f ?? Math.PI / 2, Math.atan2(ddy, ddx), .25); }
+    const mv = now - (pv.mvT || 0) < 400; /* 600ms 쓰기 간격 사이 걷기 애니메이션 깜빡임 방지 */
+    drawChar({ x: pv.x, y: pv.y, color: o.color || colorOf(id), name: o.name, hp: o.hp, maxHp: o.maxHp, dead: o.dead, equipped: o.equipped, cls: o.cls || 'warrior', isSelf: false, face: pv.f, moving: mv });
   }
   if (ready) drawChar({ x: me.x, y: me.y, color: '#fff', name: myName, hp: me.hp, maxHp: me.maxHp, dead: me.dead, equipped: me.equipped, cls: myCls, isSelf: true, face: me.face ?? Math.PI / 2, moving: meMovingNow, swing: lastAttackAt });
 
@@ -3012,7 +3014,7 @@ function draw(now) {
     mctx.fillStyle = '#fff';
     mctx.fillRect(me.x * k - 2, me.y * k - 2, 4, 4);
     mctx.strokeStyle = 'rgba(255,255,255,.6)';
-    mctx.strokeRect(cam.x * k - 48, cam.y * k - 36, 96, 72);
+    mctx.strokeRect(view.x * k, view.y * k, Math.min(160, cv.width * k), Math.min(120, cv.height * k)); /* 실제 화면 영역 */
   }
 
   const hpR = (me.hp || 0) / maxHpOf();
@@ -3152,7 +3154,8 @@ if (rtl) rtl.onclick = () => { rankMode = 'lv'; renderRank(); };
 if (rta) rta.onclick = () => { rankMode = 'atk'; renderRank(); };
 $('dexBtn').onclick = () => { sfx('click'); toggleDex(); };
 document.querySelectorAll('.stbtn').forEach(b => b.onclick = () => addStat(b.dataset.st));
-$('invBtn').onclick = () => { sfx('click'); $('invPanel').classList.toggle('open'); };
+function toggleInv() { sfx('click'); $('invPanel').classList.toggle('open'); }
+$('invBtn').onclick = toggleInv;
 $('shopBtn').onclick = () => { sfx('click'); togglePanel('shopPanel'); };
 document.querySelector('#rankPanel h3').addEventListener('click', e => {
   if (e.target.tagName === 'BUTTON') return;
@@ -3167,7 +3170,7 @@ $('logoutBtn').onclick = async () => {
 document.querySelectorAll('#mobileBar [data-mb]').forEach(b => b.onclick = () => {
   sfx('click');
   const k = b.dataset.mb;
-  if (k === 'inv') $('invPanel').classList.toggle('open');
+  if (k === 'inv') $('invPanel').classList.toggle('open'); /* sfx는 위에서 이미 재생 */
   else if (k === 'map') toggleWorldMap();
   else if (k === 'dex') toggleDex();
   else togglePanel(k);
@@ -3181,6 +3184,7 @@ addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     chatInput.blur();
     document.querySelectorAll('.sidepanel').forEach(p => p.classList.remove('open'));
+    $('invPanel').classList.remove('open');
     return;
   }
   if (typing) return;
@@ -3190,7 +3194,7 @@ addEventListener('keydown', e => {
   if (e.code === 'Space') tryAttack(Date.now());
   if (e.code === 'Digit1') useSkill(1);
   if (e.code === 'Digit2') useSkill(2);
-  if (e.code === 'KeyI') { sfx('click'); $('invPanel').classList.toggle('open'); }
+  if (e.code === 'KeyI') toggleInv();
   if (e.code === 'KeyB') { sfx('click'); togglePanel('shopPanel'); }
   if (e.code === 'KeyQ') { sfx('click'); togglePanel('questPanel'); }
   if (e.code === 'KeyM') toggleMute();
@@ -3325,14 +3329,15 @@ function loopBody(t) {
   if (moved) resolveCollide();
 
   if (!Number.isFinite(me.x) || !Number.isFinite(me.y)) { me.x = SPAWN.x; me.y = SPAWN.y; cam.x = me.x; cam.y = me.y; }
+  if (!Number.isFinite(me.hp)) me.hp = maxHpOf(); /* 비정상 HP가 Firestore로 퍼지는 것 차단 */
+  if (me.mp != null && !Number.isFinite(me.mp)) me.mp = maxMpOf();
   const movedFar = Math.abs(me.x - sentX) + Math.abs(me.y - sentY) > 2;
-  const hpChanged = Math.round(me.hp || 0) !== sentHp;
   const mpChanged = me.mp != null && Math.round(me.mp) !== sentMp;
   if ((now - lastPosWrite > 600 && (movedFar || hpDirty || mpChanged)) || now - lastPosWrite > 8000) {
     lastPosWrite = now;
     hpDirty = false;
     sentX = me.x; sentY = me.y; sentHp = Math.round(me.hp || 0); sentMp = me.mp != null ? Math.round(me.mp) : null;
-updateDoc(meRef, { x: me.x, y: me.y, hp: me.hp, ...(me.mp != null ? { mp: Math.round(me.mp) } : {}), ...(me.lastHurtAt ? { lastHurtAt: Math.round(me.lastHurtAt) } : {}), power: totalAtk(), lastSeen: now }).catch(() => {});
+updateDoc(meRef, { x: me.x, y: me.y, hp: me.hp, ...(me.mp != null ? { mp: Math.round(me.mp) } : {}), ...(me.lastHurtAt ? { lastHurtAt: Math.round(me.lastHurtAt) } : {}), power: Math.round(totalAtk() * (1 + totalCrit()) * skillPow()), lastSeen: now }).catch(() => {});
   }
 
   if (!me.dead && (me.mp ?? 0) < maxMpOf()) {
@@ -3438,6 +3443,7 @@ function addStat(k) {
   }).then(ok => {
     if (!ok) return;
     sfx('buy');
+    me[k] = (me[k] || 0) + 1; /* 스냅샷 도착 전 낙관적 반영 — maxHpOf/maxMpOf 즉시 정확 */
     if (k === 'stHp') {
       me.hp = Math.min(maxHpOf(), (me.hp || 0) + 15);
       updateDoc(meRef, { hp: me.hp }).catch(() => {});
@@ -3600,7 +3606,7 @@ async function init() {
     me.x = Number.isFinite(d.x) ? d.x : SPAWN.x;
     me.y = Number.isFinite(d.y) ? d.y : SPAWN.y;
     cam.x = me.x; cam.y = me.y;
-    await updateDoc(meRef, { lastSeen: Date.now(), dead: false, ...(d.mp == null ? { mp: maxMpOf() } : {}) });
+    await updateDoc(meRef, { lastSeen: Date.now(), dead: false, ...(d.mp == null ? { mp: 100 + ((d.lv || 1) - 1) * 5 + (d.stWis || 0) * 12 } : {}) }); /* me가 로드되기 전이라 d 기준으로 계산 */
   }
 
   await ensureWorld();
@@ -3636,8 +3642,8 @@ async function init() {
   window.__DBG = () => ({ page: myPage(), me: { x: Math.round(me.x), y: Math.round(me.y), lv: me.lv, map: me.map, bag: me.bagSize, conq: JSON.stringify(me.conq || {}) },
     sims: sims.filter(s => s.alive).slice(0, 20).map(s => ({ id: s.id, x: Math.round(s.x), y: Math.round(s.y), d: Math.round(Math.hypot(s.x - me.x, s.y - me.y)), boss: s.boss, lv: simLevel(s) })) });
   $('loading').style.display = 'none';
-  const REC_STAT = { warrior: 'stAtk', archer: 'stSpd', rogue: 'stCrit', mage: 'stWis' };
-  document.querySelector(`.stbtn[data-st="${REC_STAT[myCls]}"]`)?.classList.add('rec');
+  document.querySelector(`.stbtn[data-st="${cdef().rec}"]`)?.classList.add('rec');
+  if (isMobileUI()) toast('💡 아이템은 가까이 가면 자동으로 줍습니다');
   const mn = $('mapName');
   if (mn) mn.textContent = pageDef(pageNum()).name;
   renderInvUI();

@@ -49,8 +49,8 @@
     background: #000; color: #888; z-index: 99; font-size: 15px; white-space: pre-line; text-align: center; padding: 20px; }
 
   /* ===== HUD ===== */
-  #hud { position: fixed; top: 12px; left: 12px; width: 400px; padding: 14px 16px; z-index: 10; font-size: 15px; }
-  #hud .toprow { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+  #hud { position: fixed; top: 12px; left: 12px; width: 400px; padding: 9px 14px 10px; z-index: 10; font-size: 15px; }
+  #hud .toprow { display: flex; align-items: baseline; gap: 8px; margin-bottom: 5px; }
   #hud .lv { color: #ffd700; font-size: 24px; font-weight: bold; }
   #hud .cls { font-size: 13px; color: #7fc7ff; }
   #hud .name { color: #fff; flex: 1; overflow: hidden; text-overflow: ellipsis; }
@@ -64,14 +64,16 @@
   #expText { margin-top: -22px; margin-bottom: 3px; }
   #stats { color: #aaa; font-size: 14px; line-height: 1.55; }
   #stats b { color: #eee; }
-  #goldRow { margin-top: 8px; padding-top: 8px; border-top: 1px solid #333; color: #ffd700; font-weight: bold; }
-  #btnRow { display: flex; gap: 7px; margin-top: 10px; }
-  #btnRow button { flex: 1; padding: 9px 0; font-size: 13px; font-weight: bold;
+  #goldRow { margin-top: 5px; padding-top: 5px; border-top: 1px solid #333; color: #ffd700; font-weight: bold; }
+  #btnRow { display: flex; gap: 7px; margin-top: 7px; }
+  #btnRow button { flex: 1; padding: 7px 0; font-size: 13px; font-weight: bold;
     background: linear-gradient(#c9a227, #8f6f14); color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.5); }
   #btnRow button:hover { filter: brightness(1.18); }
 
   /* 인벤토리 */
-  #invPanel { position: fixed; left: 12px; top: 392px; width: 400px; padding: 12px; z-index: 10; display: none; }
+  /* --hudB: JS(uiInsets)가 HUD 실측 높이(px)로 갱신하는 CSS 변수 */
+  #invPanel { position: fixed; left: 12px; top: calc(var(--hudB, 372px) + 10px); width: 400px; padding: 12px; z-index: 10;
+    display: none; max-height: calc(100vh - var(--hudB, 372px) - 24px); overflow-y: auto; }
   #invPanel.open { display: block; }
   #invPanel h3 { font-size: 13px; color: #888; margin: 2px 0 8px 2px; letter-spacing: 1px; }
   #equipGrid { display: grid; grid-template-columns: repeat(3, 76px); justify-content: center; gap: 10px; margin-bottom: 10px; }
@@ -99,56 +101,6 @@
   .islot.dropok { border-color: #ffd700 !important; box-shadow: inset 0 0 10px rgba(255,215,0,.55); }
   #enhBox { background: #141a26; border: 1px solid #3a4a66; border-radius: 12px; padding: 18px 20px;
     width: min(330px, 90vw); box-shadow: 0 10px 40px rgba(0,0,0,.7); font-size: 14px; color: #ccd; line-height: 1.6; }
-
-  /* 모바일 (아이폰 등): 상단 상태바 / 중앙 플레이 / 하단 액션바 */
-  @media (max-width: 640px) {
-    body { overflow: hidden; }
-    canvas#game { touch-action: none; -webkit-user-select: none; user-select: none; }
-    #hud { width: calc(100vw - 12px); left: 6px; top: 6px; padding: 7px 9px; font-size: 11px; }
-    #hud .lv { font-size: 15px; }
-    #hud .cls { font-size: 10px; }
-    .barwrap { height: 11px; margin-bottom: 2px; border-radius: 6px; }
-    .bartext, #mpText, #expText { font-size: 9px; margin-top: -12px; margin-bottom: 2px; }
-    #stats, #btnRow { display: none; }
-    #goldRow { margin-top: 3px; padding-top: 3px; font-size: 11.5px; }
-    #statPtsRow { font-size: 10.5px; gap: 3px; }
-    .stbtn { padding: 2px 5px; font-size: 9.5px; }
-
-    /* 하단 액션 바 */
-    #mobileBar { display: flex; position: fixed; bottom: 0; left: 0; right: 0;
-      height: calc(54px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom);
-      background: rgba(10,14,22,.96); border-top: 1px solid rgba(255,255,255,.13); z-index: 40;
-      align-items: stretch; }
-    #mobileBar button { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 1px; font-size: 18px; color: #9fb0c8; background: none; border: none; border-right: 1px solid rgba(255,255,255,.07); }
-    #mobileBar button:last-child { border-right: none; }
-    #mobileBar button span { font-size: 9.5px; letter-spacing: 1px; }
-    #mobileBar button:active { background: rgba(255,215,0,.12); }
-
-    /* 핫바: 우측 하단(액션바 위) — body 접두사는 뒤에 오는 기본 규칙보다 우선하기 위함 */
-    body #hotbar { left: auto; right: 6px; transform: none; bottom: calc(62px + env(safe-area-inset-bottom)); gap: 8px; z-index: 35; }
-    #hotbar .hslot { width: 48px; height: 48px; }
-
-    /* 미니맵/카운터: HUD 아래로, 랭킹은 숨김 (body 접두사/!important는 뒤의 기본·인라인 규칙보다 우선하기 위함) */
-    body #minimap { width: 90px; height: 68px; top: 153px; right: 6px; opacity: .85; }
-    #onlineCnt { left: 6px !important; transform: none !important; } /* top은 JS(uiInsets)가 HUD 높이에 맞춰 설정 */
-    #rankPanel { display: none; }
-
-    /* 채팅: 액션바 위, 핫바 열 비워둠 */
-    body #chatBox { left: 6px; width: calc(100vw - 116px); bottom: calc(60px + env(safe-area-inset-bottom)); }
-    body #chatLog { height: 64px; }
-
-    /* 가방 = 하단 시트 (가방 버튼으로 열고 닫음) */
-    #invPanel { display: none; left: 6px; width: calc(100vw - 12px); top: auto; bottom: calc(60px + env(safe-area-inset-bottom));
-      max-height: 46vh; overflow-y: auto; z-index: 45; background: rgba(10,14,22,.95); }
-    #invPanel.open { display: block; }
-
-    #help { display: none; } /* 키보드 조작법은 터치 기기에서 불필요 */
-
-    /* 사이드 패널들 = 중앙 오버레이 */
-    .sidepanel { left: 8px !important; right: 8px !important; width: auto !important; top: 64px !important;
-      bottom: calc(62px + env(safe-area-inset-bottom)) !important; max-height: none !important; z-index: 50; }
-  }
 
   /* 핫바 */
   #hotbar { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; z-index: 10; }
@@ -185,6 +137,7 @@
   .qdone .st { text-decoration: line-through; color: #7fa; }
 
   #minimap { position: fixed; top: 12px; right: 12px; z-index: 10; opacity: .92; }
+  #onlineCnt { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 10; padding: 5px 14px; font-size: 12px; color: #9fd; }
 
   /* 채팅: 평소엔 반투명, 마우스 올리거나 입력 중일 때만 또렷하게 */
   #chatBox { position: fixed; left: 12px; bottom: 12px; width: 380px; z-index: 10; opacity: .5; transition: opacity .2s; }
@@ -231,7 +184,7 @@
   .islot .ic { font-size: 17px; }
 
   /* 스탯 포인트 */
-  #statPtsRow { display: none; margin-top: 8px; padding-top: 8px; border-top: 1px solid #333; align-items: center; gap: 5px; flex-wrap: wrap; font-size: 13.5px; color: #ffd700; }
+  #statPtsRow { display: none; margin-top: 6px; padding-top: 6px; border-top: 1px solid #333; align-items: center; gap: 5px; flex-wrap: wrap; font-size: 13.5px; color: #ffd700; }
   .stbtn { padding: 4px 9px; font-size: 12px; font-weight: bold; background: linear-gradient(#c9a227, #8f6f14); color: #fff; border-radius: 4px; }
   .stbtn:hover { filter: brightness(1.2); }
   .stbtn.rec { outline: 1.5px solid #ffd700; box-shadow: 0 0 7px rgba(255,215,0,.45); } /* 직업 추천 스탯 */
@@ -239,8 +192,10 @@
   /* 랭킹 */
   #rankPanel { position: fixed; right: 12px; top: 148px; width: 185px; z-index: 10; padding: 9px 11px; }
   #rankPanel h3 { font-size: 11px; color: #aaa; margin-bottom: 6px; letter-spacing: 1px; cursor: pointer; }
-  #rankPanel.folded #rankList { display: none; }
-  #rankPanel.folded h3 span { display: none !important; } /* 탭 span의 인라인 display:flex 무시 */
+  #rankPanel h3 span { float: right; display: flex; gap: 3px; }
+  #dexPanel { width: 360px; }
+  #invBtn.flash { animation: invflash 1s ease-out; } /* 가방이 닫혀 있어도 획득 피드백 */
+  #rankPanel.folded #rankList, #rankPanel.folded h3 span { display: none; }
   #rankPanel.folded h3 { margin-bottom: 0; }
   #rankList { font-size: 12px; line-height: 1.9; color: #ddd; }
   #rankList div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -289,6 +244,55 @@
   #privacyBox button:hover { background: #3a4a63; color: #fff; }
 
   /* 효과 */
+
+  /* 모바일 (아이폰 등): 상단 상태바 / 중앙 플레이 / 하단 액션바 — 기본 규칙 뒤에 두어 자연 캐스케이드로 우선 */
+  @media (max-width: 640px) {
+    body { overflow: hidden; }
+    canvas#game { touch-action: none; -webkit-user-select: none; user-select: none; }
+    #hud { width: calc(100vw - 12px); left: 6px; top: 6px; padding: 7px 9px; font-size: 11px; }
+    #hud .lv { font-size: 15px; }
+    #hud .cls { font-size: 10px; }
+    .barwrap { height: 11px; margin-bottom: 2px; border-radius: 6px; }
+    .bartext, #mpText, #expText { font-size: 9px; margin-top: -12px; margin-bottom: 2px; }
+    #stats, #btnRow { display: none; }
+    #goldRow { margin-top: 3px; padding-top: 3px; font-size: 11.5px; }
+    #statPtsRow { font-size: 10.5px; gap: 3px; }
+    .stbtn { padding: 2px 5px; font-size: 9.5px; }
+
+    /* 하단 액션 바 */
+    #mobileBar { display: flex; position: fixed; bottom: 0; left: 0; right: 0;
+      height: calc(54px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom);
+      background: rgba(10,14,22,.96); border-top: 1px solid rgba(255,255,255,.13); z-index: 40;
+      align-items: stretch; }
+    #mobileBar button { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 1px; font-size: 18px; color: #9fb0c8; background: none; border: none; border-right: 1px solid rgba(255,255,255,.07); }
+    #mobileBar button:last-child { border-right: none; }
+    #mobileBar button span { font-size: 9.5px; letter-spacing: 1px; }
+    #mobileBar button:active { background: rgba(255,215,0,.12); }
+
+    /* 핫바: 우측 하단(액션바 위) */
+    #hotbar { left: auto; right: 6px; transform: none; bottom: calc(62px + env(safe-area-inset-bottom)); gap: 8px; z-index: 35; }
+    .hslot { width: 48px; height: 48px; }
+
+    /* 미니맵/카운터: HUD 바로 아래(--hudB 추적), 랭킹은 숨김 */
+    #minimap { width: 90px; height: 68px; top: calc(var(--hudB, 150px) + 4px); right: 6px; opacity: .85; }
+    #onlineCnt { top: calc(var(--hudB, 150px) + 4px); left: 6px; transform: none; }
+    #rankPanel { display: none; }
+
+    /* 채팅: 액션바 위, 핫바 열 비워둠 — 터치엔 hover가 없으니 항상 불투명 */
+    #chatBox { left: 6px; width: calc(100vw - 116px); bottom: calc(60px + env(safe-area-inset-bottom)); opacity: 1; }
+    #chatLog { height: 64px; }
+
+    /* 가방 = 하단 시트 (열림/닫힘 display 규칙은 기본 규칙 공용) */
+    #invPanel { left: 6px; width: calc(100vw - 12px); top: auto; bottom: calc(60px + env(safe-area-inset-bottom));
+      max-height: 46vh; z-index: 45; background: rgba(10,14,22,.95); }
+
+    #help { display: none; } /* 키보드 조작법은 터치 기기에서 불필요 */
+
+    /* 사이드 패널들 = 중앙 오버레이 */
+    .sidepanel { left: 8px; right: 8px; width: auto; top: 64px;
+      bottom: calc(62px + env(safe-area-inset-bottom)); max-height: none; z-index: 50; }
+  }
 </style>
 </head>
 <body>
@@ -383,7 +387,7 @@
 
 <div id="bossAlert" class="panel">⚔ 보스 「오크 대족장」 출현! ⚔</div>
 
-<div id="onlineCnt" class="panel" style="position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:10;padding:5px 14px;font-size:12px;color:#9fd;">🗺 <b id="mapName">초원</b> · 🟢 <b id="ocN">1</b>명</div>
+<div id="onlineCnt" class="panel">🗺 <b id="mapName">초원</b> · 🟢 <b id="ocN">1</b>명</div>
 
 <div id="mapFade" style="position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;transition:opacity .35s;z-index:50;"></div>
 
@@ -394,7 +398,7 @@
   <div style="font-size:11px;color:#889;">즉시 부활하면 자리에서 일어납니다</div>
 </div>
 
-<div id="dexPanel" class="sidepanel panel" style="right:190px;width:360px;">
+<div id="dexPanel" class="sidepanel panel">
   <header><b>📖 몬스터 도감</b><button data-close="dexPanel">✕</button></header>
   <div class="spbody" id="dexBody"></div>
 </div>
@@ -452,11 +456,11 @@
 </div>
 
 <script src="firebase-config.js?v=16"></script>
-<script type="module">
-  import(`./game.js?v=${Date.now()}`).catch(err => {
-    const el = document.getElementById('loading');
-    if (el) { el.style.display = 'flex'; el.textContent = '스크립트 로드 실패: ' + err.message; }
-  });
+<!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
+<script type="module" src="game.js?v=18"
+  onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
+<script nomodule>
+  (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();
 </script>
 <script>
   document.getElementById('privacyLink').onclick = () => document.getElementById('privacyModal').classList.add('open');

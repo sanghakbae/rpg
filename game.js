@@ -182,23 +182,33 @@ function splitStack(id) {
   return i < 0 ? [s, 1] : [s.slice(0, i), Math.max(1, +s.slice(i + 1) || 1)];
 }
 
+const itemDefCache = {};
 function getItem(id) {
   id = String(id);
   const star = id.indexOf('*');
   if (star >= 0) id = id.slice(0, star);
+  if (itemDefCache[id]) return itemDefCache[id];
   const plus = id.indexOf('+');
-  if (plus < 0) return ITEMS[id] || { name: id, rarity: 'common' };
-  const baseId = String(id).slice(0, plus);
-  const base = ITEMS[baseId];
-  const lv = +String(id).slice(plus + 1) || 0;
-  if (!base) return { name: id, rarity: 'common' };
-  const m = 1 + lv * .25;
-  const out = { ...base, name: base.name + ' +' + lv, _lv: lv, _base: baseId };
-  if (base.atk) out.atk = Math.round(base.atk * m);
-  if (base.def) out.def = Math.round(base.def * m);
-  if (base.heal) out.heal = Math.round(base.heal * (1 + lv * .15));
-  if (base.crit) out.crit = +(base.crit + lv * .01).toFixed(3);
-  if (base.spd) out.spd = Math.round(base.spd * m);
+  let out;
+  if (plus < 0) {
+    /* 미강화 아이템도 _base/_lv를 반드시 채움 — 없으면 강화 시 "undefined+1"로 아이템 파괴 */
+    out = ITEMS[id] ? { ...ITEMS[id], _base: id, _lv: 0 } : { name: id, rarity: 'common' };
+  } else {
+    const baseId = id.slice(0, plus);
+    const base = ITEMS[baseId];
+    const lv = +id.slice(plus + 1) || 0;
+    if (!base) out = { name: id, rarity: 'common' };
+    else {
+      const m = 1 + lv * .25;
+      out = { ...base, name: base.name + ' +' + lv, _lv: lv, _base: baseId };
+      if (base.atk) out.atk = Math.round(base.atk * m);
+      if (base.def) out.def = Math.round(base.def * m);
+      if (base.heal) out.heal = Math.round(base.heal * (1 + lv * .15));
+      if (base.crit) out.crit = +(base.crit + lv * .01).toFixed(3);
+      if (base.spd) out.spd = Math.round(base.spd * m);
+    }
+  }
+  itemDefCache[id] = out;
   return out;
 }
 const RARITY_KR = { common: '일반', uncommon: '고급', rare: '희귀', epic: '영웅', legend: '전설', unique: '유니크' };
@@ -496,9 +506,12 @@ function makeSim(id, d) {
     const k = kindByName(d.kind || '슬라임');
     type = k.base;
     sprId = k.base + '::' + k.name;
-    def = { name: k.name, hp: d.maxHp || d.hp || 100, maxHp: d.maxHp || d.hp || 100, atk: 10, exp: 10, gold: 10,
-      r: KIND_BASE[k.base].r * (d.boss ? 1.2 : 1), aggro: KIND_BASE[k.base].aggro,
-      speed: KIND_BASE[k.base].speed, respawn: KIND_BASE[k.base].respawn, range: KIND_BASE[k.base].range };
+    /* 구역 스케일링(pageDiff/pageExp)이 적용된 정본 def 사용 — 이전엔 atk/exp/gold가 10으로 하드코딩돼
+       전 구역 밸런스가 죽어 있었음. HP도 문서의 (유니크 인플레이션 가능한) maxHp 대신 정본 기준 */
+    const pn3 = +(d.page.slice(1)) || 1;
+    const pd3 = pageDef(pn3);
+    const kk = d.boss ? pd3.boss : (pd3.kinds.find(x => x.name === (d.kind || '')) || pd3.kinds[0]);
+    def = { ...kk, maxHp: kk.hp };
     if (!SPRITE_DEFS[sprId]) {
       const bp = SPRITE_DEFS[k.base].pal;
       const keys = Object.keys(bp);
@@ -518,7 +531,6 @@ function makeSim(id, d) {
 }
 
 function sdef(s) {
-  if (s.maxHp && s.def.hp !== s.maxHp) s.def.hp = s.maxHp;
   if (!s.uniq) return s.def;
   if (!s._ud) s._ud = { ...s.def, name: '★' + s.def.name, hp: Math.round(s.def.hp * 6), maxHp: Math.round(s.def.hp * 6), atk: Math.round(s.def.atk * 1.8), exp: s.def.exp * 8, gold: s.def.gold * 15, r: Math.round(s.def.r * 1.25), aggro: Math.round(s.def.aggro * 1.3) };
   return s._ud;
@@ -591,7 +603,9 @@ function watchMonsters() {
       pageRetryT = Date.now();
       ensurePage(pageNum()).catch(e => { monErr = '보충실패:' + (e.code || e.message); });
     }
+    const seenIds = new Set();
     snap.forEach(dc => {
+      seenIds.add(dc.id);
       const d = dc.data();
       let s = null;
       try { s = sims.find(x => x.id === dc.id); if (!s) { s = makeSim(dc.id, d); sims.push(s); } }
@@ -608,6 +622,7 @@ function watchMonsters() {
       s.hp = typeof d.hp === 'number' ? d.hp : sdef(s).hp;
       s.respawnAt = d.respawnAt || 0;
     });
+    sims = sims.filter(s => seenIds.has(s.id)); /* 문서가 삭제된 유령 몬스터 제거(불사신+실피해 방지) */
     bossWasAlive = (sims.find(s => s.boss) || { alive: true }).alive;
   }, err => {
     const code = String(err.code || err.message || '');
@@ -629,11 +644,16 @@ function watchPlayers() {
   });
 }
 
+let unsubLoot = null;
 function watchLoot() {
-  onSnapSafe('loot', collection(db, 'loot'), snap => {
+  /* 현재 구역만 구독 — 전체 컬렉션 구독은 읽기 쿼터를 세계 전체 드랍에 비례해 소모 */
+  if (unsubLoot) unsubLoot();
+  lootItems = {};
+  const sub = () => unsubLoot = onSnapshot(query(collection(db, 'loot'), where('map', '==', myPage())), snap => {
     lootItems = {};
     snap.forEach(dc => lootItems[dc.id] = dc.data());
-  });
+  }, err => { console.error('[loot]', err); noteErr(err); setTimeout(() => { if (unsubLoot) watchLoot(); }, 5000); });
+  sub();
 }
 
 let rankMode = 'lv';
@@ -677,7 +697,7 @@ function levelCalc(p, expGain) {
   let exp = (p.exp || 0) + expGain;
   let lv = p.lv || 1, leveled = 0;
   while (lv < 100 && exp >= expNeed(lv)) { exp -= expNeed(lv); lv++; leveled++; }
-  if (lv >= 100) exp = Math.min(exp, expNeed(99));
+  if (lv >= 100) exp = Math.min(exp, expNeed(100)); /* HUD 분모(expNeed(lv))와 일치 */
   const upd = { exp, lv };
   if (leveled) upd.statPts = (p.statPts || 0) + 3 * leveled;
   return { upd, leveled, nlv: lv };
@@ -704,14 +724,15 @@ async function gainExp(expGain, kill = null) {
       else if (kill.type) q[kill.type] = (q[kill.type] || 0) + 1;
     }
     tx.update(meRef, { ...upd, gold, q });
-    if (leveled) setTimeout(() => {
-      float(me.x, me.y - 52, `LEVEL UP! Lv ${nlv}`, '#ffd700', true);
-      toast(`✨ 레벨업! 스탯 포인트 +${3 * leveled} (좌측 상단에서 분배)`, 'sysq');
-      rings.push({ x: me.x, y: me.y, r: 90, t: 0, max: 600, color: '255,215,0' });
-      fxSparks(me.x, me.y, 22, '#ffd700', 180);
-      sfx('levelup');
-      sysMsg(`${myName}님이 Lv ${nlv} 달성!`);
-    }, 0);
+    return { leveled, nlv }; /* FX는 트랜잭션 밖에서 — 본문은 경합 시 재실행되어 중복 발동됨 */
+  }).then(r => {
+    if (!r || !r.leveled) return;
+    float(me.x, me.y - 52, `LEVEL UP! Lv ${r.nlv}`, '#ffd700', true);
+    toast(`✨ 레벨업! 스탯 포인트 +${3 * r.leveled} (좌측 상단에서 분배)`, 'sysq');
+    rings.push({ x: me.x, y: me.y, r: 90, t: 0, max: 600, color: '255,215,0' });
+    fxSparks(me.x, me.y, 22, '#ffd700', 180);
+    sfx('levelup');
+    sysMsg(`${myName}님이 Lv ${r.nlv} 달성!`);
   }).catch(() => {});
 }
 
@@ -752,29 +773,33 @@ async function handleKill(sim) {
   float(sim.x, sim.y - d2.r - 30, `+${d2.exp} EXP`, '#3498db');
   float(sim.x, sim.y - d2.r - 52, `+${gold} G`, '#ffd700');
   sfx('coin');
-  await gainExp(d2.exp, { type: sim.type, gold });
+  await gainExp(d2.exp, { type: sim.boss ? 'boss' : sim.type, gold }); /* 보스 퀘스트(q.boss) 카운트 */
   dropLoot(sim.type, sim.x, sim.y);
   if (sim.boss && sim.page && sim.page.startsWith('p')) {
     const pn2 = +sim.page.slice(1);
     if (!(me.conq || {})[pn2]) {
       runTransaction(db, async tx => {
         const snap = await tx.get(meRef);
-        if (!snap.exists()) return;
+        if (!snap.exists()) return false;
         const p = snap.data();
+        if ((p.conq || {})[pn2]) return false; /* 서버 기준 재확인 — 중복 정복/FX 방지 */
         tx.update(meRef, {
           ['conq.' + pn2]: true,
           lv: Math.min(100, (p.lv || 1) + 1),
           statPts: (p.statPts || 0) + 3,
         });
+        return true;
+      }).then(applied => {
+        if (!applied) return;
+        me.hp = maxHpOf();
+        updateDoc(meRef, { hp: me.hp }).catch(() => {});
+        toast(`👑 ${pn2}구역 정복! <b>레벨 +1</b> · 스탯 포인트 +3${pn2 < MAX_PAGE ? ' · ' + (pn2 + 1) + '구역 개방' : ' · 전 지역 정복 완료!'}`, 'sysq');
+        sysMsg(`👑 ${myName}님이 ${pn2}구역을 정복했습니다! (Lv +1)`, 'q');
+        sfx('levelup');
+        rings.push({ x: me.x, y: me.y, r: 100, t: 0, max: 700, color: '255,215,0' });
+        fxSparks(me.x, me.y, 24, '#ffd700', 200);
+        float(me.x, me.y - 52, 'LEVEL UP!', '#ffd700', true);
       }).catch(() => {});
-      me.hp = maxHpOf();
-      updateDoc(meRef, { hp: me.hp }).catch(() => {});
-      toast(`👑 ${pn2}구역 정복! <b>레벨 +1</b> · 스탯 포인트 +3${pn2 < MAX_PAGE ? ' · ' + (pn2 + 1) + '구역 개방' : ' · 전 지역 정복 완료!'}`, 'sysq');
-      sysMsg(`👑 ${myName}님이 ${pn2}구역을 정복했습니다! (Lv +1)`, 'q');
-      sfx('levelup');
-      rings.push({ x: me.x, y: me.y, r: 100, t: 0, max: 700, color: '255,215,0' });
-      fxSparks(me.x, me.y, 24, '#ffd700', 200);
-      float(me.x, me.y - 52, 'LEVEL UP!', '#ffd700', true);
     }
   }
   if (sim.uniq) {
@@ -832,7 +857,7 @@ function fireShot(tx, ty, color, dur, size = 5) {
 }
 
 function tryAttack(now, forced = null) {
-  if (!ready || me.dead) return;
+  if (!ready || me.dead || worldMapOpen()) return; /* 지도 오버레이 뒤에서 눈먼 전투 방지 */
   const cd = cdef().atkCd;
   if (now < lastAttackAt + cd) return;
   lastAttackAt = now;
@@ -852,13 +877,15 @@ function tryAttack(now, forced = null) {
 }
 
 function useSkill(slot) {
-  if (!ready || me.dead) return;
+  if (!ready || me.dead || worldMapOpen()) return;
   const now = Date.now();
   const id = slot === 2 ? 'heal' : classActiveId();
   if (!id) return;
   const def = SKILLS[id];
   if (skillLv(id) < 1) { float(me.x, me.y - 34, '미습득 스킬 (B: 샵)', '#aaa'); return; }
   if (now < (skillCdUntil[id] || 0)) return;
+  if (mapFading) return; /* 맵 전환 중 시전 금지 — 지연 콜백이 새 구역 몬스터를 때리는 사고 방지 */
+  const castPage = myPage(); /* 지연 폭발/발사 콜백용 구역 스냅샷 */
   const mpc = def.mp || 0;
   if ((me.mp ?? maxMpOf()) < mpc) { float(me.x, me.y - 34, '마나 부족!', '#5dade2'); return; }
 
@@ -884,7 +911,7 @@ function useSkill(slot) {
     for (const t of targets) {
       fireShot(t.x, t.y, '#e8d9a0', Math.hypot(t.x - me.x, t.y - me.y) / 520 * 1000 + 60, 4);
       const dmg = Math.max(1, Math.round(totalAtk() * 1.5 * skillPow() * rand(.9, 1.1)));
-      setTimeout(() => attackResult(t, dmg, false), 140);
+      setTimeout(() => { if (myPage() === castPage) attackResult(t, dmg, false); }, 140);
     }
     sfx('swing');
   } else if (id === 'shadow_strike') {
@@ -903,6 +930,7 @@ function useSkill(slot) {
     if (!t) { float(me.x, me.y - 34, '대상 없음', '#aaa'); return; }
     fireShot(t.x, t.y, '#ff7f27', Math.hypot(t.x - me.x, t.y - me.y) / 520 * 1000, 10);
     setTimeout(() => {
+      if (myPage() !== castPage) return; /* 폭발 전 맵 이동 시 새 구역 오폭 방지 */
       rings.push({ x: t.x, y: t.y, r: 150, t: 0, max: 500, color: '255,90,0' });
       rings.push({ x: t.x, y: t.y, r: 90, t: 0, max: 350, color: '255,200,60' });
       fxSparks(t.x, t.y, 24, '#ff7f27', 220);
@@ -1086,21 +1114,35 @@ function itemStat(it) {
     it.heal ? `HP+${it.heal} 회복` : '', it.mana ? `MP+${it.mana} 회복` : ''].filter(Boolean).join(' · ');
 }
 
+let bagFullUntil = 0;
 async function pickup(lid, l) {
   if (picking) return;
   picking = true;
   try {
-    let item = null;
+    let item = null, res = null;
+    /* 루팅 삭제와 인벤토리 추가를 한 트랜잭션으로 — 가방이 가득이면 삭제하지 않고 바닥에 남김
+       (이전엔 먼저 삭제 후 추가 실패 시 아이템이 영구 소실) */
     await runTransaction(db, async tx => {
+      item = null; res = null;
       const ref = doc(db, 'loot', lid);
-      const snap = await tx.get(ref);
-      if (!snap.exists()) return;
-      item = snap.data();
+      const lsnap = await tx.get(ref);
+      if (!lsnap.exists()) return;
+      const psnap = await tx.get(meRef);
+      if (!psnap.exists()) return;
+      const cand = lsnap.data();
+      const r = computeAddToInv(psnap.data(), cand.itemId);
+      if (!r) { res = 'full'; return; }
       tx.delete(ref);
+      tx.update(meRef, r.upd);
+      item = cand; res = r.res;
     });
+    if (res === 'full') {
+      bagFullUntil = Date.now() + 2500; /* 자동 루팅 재시도 폭주 방지 */
+      float(me.x, me.y - 30, '가방이 가득 참', '#e74c3c');
+      toast('🎒 가방이 가득 찼습니다 — 아이템은 바닥에 남아있습니다');
+      return;
+    }
     if (!item) return;
-    const res = await addToInv(item.itemId);
-    if (res === null) { float(me.x, me.y - 30, '가방이 가득 참', '#e74c3c'); toast('🎒 가방이 가득 찼습니다'); return; }
     const it = getItem(item.itemId);
     sfx('pickup');
     flashInv();
@@ -1112,56 +1154,61 @@ async function pickup(lid, l) {
   } finally { picking = false; }
 }
 
+/* 플레이어 데이터 p에 itemId를 추가했을 때의 갱신 계산 (순수 함수) — null이면 가방 가득 */
+function computeAddToInv(p, itemId) {
+  const bs = p.bagSize || 18;
+  const inv = { ...(p.inv || {}) };
+  const eq = { ...(p.equipped || {}) };
+  const it = getItem(itemId);
+  const q = { ...(p.q || {}) };
+  q.items = (q.items || 0) + 1;
+  const upd = { q };
+  if (!it.slot && (it.heal || it.mana || it.scroll)) {
+    for (const [k, v] of Object.entries(inv)) {
+      const [bid, cnt] = splitStack(v);
+      if (bid === itemId) {
+        inv[k] = bid + '*' + (cnt + 1);
+        upd.inv = sortInvMap(inv);
+        return { upd, res: 'stacked' };
+      }
+    }
+  }
+  for (let i = 0; i < bs; i++) {
+    if (inv[String(i)] == null) {
+      let res;
+      inv[String(i)] = itemId;
+      if (it.slot && !eq[it.slot]) {
+        delete inv[String(i)];
+        eq[it.slot] = itemId;
+        upd.equipped = eq;
+        upd['q.eqflag'] = 1;
+        res = 'equipped';
+      } else if (it.slot && eq[it.slot]) {
+        const cur = getItem(eq[it.slot]);
+        const cR = RARITY_RANK[cur.rarity] ?? 0, nR = RARITY_RANK[it.rarity] ?? 0;
+        if (nR > cR || (nR === cR && (it._lv || 0) > (cur._lv || 0))) {
+          inv[String(i)] = eq[it.slot];
+          eq[it.slot] = itemId;
+          upd.equipped = eq;
+          upd['q.eqflag'] = 1;
+          res = 'swapped';
+        } else res = 'added';
+      } else res = 'added';
+      upd.inv = sortInvMap(inv);
+      return { upd, res };
+    }
+  }
+  return null;
+}
+
 function addToInv(itemId) {
   return runTransaction(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return null;
-    const p = snap.data();
-    const bs = p.bagSize || 18;
-    const inv = { ...(p.inv || {}) };
-    const eq = { ...(p.equipped || {}) };
-    const it = getItem(itemId);
-    const q = { ...(p.q || {}) };
-    q.items = (q.items || 0) + 1;
-    const upd = { q };
-    if (!it.slot && (it.heal || it.mana || it.scroll)) {
-      for (const [k, v] of Object.entries(inv)) {
-        const [bid, cnt] = splitStack(v);
-        if (bid === itemId) {
-          inv[k] = bid + '*' + (cnt + 1);
-          upd.inv = sortInvMap(inv);
-          tx.update(meRef, upd);
-          return 'stacked';
-        }
-      }
-    }
-    let result = false;
-    for (let i = 0; i < bs; i++) {
-      if (inv[String(i)] == null) {
-        inv[String(i)] = itemId;
-        if (it.slot && !eq[it.slot]) {
-          delete inv[String(i)];
-          eq[it.slot] = itemId;
-          upd.equipped = eq;
-          upd['q.eqflag'] = 1;
-          result = 'equipped';
-        } else if (it.slot && eq[it.slot]) {
-          const cur = getItem(eq[it.slot]);
-          const cR = RARITY_RANK[cur.rarity] ?? 0, nR = RARITY_RANK[it.rarity] ?? 0;
-          if (nR > cR || (nR === cR && (it._lv || 0) > (cur._lv || 0))) {
-            inv[String(i)] = eq[it.slot];
-            eq[it.slot] = itemId;
-            upd.equipped = eq;
-            upd['q.eqflag'] = 1;
-            result = 'swapped';
-          } else result = 'added';
-        } else result = 'added';
-        upd.inv = sortInvMap(inv);
-        tx.update(meRef, upd);
-        return result;
-      }
-    }
-    return null;
+    const r = computeAddToInv(snap.data(), itemId);
+    if (!r) return null;
+    tx.update(meRef, r.upd);
+    return r.res;
   }).catch(() => null);
 }
 
@@ -1199,12 +1246,15 @@ function slotClick(rawId) {
         rings.push({ x: me.x, y: me.y, r: 50, t: 0, max: 350, color: '52,152,219' });
         sfx('potion');
       }, 0);
-    } else {
+    } else if (it.slot) {
       const old = eq[it.slot];
       eq[it.slot] = itemId;
       if (old) inv[key] = old; else delete inv[key];
       tx.update(meRef, { inv: sortInvMap(inv), equipped: eq, 'q.eqflag': 1 });
       setTimeout(() => sfx('buy'), 0);
+    } else {
+      /* 슬롯 정의가 없는(레거시/알 수 없는) 아이템 — 장착하면 eq["undefined"]로 증발하므로 차단 */
+      setTimeout(() => toast('사용할 수 없는 아이템입니다 (판매만 가능)'), 0);
     }
   }).catch(() => {});
 }
@@ -1263,8 +1313,8 @@ function openEnhModal(scrollRaw, targetRaw) {
   </div>`;
   document.body.appendChild(gl);
   gl.addEventListener('pointerdown', e => { if (e.target === gl) closeEnhModal(); });
-  $('#enhNo').onclick = closeEnhModal;
-  $('#enhGo').onclick = () => { closeEnhModal(); enhanceItem(targetRaw, grade); };
+  $('enhNo').onclick = closeEnhModal; /* $는 getElementById — '#' 붙이면 null이라 버튼이 죽음 */
+  $('enhGo').onclick = () => { closeEnhModal(); enhanceItem(targetRaw, grade); };
 }
 function closeEnhModal() { const m = $('enhModal'); if (m) m.remove(); }
 
@@ -1288,12 +1338,9 @@ function sellItem(itemId) {
     const id = inv[key];
     const it = getItem(id);
     const [, cnt] = splitStack(id);
-    let equippedSlot = null;
-    for (const [sl, eid] of Object.entries(eq)) if (eid === id) equippedSlot = sl;
     const gain = sellPrice(id);
-    delete inv[key];
-    if (equippedSlot) delete eq[equippedSlot];
-    tx.update(meRef, { gold: (p.gold || 0) + gain, inv: sortInvMap(inv), equipped: eq });
+    delete inv[key]; /* 가방의 사본만 판매 — 같은 id가 장착돼 있어도 그건 별개 아이템 */
+    tx.update(meRef, { gold: (p.gold || 0) + gain, inv: sortInvMap(inv) });
     return { gain, name: it.name, cnt };
   }).then(r => {
     if (!r) return;
@@ -1380,17 +1427,16 @@ function enhanceItem(itemId, grade = 'normal') {
     if ((p.gold || 0) < cost) return 'poor';
     const chance = ENH_CHANCE[grade](lv);
     if (scCnt > 1) inv[scIdx] = scBase + '*' + (scCnt - 1); else delete inv[scIdx];
-    let equippedSlot = null;
-    for (const [sl, eid] of Object.entries(eq)) if (eid === id) equippedSlot = sl;
+    /* 강화 대상은 항상 가방의 사본 — 같은 id가 장착돼 있어도 별개 아이템이므로 건드리지 않음 */
     let result;
     if (Math.random() * 100 < chance) {
       const nid = it._base + '+' + (lv + 1);
-      if (equippedSlot) eq[equippedSlot] = nid; else inv[key] = nid;
-      tx.update(meRef, { gold: p.gold - cost, inv: sortInvMap(inv), equipped: eq });
+      inv[key] = nid;
+      tx.update(meRef, { gold: p.gold - cost, inv: sortInvMap(inv) });
       result = { ok: true, nid };
     } else {
-      if (equippedSlot) delete eq[equippedSlot]; else delete inv[key];
-      tx.update(meRef, { gold: p.gold - cost, inv: sortInvMap(inv), equipped: eq });
+      delete inv[key];
+      tx.update(meRef, { gold: p.gold - cost, inv: sortInvMap(inv) });
       result = { ok: false };
     }
     return result;
@@ -2277,6 +2323,7 @@ function gotoPage(n) {
     const mn = $('mapName');
     if (mn) mn.textContent = pageDef(n).name;
     watchMonsters();
+    watchLoot(); /* 루팅도 구역별 구독 재설정 */
     sysMsg(`${myName}님이 ${pageDef(n).name}(으)로 이동했습니다.`);
     setTimeout(() => { if (ov) ov.style.opacity = 0; mapFading = false; }, 300);
   }, 380);
@@ -3123,20 +3170,22 @@ function renderDex() {
   body.innerHTML = html;
 }
 
+let wmSelPage = 0, wmRefreshT = 0;
+const worldMapOpen = () => $('worldMap').classList.contains('open');
 function toggleWorldMap() {
   const el = $('worldMap');
   const open = !el.classList.contains('open');
   el.classList.toggle('open', open);
-  if (open) renderWorldMap();
+  if (open) { wmSelPage = pageNum(); renderWorldMap(); }
 }
 const BIO_COLORS = ['#2e8455', '#1f6039', '#c9a227', '#aed6f1', '#4a7a5c', '#c0392b', '#5d656e', '#7d8790', '#6c3483', '#5dade2'];
-function renderWorldMap(sel) {
-  /* 선택 구역의 지도를 크게 렌더 — 이동 기능 없음(이동은 맵 가장자리 포탈로) */
-  const n0 = sel || pageNum();
+/* 선택 구역 지도를 wmMap 캔버스에 렌더 — 지도가 열려 있는 동안 루프에서 주기 갱신됨 */
+function wmDrawCanvas(n0) {
   const wc = $('wmMap');
-  if (wc) {
-    const wctx = wc.getContext('2d');
-    const kx = wc.width / WORLD.w, ky = wc.height / WORLD.h;
+  if (!wc) return;
+  const wctx = wc.getContext('2d');
+  const kx = wc.width / WORLD.w, ky = wc.height / WORLD.h;
+  {
     wctx.drawImage(getTex(n0 === pageNum() ? myMap() : 'm1'), 0, 0, WORLD.w, WORLD.h, 0, 0, wc.width, wc.height);
     if (n0 === pageNum()) {
       /* 현재 구역: 실시간 마커(몬스터/보스/아이템/내 위치) */
@@ -3179,6 +3228,13 @@ function renderWorldMap(sel) {
       wctx.fillText(locked ? '이전 구역 보스를 처치하면 포탈이 열립니다' : '맵 가장자리 포탈로 이동할 수 있습니다', wc.width / 2, wc.height / 2 + 68);
     }
   }
+}
+
+function renderWorldMap(sel) {
+  /* 선택 구역의 지도를 크게 렌더 — 이동 기능 없음(이동은 맵 가장자리 포탈로) */
+  const n0 = sel || pageNum();
+  wmSelPage = n0;
+  wmDrawCanvas(n0);
   const grid = $('wmGrid');
   let html = '';
   for (let n = 1; n <= MAX_PAGE; n++) {
@@ -3253,6 +3309,8 @@ addEventListener('keydown', e => {
     chatInput.blur();
     document.querySelectorAll('.sidepanel').forEach(p => p.classList.remove('open'));
     $('invPanel').classList.remove('open');
+    $('worldMap').classList.remove('open');
+    closeEnhMenu();
     return;
   }
   if (typing) return;
@@ -3270,6 +3328,9 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyC') { sfx('click'); toggleDex(); }
 });
 addEventListener('keyup', e => keys[e.code] = false);
+/* 포커스 이탈/탭 전환 시 keyup 유실로 캐릭터가 계속 걷는 것 방지 */
+addEventListener('blur', () => { keys = {}; mouseDown = false; });
+document.addEventListener('visibilitychange', () => { if (document.hidden) { keys = {}; mouseDown = false; } });
 
 function screenToWorld(mx, my) { return { x: mx + view.x, y: my + view.y }; }
 cv.addEventListener('contextmenu', e => e.preventDefault());
@@ -3289,6 +3350,7 @@ cv.addEventListener('mousedown', e => {
   mouseDown = true;
 });
 addEventListener('mousemove', e => {
+  if (mouseDown && !(e.buttons & 1)) { mouseDown = false; return; } /* 창 밖에서 버튼을 뗀 경우 */
   if (!mouseDown || attackTargetSimId) return;
   dest = screenToWorld(e.clientX, e.clientY);
 });
@@ -3297,8 +3359,9 @@ addEventListener('mouseup', () => mouseDown = false);
 /* ================= 터치 (모바일) ================= */
 let touchDownId = null;
 function tapWorld(x, y) {
-  if (!ready || me.dead || document.activeElement === chatInput) return;
-  chatInput.blur();
+  if (!ready || me.dead) return;
+  /* 채팅 입력 중 월드 탭 = 키보드 내리기 (preventDefault 때문에 네이티브 블러가 안 됨) */
+  if (document.activeElement === chatInput) { chatInput.blur(); return; }
   const w = screenToWorld(x, y);
   const s = sims.find(v => v.alive && v.map === myMap() && Math.hypot(v.x - w.x, v.y - w.y) < v.def.r + 22);
   if (s) {
@@ -3362,7 +3425,9 @@ function loopBody(t) {
 
   let moved = false;
   const frozen = now < hitStopUntil;
-  if (!frozen && !me.dead && document.activeElement !== chatInput) {
+  const wmUp = worldMapOpen();
+  if (wmUp && now - wmRefreshT > 400) { wmRefreshT = now; wmDrawCanvas(wmSelPage); } /* 지도 열림 중 마커 실시간 갱신 */
+  if (!frozen && !me.dead && !wmUp && document.activeElement !== chatInput) {
     let dx = 0, dy = 0;
     if (keys.KeyW || keys.ArrowUp) dy -= 1;
     if (keys.KeyS || keys.ArrowDown) dy += 1;
@@ -3400,7 +3465,7 @@ function loopBody(t) {
   if (!Number.isFinite(me.hp)) me.hp = maxHpOf(); /* 비정상 HP가 Firestore로 퍼지는 것 차단 */
   if (me.mp != null && !Number.isFinite(me.mp)) me.mp = maxMpOf();
   const movedFar = Math.abs(me.x - sentX) + Math.abs(me.y - sentY) > 2;
-  const mpChanged = me.mp != null && Math.round(me.mp) !== sentMp;
+  const mpChanged = me.mp != null && (Math.abs(Math.round(me.mp) - (sentMp ?? 0)) >= 5 || (Math.round(me.mp) !== sentMp && me.mp >= maxMpOf()));
   if ((now - lastPosWrite > 600 && (movedFar || hpDirty || mpChanged)) || now - lastPosWrite > 8000) {
     lastPosWrite = now;
     hpDirty = false;
@@ -3410,12 +3475,13 @@ updateDoc(meRef, { x: me.x, y: me.y, hp: me.hp, ...(me.mp != null ? { mp: Math.r
 
   if (!me.dead && (me.mp ?? 0) < maxMpOf()) {
     me.mp = Math.min(maxMpOf(), (me.mp ?? 0) + maxMpOf() * .03 * dt / 1000);
-    hpDirty = true;
+    /* 재생 중엔 5 이상 변했거나 만충 시에만 쓰기 — 매 600ms 쓰기로 쿼터 낭비 방지 */
+    if (Math.abs(me.mp - (sentMp ?? 0)) >= 5 || me.mp >= maxMpOf()) hpDirty = true;
   }
 
   if (!me.dead && now - loginAt > 5000 && now - (me.lastHurtAt || 0) > 4000 && me.hp < maxHpOf()) {
     me.hp = Math.min(maxHpOf(), me.hp + maxHpOf() * .02 * dt / 1000);
-    hpDirty = true;
+    if (Math.abs(me.hp - sentHp) >= 5 || me.hp >= maxHpOf()) hpDirty = true;
   }
 
   if (me.dead && me.deadUntil && now > me.deadUntil) {
@@ -3440,7 +3506,8 @@ updateDoc(meRef, { x: me.x, y: me.y, hp: me.hp, ...(me.mp != null ? { mp: Math.r
 
   if (!picking && !frozen) {
     for (const [lid, l] of Object.entries(lootItems)) {
-      if ((l.map || 'm1') === myMap() && Math.hypot(l.x - me.x, l.y - me.y) < 36) { pickup(lid, l); break; }
+      if (now < bagFullUntil) break; /* 가방 가득: 잠시 자동 루팅 중지 */
+    if ((l.map || 'm1') === myMap() && Math.hypot(l.x - me.x, l.y - me.y) < 36) { pickup(lid, l); break; }
     }
   }
 
@@ -3476,27 +3543,32 @@ let shopT = 0, questT = 0;
 function renderShopThrottled() { if (Date.now() - shopT > 700) { shopT = Date.now(); renderShop(); } }
 function renderQuestsThrottled() { if (Date.now() - questT > 700) { questT = Date.now(); renderQuests(); } }
 
+let reviving = false;
 function reviveNow() {
+  if (reviving) return; /* 연타 이중 과금 방지 */
   const cost = me.lv * 100;
   if ((me.gold || 0) < cost) { toast('💰 골드가 부족합니다'); return; }
+  reviving = true;
+  const nhp = maxHpOf(); /* me.maxHp는 생성 시점 값이라 낡음 */
   runTransaction(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return false;
     const p = snap.data();
+    if (!p.dead) return false; /* 이미 부활됨 */
     if ((p.gold || 0) < cost) return false;
-    tx.update(meRef, { gold: p.gold - cost });
+    tx.update(meRef, { gold: p.gold - cost, dead: false, hp: nhp }); /* 과금과 부활을 원자적으로 */
     return true;
   }).then(ok => {
+    reviving = false;
     if (!ok) { toast('💰 골드가 부족합니다'); return; }
     me.gold -= cost;
-    me.dead = false; me.hp = me.maxHp;
-    updateDoc(meRef, { dead: false, hp: me.hp }).catch(() => {});
+    me.dead = false; me.hp = nhp;
     $('deadOv').style.display = 'none';
     rings.push({ x: me.x, y: me.y, r: 80, t: 0, max: 500, color: '255,215,0' });
     fxSparks(me.x, me.y, 16, '#ffd700', 150);
     sfx('levelup');
     float(me.x, me.y - 40, '즉시 부활!', '#ffd700');
-  }).catch(() => {});
+  }).catch(() => { reviving = false; });
 }
 
 function addStat(k) {
@@ -3691,18 +3763,10 @@ async function init() {
   onSnapshot(meRef, s => {
     if (!s.exists()) return;
     const d = s.data();
-    const { x, y, hp, ...rest } = d;
+    /* x/y/hp/mp/lastHurtAt는 로컬이 권위 — 자기 쓰기 에코가 이동/재생을 되돌리는 것 방지
+       (이전의 '장착템=가방템 중복 제거' 클리너는 정당한 동일 아이템 사본까지 파괴해 제거함) */
+    const { x, y, hp, mp, lastHurtAt, ...rest } = d;
     me = { ...me, ...rest };
-    if (d.inv) {
-      const eqVals = Object.values(d.equipped || {});
-      const cleaned = {};
-      for (const [k, v] of Object.entries(d.inv)) if (!eqVals.includes(v)) cleaned[k] = v;
-      const merged = sortInvMap(cleaned);
-      const ck = Object.keys(d.inv), mk = Object.keys(merged);
-      const same = ck.length === mk.length && ck.every(k => d.inv[k] === merged[k]);
-      if (!same) updateDoc(meRef, { inv: merged }).catch(() => {});
-      me.inv = merged;
-    }
     renderInvUI();
   });
 

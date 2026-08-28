@@ -216,6 +216,7 @@
   #wmGrid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; }
   .wmcell { aspect-ratio: 1; border-radius: 4px; display: flex; align-items: center; justify-content: center;
     font-size: 10px; cursor: pointer; border: 1px solid #333; color: #fff; text-shadow: 0 1px 2px #000; }
+  .wmcell.wmsel { outline: 2px solid #fff; }
   .wmcell.wmconq { background: var(--bc); border-color: rgba(255,215,0,.55); }
   .wmcell.wmconq:hover { transform: scale(1.12); border-color: #ffd700; }
   .wmcell.wmcur { background: var(--bc); border: 2px solid #fff; animation: wmpulse 1s infinite; }
@@ -468,7 +469,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=23"
+<script type="module" src="game.js?v=24"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

@@ -102,7 +102,7 @@ const pageId = n => 'p' + n;
 const myPage = () => { const m = me.map || 'm1'; return m.startsWith('p') ? m : 'p1'; };
 const pageNum = () => +myPage().slice(1) || 1;
 const pageDiff = n => 1 + (n - 1) * .45;
-const pageExp = n => 1 + (n - 1) * .6;
+const pageExp = n => 1 + (n - 1) * .5 + (n - 1) * (n - 1) * .06;
 function pageDef(n) {
   const bio = BIOMES[Math.min(9, Math.floor((n - 1) / 10))];
   const tier = (n - 1) % 10;
@@ -269,7 +269,8 @@ const QUESTS = [
 ];
 
 /* ================= 헬퍼 ================= */
-const expNeed = lv => Math.floor(25 * Math.pow(lv, 2.2));
+/* 최대 100레벨 · 100구역: "구역 번호 ≈ 적정 레벨" 페이싱 — 요구는 lv², 구역 보상은 완만한 2차 가속(pageExp) */
+const expNeed = lv => Math.floor(200 * lv * lv);
 const maxHpOf = () => Math.round(cdef().hp + ((me.lv || 1) - 1) * 10 + (me.stHp || 0) * 15);
 const maxMpOf = () => 100 + ((me.lv || 1) - 1) * 5 + (me.stWis || 0) * 12;
 const clampN = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -3129,34 +3130,54 @@ function toggleWorldMap() {
   if (open) renderWorldMap();
 }
 const BIO_COLORS = ['#2e8455', '#1f6039', '#c9a227', '#aed6f1', '#4a7a5c', '#c0392b', '#5d656e', '#7d8790', '#6c3483', '#5dade2'];
-function renderWorldMap() {
-  /* 현재 구역 실제 지도(텍스처+마커)를 크게 렌더 */
+function renderWorldMap(sel) {
+  /* 선택 구역의 지도를 크게 렌더 — 이동 기능 없음(이동은 맵 가장자리 포탈로) */
+  const n0 = sel || pageNum();
   const wc = $('wmMap');
   if (wc) {
     const wctx = wc.getContext('2d');
     const kx = wc.width / WORLD.w, ky = wc.height / WORLD.h;
-    wctx.drawImage(getTex(myMap()), 0, 0, WORLD.w, WORLD.h, 0, 0, wc.width, wc.height);
-    for (const s of sims) {
-      if (!s.alive || s.map !== myMap()) continue;
-      wctx.fillStyle = s.type === 'boss' || s.boss ? '#ff3030' : '#ffb347';
-      wctx.beginPath(); wctx.arc(s.x * kx, s.y * ky, s.boss ? 7 : 4, 0, 7); wctx.fill();
-      wctx.strokeStyle = 'rgba(0,0,0,.6)'; wctx.lineWidth = 1; wctx.stroke();
+    wctx.drawImage(getTex(n0 === pageNum() ? myMap() : 'm1'), 0, 0, WORLD.w, WORLD.h, 0, 0, wc.width, wc.height);
+    if (n0 === pageNum()) {
+      /* 현재 구역: 실시간 마커(몬스터/보스/아이템/내 위치) */
+      for (const s of sims) {
+        if (!s.alive || s.map !== myMap()) continue;
+        wctx.fillStyle = s.boss ? '#ff3030' : '#ffb347';
+        wctx.beginPath(); wctx.arc(s.x * kx, s.y * ky, s.boss ? 7 : 4, 0, 7); wctx.fill();
+        wctx.strokeStyle = 'rgba(0,0,0,.6)'; wctx.lineWidth = 1; wctx.stroke();
+      }
+      wctx.fillStyle = '#ffd700';
+      for (const l of Object.values(lootItems)) {
+        if ((l.map || 'm1') !== myMap()) continue;
+        wctx.fillRect(l.x * kx - 2, l.y * ky - 2, 4, 4);
+      }
+      wctx.fillStyle = '#fff';
+      wctx.beginPath(); wctx.arc(me.x * kx, me.y * ky, 6, 0, 7); wctx.fill();
+      wctx.strokeStyle = '#ffd700'; wctx.lineWidth = 2.5;
+      wctx.beginPath(); wctx.arc(me.x * kx, me.y * ky, 10, 0, 7); wctx.stroke();
+      wctx.font = 'bold 15px sans-serif'; wctx.textAlign = 'center';
+      wctx.fillStyle = '#ffd700';
+      wctx.shadowColor = 'rgba(0,0,0,.9)'; wctx.shadowBlur = 4;
+      wctx.fillText('📍 ' + myName, me.x * kx, me.y * ky - 16);
+      wctx.shadowBlur = 0;
+    } else {
+      /* 다른 구역: 지도 미리보기 + 구역 정보 */
+      const pd = pageDef(n0);
+      const locked = !(n0 === 1 || (me.conq || {})[n0]);
+      wctx.fillStyle = 'rgba(8,12,20,.55)';
+      wctx.fillRect(0, 0, wc.width, wc.height);
+      wctx.textAlign = 'center';
+      wctx.fillStyle = locked ? '#9a9aa8' : '#ffd700';
+      wctx.font = 'bold 30px sans-serif';
+      wctx.fillText((locked ? '🔒 ' : '') + pd.name, wc.width / 2, wc.height / 2 - 40);
+      wctx.font = '17px sans-serif';
+      wctx.fillStyle = '#cdd6e4';
+      wctx.fillText(`몬스터: ${pd.kinds.map(k => k.name).join(' · ')}`, wc.width / 2, wc.height / 2 + 4);
+      wctx.fillText(`보스: ${pd.boss.name}`, wc.width / 2, wc.height / 2 + 34);
+      wctx.fillStyle = '#8899aa';
+      wctx.font = '14px sans-serif';
+      wctx.fillText(locked ? '이전 구역 보스를 처치하면 포탈이 열립니다' : '맵 가장자리 포탈로 이동할 수 있습니다', wc.width / 2, wc.height / 2 + 68);
     }
-    wctx.fillStyle = '#ffd700';
-    for (const l of Object.values(lootItems)) {
-      if ((l.map || 'm1') !== myMap()) continue;
-      wctx.fillRect(l.x * kx - 2, l.y * ky - 2, 4, 4);
-    }
-    /* 내 위치: 흰 점 + 펄스 링 + 라벨 */
-    wctx.fillStyle = '#fff';
-    wctx.beginPath(); wctx.arc(me.x * kx, me.y * ky, 6, 0, 7); wctx.fill();
-    wctx.strokeStyle = '#ffd700'; wctx.lineWidth = 2.5;
-    wctx.beginPath(); wctx.arc(me.x * kx, me.y * ky, 10, 0, 7); wctx.stroke();
-    wctx.font = 'bold 15px sans-serif'; wctx.textAlign = 'center';
-    wctx.fillStyle = '#ffd700';
-    wctx.shadowColor = 'rgba(0,0,0,.9)'; wctx.shadowBlur = 4;
-    wctx.fillText('📍 ' + myName, me.x * kx, me.y * ky - 16);
-    wctx.shadowBlur = 0;
   }
   const grid = $('wmGrid');
   let html = '';
@@ -3164,17 +3185,13 @@ function renderWorldMap() {
     const conq = (me.conq || {})[n];
     const cur = n === pageNum();
     const bio = BIOMES[Math.min(9, Math.floor((n - 1) / 10))];
-    const cls = cur ? 'wmcur' : conq ? 'wmconq' : 'wmlock';
+    const cls = (cur ? 'wmcur' : conq ? 'wmconq' : 'wmlock') + (n === n0 ? ' wmsel' : '');
     html += `<div class="wmcell ${cls}" data-p="${n}" title="${pageDef(n).name}" style="--bc:${BIO_COLORS[BIOMES.indexOf(bio)]}">${n}</div>`;
   }
   grid.innerHTML = html;
   $('wmInfo').textContent = `정복 ${Object.keys(me.conq || {}).filter(k => me.conq[k]).length} / ${MAX_PAGE} · 현재: ${pageDef(pageNum()).name}`;
-  grid.querySelectorAll('.wmcell').forEach(c => c.onclick = () => {
-    const n = +c.dataset.p;
-    if (n === pageNum()) { toggleWorldMap(); return; }
-    if (n === 1 || (me.conq || {})[n]) { toggleWorldMap(); gotoPage(n); }
-    else toast('🔒 정복하지 않은 구역입니다');
-  });
+  /* 구역 클릭 = 지도 미리보기(이동 아님 — 이동은 맵 가장자리 포탈) */
+  grid.querySelectorAll('.wmcell').forEach(c => c.onclick = () => { sfx('click'); renderWorldMap(+c.dataset.p); });
 }
 
 function togglePanel(id) {

@@ -3592,7 +3592,8 @@ updateDoc(meRef, { x: me.x, y: me.y, hp: me.hp, ...(me.mp != null ? { mp: Math.r
     if (Math.abs(me.mp - (sentMp ?? 0)) >= 5 || me.mp >= maxMpOf()) hpDirty = true;
   }
 
-  if (!me.dead && now - loginAt > 5000 && now - (me.lastHurtAt || 0) > 4000 && me.hp < maxHpOf()) {
+  /* 접속 직후 피가 쭉 차는 것 방지: 로그인 후 30초간 자동 재생 억제 */
+  if (!me.dead && now - loginAt > 30000 && now - (me.lastHurtAt || 0) > 4000 && me.hp < maxHpOf()) {
     me.hp = Math.min(maxHpOf(), me.hp + maxHpOf() * .02 * (1 + (me.stRegen || 0) * .15) * dt / 1000); /* 재생 스탯 */
     if (Math.abs(me.hp - sentHp) >= 5 || me.hp >= maxHpOf()) hpDirty = true;
   }

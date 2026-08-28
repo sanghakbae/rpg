@@ -1896,6 +1896,16 @@ function buildSprite(name) {
       c.fillRect(x, y, 1, 1);
     }
   });
+  /* 자동 베벨: 위가 뚫린 픽셀은 하이라이트, 아래가 뚫린 픽셀은 셰이드 — 전 스프라이트 공통 입체감 */
+  const solidAt = (yy, xx) => { const r = def.rows[yy]; if (!r) return false; const ch2 = r[xx]; return !!ch2 && ch2 !== '.' && ch2 !== ' ' && ch2 !== 'O' && !!def.pal[ch2]; };
+  def.rows.forEach((row, y) => {
+    for (let x = 0; x < row.length; x++) {
+      const ch = row[x];
+      if (ch === '.' || ch === ' ' || ch === 'O' || !def.pal[ch]) continue;
+      if (!solidAt(y - 1, x)) { c.fillStyle = 'rgba(255,255,255,.22)'; c.fillRect(x, y, 1, 1); }
+      else if (!solidAt(y + 1, x)) { c.fillStyle = 'rgba(0,0,0,.2)'; c.fillRect(x, y, 1, 1); }
+    }
+  });
   const white = document.createElement('canvas');
   white.width = w; white.height = h;
   const wc = white.getContext('2d');
@@ -2425,7 +2435,12 @@ function drawHat(cls, helmetId) {
 }
 
 function drawHeldWeapon(cls, wid) {
-  const it = getItem(wid);
+  const it = wid ? getItem(wid) : null;
+  const enh = (it && it._lv) || 0;
+  if (enh >= 3) { /* 강화 무기 오라: +3 파랑 → +5 금색 → +7 붉은색 */
+    ctx.shadowColor = enh >= 7 ? '#ff6b6b' : enh >= 5 ? '#ffd700' : '#7fc7ff';
+    ctx.shadowBlur = 5 + enh * 1.2;
+  }
   if (cls === 'warrior' || cls === 'rogue') {
     const bl = it ? it.color : (cls === 'rogue' ? '#aab4bd' : '#cdd5dd');
     const L = cls === 'warrior' ? 31 : 18;
@@ -2506,21 +2521,37 @@ function drawHeldWeapon(cls, wid) {
   }
 }
 
-const HEAD_KEYS = { warrior: ['H', 'h'], archer: ['C', 'c'], rogue: ['K', 'k'], mage: ['P', 'p'] };
 function eqSpriteName(cls, eq) {
   const a = eq.armor ? getItem(eq.armor) : null;
   const h = eq.helmet ? getItem(eq.helmet) : null;
   const p = eq.pants ? getItem(eq.pants) : null;
-  if (!a && !h && !p) return cls;
-  const key = `${cls}|w${a?.color || ''}|h${h?.color || ''}|p${p?.color || ''}`;
+  const b = eq.boots ? getItem(eq.boots) : null;
+  if (!a && !h && !p && !b) return cls;
+  const key = `${cls}|w${a?.color || ''}|h${h?.color || ''}|p${p?.color || ''}|b${b?.color || ''}`;
   if (!SPRITE_DEFS[key]) {
     const bp = SPRITE_DEFS[cls];
     const pal = { ...bp.pal };
-    if (a) { pal.A = a.color; pal.D = shade(a.color, .55); }
+    const rows = [...bp.rows]; /* 장비 실루엣을 행 단위로 스탬핑 */
+    if (a) {
+      pal.A = a.color; pal.D = shade(a.color, .55);
+      pal.T = shade(a.color, 1.5);
+      rows[7] = '.TAAAAAAAAT.'; /* 어깨 견장 트림 */
+    }
     if (p) { pal.L = shade(p.color, 1.05); pal.l = shade(p.color, .45); }
-    const hk = HEAD_KEYS[cls];
-    if (h && hk && pal[hk[0]]) { pal[hk[0]] = h.color; pal[hk[1]] = shade(h.color, .55); }
-    SPRITE_DEFS[key] = { pal, rows: bp.rows };
+    if (h) {
+      /* 색만 바꾸던 것에서 투구 실루엣으로 교체 (눈은 4행이라 전 직업 공통 적용 가능) */
+      pal.M = h.color; pal.m = shade(h.color, .55); pal.Q = shade(h.color, 1.55);
+      rows[0] = '...OMMMMO...';
+      rows[1] = '..OMQQQMMO..';
+      rows[2] = '.OMMMMMMMMO.';
+      rows[3] = '.OmmMMMMmmO.';
+    }
+    if (b) {
+      pal.Z = b.color; pal.z = shade(b.color, .55);
+      rows[13] = '..OZzOOZzO..';
+      rows[14] = '..ZZZ..ZZZ..';
+    }
+    SPRITE_DEFS[key] = { pal, rows };
   }
   return key;
 }
@@ -2551,12 +2582,7 @@ function drawChar(o) {
   ctx.imageSmoothingEnabled = false;
   const sy0 = -sh2 + 10 - bobY;
   ctx.drawImage(buildSprite(eqSpriteName(o.cls || 'warrior', eq)).cv, -sw2 / 2, sy0, sw2, sh2);
-  const px = -sw2 / 2;
-  if (eq.boots) {
-    ctx.fillStyle = getItem(eq.boots).color;
-    ctx.fillRect(px + 1.6 * sc, sy0 + 13 * sc, 3.8 * sc, 1.6 * sc);
-    ctx.fillRect(px + 6.6 * sc, sy0 + 13 * sc, 3.8 * sc, 1.6 * sc);
-  }
+  /* 부츠는 이제 스프라이트 실루엣(eqSpriteName)으로 반영 */
   if (eq.necklace) {
     ctx.fillStyle = getItem(eq.necklace).color;
     ctx.beginPath(); ctx.arc(0, sy0 + 7.4 * sc, 2.6, 0, 7); ctx.fill();
@@ -2588,6 +2614,13 @@ function drawChar(o) {
     if (eq.bracelet) {
       ctx.fillStyle = getItem(eq.bracelet).color;
       ctx.beginPath(); ctx.arc(Math.cos(baseA) * 13, Math.sin(baseA) * 13 + 6, 2, 0, 7); ctx.fill();
+    }
+    if (eq.ring) { /* 반지: 무기 손 근처 글린트 */
+      const tw = .6 + Math.sin(now / 260) * .4;
+      ctx.fillStyle = getItem(eq.ring).color;
+      ctx.globalAlpha = .55 + tw * .45;
+      ctx.beginPath(); ctx.arc(hx + 2.5, hy - 2.5, 1.6, 0, 7); ctx.fill();
+      ctx.globalAlpha = 1;
     }
   }
   ctx.restore();

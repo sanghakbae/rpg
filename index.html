@@ -193,6 +193,7 @@
   .stbtn { padding: 4px 9px; font-size: 12px; font-weight: bold; background: linear-gradient(#c9a227, #8f6f14); color: #fff; border-radius: 4px; white-space: nowrap; }
   .stbtn:hover { filter: brightness(1.2); }
   .stbtn.rec { outline: 1.5px solid #ffd700; box-shadow: 0 0 7px rgba(255,215,0,.45); } /* 직업 추천 스탯 */
+  #stBtns { display: contents; } /* 버튼들이 statPtsRow flex에 직접 참여 */
 
   /* 랭킹 */
   #rankPanel { position: fixed; right: 12px; top: 148px; width: 185px; z-index: 10; padding: 9px 11px; }
@@ -330,14 +331,7 @@
   <div class="bartext" id="expText"></div>
   <div id="stats">공격 <b id="uiAtk"></b> · 방어 <b id="uiDef"></b> · 치명타 <b id="uiCrit"></b>% · 속도 <b id="uiSpd"></b></div>
   <div id="goldRow">💰 <span id="uiGold">0</span> G</div>
-  <div id="statPtsRow">✨ 포인트 <b id="uiPts">0</b>
-    <button class="stbtn" data-st="stAtk">힘 +2공</button>
-    <button class="stbtn" data-st="stHp">체력 +15HP</button>
-    <button class="stbtn" data-st="stDef">방어 +1</button>
-    <button class="stbtn" data-st="stSpd">민첩 +4속</button>
-    <button class="stbtn" data-st="stWis">지혜 +12MP·스킬%</button>
-    <button class="stbtn" data-st="stCrit">치명 +1%</button>
-  </div>
+  <div id="statPtsRow">✨ 포인트 <b id="uiPts">0</b><span id="stBtns"></span><!-- 직업별 8종 스탯 버튼: JS(renderStatButtons)가 생성 --></div>
   <div id="btnRow">
     <button id="invBtn">가방 [I]</button>
     <button id="shopBtn">스킬샵 [B]</button>
@@ -469,7 +463,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=26"
+<script type="module" src="game.js?v=27"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

@@ -25,10 +25,30 @@ const bagUpCost = () => 500 * Math.pow(2, (bagSize() - BASE_BAG) / 6);
 const MAX_SKILL_LV = 5;
 
 const CLASSES = {
-  warrior: { name: '전사',   icon: '⚔', weaponName: '장검',   hp: 160, atk: 13, speed: 230, range: 95,  atkCd: 520, crit: .05, color: '#e74c3c', melee: true, rec: 'stAtk' },
-  archer:  { name: '아처',   icon: '🏹', weaponName: '활',     hp: 110, atk: 11, speed: 255, range: 290, atkCd: 560, crit: .10, color: '#27ae60', proj: 'arrow', rec: 'stSpd' },
-  rogue:   { name: '로그',   icon: '🗡', weaponName: '단검',   hp: 95,  atk: 9,  speed: 290, range: 66,  atkCd: 300, crit: .25, color: '#f39c12', melee: true, rec: 'stCrit' },
-  mage:    { name: '마법사', icon: '🪄', weaponName: '지팡이', hp: 85,  atk: 18, speed: 225, range: 270, atkCd: 850, crit: .05, color: '#9b59b6', proj: 'bolt', rec: 'stWis' },
+  warrior: { name: '전사',   icon: '⚔', weaponName: '장검',   hp: 160, atk: 13, speed: 230, range: 95,  atkCd: 520, crit: .05, color: '#e74c3c', melee: true, rec: 'stAtk',
+    stats: ['stAtk', 'stHp', 'stDef', 'stSpd', 'stCrit', 'stAspd', 'stLife', 'stRegen'] },
+  archer:  { name: '아처',   icon: '🏹', weaponName: '활',     hp: 110, atk: 11, speed: 255, range: 290, atkCd: 560, crit: .10, color: '#27ae60', proj: 'arrow', rec: 'stSpd',
+    stats: ['stAtk', 'stHp', 'stSpd', 'stCrit', 'stAspd', 'stRange', 'stEvade', 'stWis'] },
+  rogue:   { name: '로그',   icon: '🗡', weaponName: '단검',   hp: 95,  atk: 9,  speed: 290, range: 66,  atkCd: 300, crit: .25, color: '#f39c12', melee: true, rec: 'stCrit',
+    stats: ['stAtk', 'stHp', 'stSpd', 'stCrit', 'stCritDmg', 'stAspd', 'stEvade', 'stLife'] },
+  mage:    { name: '마법사', icon: '🪄', weaponName: '지팡이', hp: 85,  atk: 18, speed: 225, range: 270, atkCd: 850, crit: .05, color: '#9b59b6', proj: 'bolt', rec: 'stWis',
+    stats: ['stAtk', 'stHp', 'stWis', 'stSpd', 'stCrit', 'stRange', 'stMana', 'stRegen'] },
+};
+/* 스탯 정의 — 직업별 8종 구성(CLASSES[*].stats). 효과는 아래 파생 공식들에 연결됨 */
+const STAT_DEFS = {
+  stAtk:     { n: '힘',       d: '공격력 +2' },
+  stHp:      { n: '체력',     d: '최대 HP +15' },
+  stDef:     { n: '방어',     d: '방어력 +1' },
+  stSpd:     { n: '민첩',     d: '이동속도 +4' },
+  stWis:     { n: '지혜',     d: '최대 MP +12 · 스킬 위력 +3%' },
+  stCrit:    { n: '치명',     d: '치명타 확률 +1%' },
+  stAspd:    { n: '공속',     d: '공격속도 +2% (최대 50%)' },
+  stCritDmg: { n: '치명피해', d: '치명타 피해 +6%' },
+  stLife:    { n: '흡혈',     d: '가한 피해의 1% 회복' },
+  stRange:   { n: '사거리',   d: '공격 사거리 +6' },
+  stMana:    { n: '절약',     d: '스킬 마나 소모 -2% (최대 60%)' },
+  stRegen:   { n: '재생',     d: '비전투 HP 재생 +15%' },
+  stEvade:   { n: '회피',     d: '회피 확률 +1% (최대 35%)' },
 };
 const CLASS_ORDER = ['warrior', 'archer', 'rogue', 'mage'];
 
@@ -138,9 +158,19 @@ const ITEM_ICONS = { potion: '🧪', potion_mp: '💧', potion_hi: '⚗️', pot
 const itemIcon = raw => ITEM_ICONS[splitStack(raw)[0]] || SLOT_ICONS[getItem(raw).slot] || '📦';
 
 const ITEMS = {
-  sword_wood:    { name: '나무 검',   slot: 'weapon', atk: 3,  color: '#a0714f', rarity: 'common' },
-  sword_iron:    { name: '철 검',     slot: 'weapon', atk: 8,  color: '#bdc3c7', rarity: 'rare' },
-  sword_flame:   { name: '화염검',    slot: 'weapon', atk: 15, color: '#ff7f27', rarity: 'epic' },
+  /* 무기: 직업 전용(cls) — 드롭 시 사냥한 직업의 변형으로 치환됨(WEAPON_VARIANTS) */
+  sword_wood:    { name: '나무 검',   slot: 'weapon', cls: 'warrior', atk: 3,  color: '#a0714f', rarity: 'common' },
+  sword_iron:    { name: '철 검',     slot: 'weapon', cls: 'warrior', atk: 8,  color: '#bdc3c7', rarity: 'rare' },
+  sword_flame:   { name: '화염검',    slot: 'weapon', cls: 'warrior', atk: 15, color: '#ff7f27', rarity: 'epic' },
+  bow_wood:      { name: '나무 활',   slot: 'weapon', cls: 'archer', atk: 3,  color: '#a0714f', rarity: 'common' },
+  bow_iron:      { name: '강철 활',   slot: 'weapon', cls: 'archer', atk: 8,  color: '#bdc3c7', rarity: 'rare' },
+  bow_storm:     { name: '질풍의 활', slot: 'weapon', cls: 'archer', atk: 15, color: '#5dade2', rarity: 'epic' },
+  dagger_wood:   { name: '낡은 단검', slot: 'weapon', cls: 'rogue', atk: 3,  color: '#a0714f', rarity: 'common' },
+  dagger_iron:   { name: '철 단검',   slot: 'weapon', cls: 'rogue', atk: 8,  color: '#bdc3c7', rarity: 'rare' },
+  dagger_shadow: { name: '그림자 단검', slot: 'weapon', cls: 'rogue', atk: 15, color: '#6c3483', rarity: 'epic' },
+  staff_wood:    { name: '나무 지팡이', slot: 'weapon', cls: 'mage', atk: 3,  color: '#a0714f', rarity: 'common' },
+  staff_crystal: { name: '수정 지팡이', slot: 'weapon', cls: 'mage', atk: 8,  color: '#aed6f1', rarity: 'rare' },
+  staff_flame:   { name: '화염 지팡이', slot: 'weapon', cls: 'mage', atk: 15, color: '#ff7f27', rarity: 'epic' },
   armor_cloth:   { name: '천 갑옷',   slot: 'armor',  def: 2,  color: '#d9c8a9', rarity: 'common' },
   armor_leather: { name: '가죽 갑옷', slot: 'armor',  def: 5,  color: '#8b5a2b', rarity: 'rare' },
   armor_plate:   { name: '강철 갑옷', slot: 'armor',  def: 10, color: '#7f8c8d', rarity: 'epic' },
@@ -167,9 +197,15 @@ const ITEMS = {
   potion_hi:     { name: '상급 체력 물약', heal: 150, color: '#ff6b81', rarity: 'uncommon' },
   potion_mm:     { name: '상급 마나 물약', mana: 120, color: '#5dade2', rarity: 'uncommon' },
   crown_slime:   { name: '슬라임 킹의 왕관', slot: 'helmet', def: 8, spd: 10, color: '#2ecc71', rarity: 'unique' },
-  club_chief:    { name: '고블린 대장의 몽둥이', slot: 'weapon', atk: 20, color: '#8a6b45', rarity: 'unique' },
+  club_chief:    { name: '고블린 대장의 몽둥이', slot: 'weapon', cls: 'warrior', atk: 20, color: '#8a6b45', rarity: 'unique' },
+  bow_chief:     { name: '고블린 대장의 장궁', slot: 'weapon', cls: 'archer', atk: 20, color: '#8a6b45', rarity: 'unique' },
+  dagger_chief:  { name: '고블린 대장의 비수', slot: 'weapon', cls: 'rogue', atk: 20, color: '#8a6b45', rarity: 'unique' },
+  staff_chief:   { name: '고블린 대장의 뼈지팡이', slot: 'weapon', cls: 'mage', atk: 20, color: '#8a6b45', rarity: 'unique' },
   fang_neck:     { name: '알파 늑대의 송곳니', slot: 'necklace', atk: 9, crit: .06, color: '#e8e4d8', rarity: 'unique' },
-  knight_sword:  { name: '해골 기사의 검', slot: 'weapon', atk: 24, def: 4, color: '#e8e4d8', rarity: 'unique' },
+  knight_sword:  { name: '해골 기사의 검', slot: 'weapon', cls: 'warrior', atk: 24, def: 4, color: '#e8e4d8', rarity: 'unique' },
+  knight_bow:    { name: '해골 기사의 활', slot: 'weapon', cls: 'archer', atk: 24, def: 4, color: '#e8e4d8', rarity: 'unique' },
+  knight_dagger: { name: '해골 기사의 단검', slot: 'weapon', cls: 'rogue', atk: 24, def: 4, color: '#e8e4d8', rarity: 'unique' },
+  knight_staff:  { name: '해골 기사의 지팡이', slot: 'weapon', cls: 'mage', atk: 24, def: 4, color: '#e8e4d8', rarity: 'unique' },
   orb_lich:      { name: '리치의 마구', slot: 'ring', atk: 12, crit: .10, color: '#8b6bff', rarity: 'unique' },
   scroll_normal: { name: '일반 강화 주문서', scroll: true, grade: 'normal', color: '#cfd8dc', rarity: 'common' },
   scroll_adv:    { name: '고급 강화 주문서', scroll: true, grade: 'adv', color: '#64b5f6', rarity: 'rare' },
@@ -404,6 +440,11 @@ const totalAtk = () => (me.atk || 10) + (me.stAtk || 0) * 2 + eqStats('atk') + p
 const totalDef = () => (me.stDef || 0) + eqStats('def') + passSum('def');
 const totalCrit = () => cdef().crit + (me.stCrit || 0) * .01 + passSum('crit') + eqStats('crit');
 const skillPow = () => 1 + (me.stWis || 0) * .03; /* 지혜: 스킬 피해/회복 +3%씩 */
+const critDmgMul = () => 1.6 + (me.stCritDmg || 0) * .06;      /* 치명피해 */
+const atkCdOf = () => cdef().atkCd * Math.max(.5, 1 - (me.stAspd || 0) * .02); /* 공속 */
+const atkRange = () => cdef().range + (me.stRange || 0) * 6;   /* 사거리 */
+const mpCostOf = base => Math.max(1, Math.round(base * Math.max(.4, 1 - (me.stMana || 0) * .02))); /* 절약 */
+const evadeChance = () => Math.min(.35, (me.stEvade || 0) * .01); /* 회피 */
 const moveSpd = () => cdef().speed + (me.stSpd || 0) * 4 + passSum('spd') + eqStats('spd');
 const classActiveId = () => Object.keys(SKILLS).find(k => SKILLS[k].cls === myCls && SKILLS[k].type === 'active');
 
@@ -736,10 +777,19 @@ async function gainExp(expGain, kill = null) {
   }).catch(() => {});
 }
 
+/* 무기 드롭은 사냥한 직업의 변형으로 치환 — 직업에 맞는 무기만 나옴 */
+const WEAPON_VARIANTS = {
+  sword_wood:   { warrior: 'sword_wood', archer: 'bow_wood', rogue: 'dagger_wood', mage: 'staff_wood' },
+  sword_iron:   { warrior: 'sword_iron', archer: 'bow_iron', rogue: 'dagger_iron', mage: 'staff_crystal' },
+  sword_flame:  { warrior: 'sword_flame', archer: 'bow_storm', rogue: 'dagger_shadow', mage: 'staff_flame' },
+  club_chief:   { warrior: 'club_chief', archer: 'bow_chief', rogue: 'dagger_chief', mage: 'staff_chief' },
+  knight_sword: { warrior: 'knight_sword', archer: 'knight_bow', rogue: 'knight_dagger', mage: 'knight_staff' },
+};
+const classWeapon = id => (WEAPON_VARIANTS[id] && WEAPON_VARIANTS[id][myCls]) || id;
 function rollDrops(type) {
-  const drops = (DROP_TABLE[type] || []).filter(([, p]) => Math.random() < p).map(([id]) => id);
-  if (Math.random() < UNIQUE_RATE) drops.push(UNIQUE_POOL[Math.floor(Math.random() * UNIQUE_POOL.length)]);
-  if (Math.random() < LEGEND_RATE) drops.push(LEGEND_POOL[Math.floor(Math.random() * LEGEND_POOL.length)]);
+  const drops = (DROP_TABLE[type] || []).filter(([, p]) => Math.random() < p).map(([id]) => classWeapon(id));
+  if (Math.random() < UNIQUE_RATE) drops.push(classWeapon(UNIQUE_POOL[Math.floor(Math.random() * UNIQUE_POOL.length)]));
+  if (Math.random() < LEGEND_RATE) drops.push(classWeapon(LEGEND_POOL[Math.floor(Math.random() * LEGEND_POOL.length)]));
   return drops;
 }
 
@@ -812,6 +862,10 @@ async function handleKill(sim) {
 async function attackResult(sim, dmg, crit) {
   const r = await dealDamage(sim, dmg);
   if (r === null || r === undefined) return;
+  if (me.stLife && !me.dead && me.hp < maxHpOf()) { /* 흡혈: 가한 피해의 1%/pt 회복 */
+    me.hp = Math.min(maxHpOf(), me.hp + dmg * me.stLife * .01);
+    hpDirty = true;
+  }
   sim.angry = true;
   const kdx = sim.x - me.x, kdy = sim.y - me.y, kd = Math.hypot(kdx, kdy) || 1;
   sim.kbx = kdx / kd * (crit ? 7 : 4.2);
@@ -858,10 +912,10 @@ function fireShot(tx, ty, color, dur, size = 5) {
 
 function tryAttack(now, forced = null) {
   if (!ready || me.dead || worldMapOpen()) return; /* 지도 오버레이 뒤에서 눈먼 전투 방지 */
-  const cd = cdef().atkCd;
+  const cd = atkCdOf();
   if (now < lastAttackAt + cd) return;
   lastAttackAt = now;
-  const target = forced && forced.alive ? forced : nearestSim(cdef().range);
+  const target = forced && forced.alive ? forced : nearestSim(atkRange());
   if (target) me.face = Math.atan2(target.y - me.y, target.x - me.x);
   if (cdef().melee) {
     slashes.push({ x: me.x, y: me.y, a: target ? me.face : -Math.PI / 2, t: 0, w: myCls === 'rogue' ? 2.4 : 3.6, len: myCls === 'rogue' ? 30 : 38 });
@@ -872,7 +926,7 @@ function tryAttack(now, forced = null) {
   }
   if (!target) return;
   const crit = Math.random() < totalCrit();
-  const dmg = Math.max(1, Math.round(totalAtk() * rand(.85, 1.15) * (crit ? 1.6 : 1)));
+  const dmg = Math.max(1, Math.round(totalAtk() * rand(.85, 1.15) * (crit ? critDmgMul() : 1)));
   attackResult(target, dmg, crit);
 }
 
@@ -886,7 +940,7 @@ function useSkill(slot) {
   if (now < (skillCdUntil[id] || 0)) return;
   if (mapFading) return; /* 맵 전환 중 시전 금지 — 지연 콜백이 새 구역 몬스터를 때리는 사고 방지 */
   const castPage = myPage(); /* 지연 폭발/발사 콜백용 구역 스냅샷 */
-  const mpc = def.mp || 0;
+  const mpc = def.mp ? mpCostOf(def.mp) : 0; /* 절약 스탯 반영 */
   if ((me.mp ?? maxMpOf()) < mpc) { float(me.x, me.y - 34, '마나 부족!', '#5dade2'); return; }
 
   if (id === 'heal') {
@@ -898,7 +952,7 @@ function useSkill(slot) {
     fxSparks(me.x, me.y - 10, 12, '#7fe3a0', 110);
     sfx('heal');
   } else if (id === 'power_strike') {
-    const t = nearestSim(cdef().range * 1.35);
+    const t = nearestSim(atkRange() * 1.35);
     if (!t) { float(me.x, me.y - 34, '대상 없음', '#aaa'); return; }
     slashes.push({ x: me.x, y: me.y, a: Math.atan2(t.y - me.y, t.x - me.x), t: 0, w: 8, len: 52, color: '#ffb347' });
     rings.push({ x: t.x, y: t.y, r: 48, t: 0, max: 320, color: '255,140,0' });
@@ -1119,7 +1173,7 @@ async function pickup(lid, l) {
   if (picking) return;
   picking = true;
   try {
-    let item = null, res = null;
+    let item = null, res = null, soldG = 0;
     /* 루팅 삭제와 인벤토리 추가를 한 트랜잭션으로 — 가방이 가득이면 삭제하지 않고 바닥에 남김
        (이전엔 먼저 삭제 후 추가 실패 시 아이템이 영구 소실) */
     await runTransaction(db, async tx => {
@@ -1134,7 +1188,7 @@ async function pickup(lid, l) {
       if (!r) { res = 'full'; return; }
       tx.delete(ref);
       tx.update(meRef, r.upd);
-      item = cand; res = r.res;
+      item = cand; res = r.res; soldG = r.sold || 0;
     });
     if (res === 'full') {
       bagFullUntil = Date.now() + 2500; /* 자동 루팅 재시도 폭주 방지 */
@@ -1147,7 +1201,7 @@ async function pickup(lid, l) {
     sfx('pickup');
     flashInv();
     if (res === 'equipped') toast(`${itemIcon(item.itemId)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 → <b>자동 장착!</b> <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span>`, 'sysq');
-    else if (res === 'swapped') toast(`${itemIcon(item.itemId)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 → <b>등급 우위 자동 교체!</b> <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span>`, 'sysq');
+    else if (res === 'swapped') toast(`${itemIcon(item.itemId)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 → <b>자동 장착!</b> 기존 장비 자동판매 <b style="color:#ffd700">+${soldG.toLocaleString()} G</b>`, 'sysq');
     else if (res === 'stacked') toast(`${itemIcon(item.itemId)} <b style="color:${it.color}">${esc(it.name)}</b> 보유 수량 +1 <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span>`);
     else toast(`${itemIcon(item.itemId)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span> → 가방 <b>${Object.keys(me.inv || {}).length}/${bagSize()}</b>`);
     float(me.x, me.y - 30, `+ ${it.name}`, it.color);
@@ -1173,21 +1227,25 @@ function computeAddToInv(p, itemId) {
       }
     }
   }
+  const usable = !it.cls || it.cls === (p.cls || myCls); /* 직업 전용 무기: 타 직업은 자동장착 제외 */
   for (let i = 0; i < bs; i++) {
     if (inv[String(i)] == null) {
-      let res;
+      let res, sold = 0;
       inv[String(i)] = itemId;
-      if (it.slot && !eq[it.slot]) {
+      if (it.slot && usable && !eq[it.slot]) {
         delete inv[String(i)];
         eq[it.slot] = itemId;
         upd.equipped = eq;
         upd['q.eqflag'] = 1;
         res = 'equipped';
-      } else if (it.slot && eq[it.slot]) {
+      } else if (it.slot && usable && eq[it.slot]) {
         const cur = getItem(eq[it.slot]);
         const cR = RARITY_RANK[cur.rarity] ?? 0, nR = RARITY_RANK[it.rarity] ?? 0;
         if (nR > cR || (nR === cR && (it._lv || 0) > (cur._lv || 0))) {
-          inv[String(i)] = eq[it.slot];
+          /* 더 좋은 장비 자동 장착 + 기존 장비는 자동 판매 */
+          sold = sellPrice(eq[it.slot]);
+          upd.gold = (p.gold || 0) + sold;
+          delete inv[String(i)];
           eq[it.slot] = itemId;
           upd.equipped = eq;
           upd['q.eqflag'] = 1;
@@ -1195,7 +1253,7 @@ function computeAddToInv(p, itemId) {
         } else res = 'added';
       } else res = 'added';
       upd.inv = sortInvMap(inv);
-      return { upd, res };
+      return { upd, res, sold };
     }
   }
   return null;
@@ -1246,6 +1304,8 @@ function slotClick(rawId) {
         rings.push({ x: me.x, y: me.y, r: 50, t: 0, max: 350, color: '52,152,219' });
         sfx('potion');
       }, 0);
+    } else if (it.slot && it.cls && it.cls !== myCls) {
+      setTimeout(() => toast(`⚠️ ${CLASSES[it.cls]?.name || '타 직업'} 전용 무기라 장착할 수 없습니다`), 0);
     } else if (it.slot) {
       const old = eq[it.slot];
       eq[it.slot] = itemId;
@@ -1635,6 +1695,10 @@ function updateSims(now, dt) {
 
 function d2(s) { return sdef(s); }
 function monsterHitMe(s, now) {
+  if (Math.random() < evadeChance()) { /* 회피 */
+    float(me.x, me.y - 30, '회피!', '#7fc7ff');
+    return;
+  }
   const dmg = Math.max(1, Math.round(sdef(s).atk * rand(.85, 1.15)) - totalDef());
   hurtUntil = now + 300;
   me.lastHurtAt = now;
@@ -3300,7 +3364,23 @@ const rtl = $('rankTabLv'), rta = $('rankTabAtk');
 if (rtl) rtl.onclick = () => { rankMode = 'lv'; renderRank(); };
 if (rta) rta.onclick = () => { rankMode = 'atk'; renderRank(); };
 $('dexBtn').onclick = () => { sfx('click'); toggleDex(); };
-document.querySelectorAll('.stbtn').forEach(b => b.onclick = () => addStat(b.dataset.st));
+/* 직업별 스탯 버튼 8종 생성 (로그인 후 호출 — myCls 확정 필요) */
+function renderStatButtons() {
+  const box = $('stBtns');
+  if (!box) return;
+  box.innerHTML = '';
+  for (const k of (cdef().stats || [])) {
+    const d = STAT_DEFS[k];
+    if (!d) continue;
+    const b = document.createElement('button');
+    b.className = 'stbtn' + (k === cdef().rec ? ' rec' : '');
+    b.dataset.st = k;
+    b.textContent = d.n;
+    b.title = d.d; /* 효과 설명 툴팁 */
+    b.onclick = () => addStat(k);
+    box.appendChild(b);
+  }
+}
 $('hudTop').onclick = () => {
   sfx('click');
   const mini = $('hud').classList.toggle('mini');
@@ -3375,7 +3455,7 @@ cv.addEventListener('mousedown', e => {
   if (s) {
     dest = null;
     attackTargetSimId = s.id;
-    if (Math.hypot(s.x - me.x, s.y - me.y) <= cdef().range * 1.05) tryAttack(Date.now(), s);
+    if (Math.hypot(s.x - me.x, s.y - me.y) <= atkRange() * 1.05) tryAttack(Date.now(), s);
   } else {
     attackTargetSimId = null;
     dest = w;
@@ -3400,7 +3480,7 @@ function tapWorld(x, y) {
   if (s) {
     dest = null;
     attackTargetSimId = s.id;
-    if (Math.hypot(s.x - me.x, s.y - me.y) <= cdef().range * 1.05) tryAttack(Date.now(), s);
+    if (Math.hypot(s.x - me.x, s.y - me.y) <= atkRange() * 1.05) tryAttack(Date.now(), s);
   } else {
     attackTargetSimId = null;
     dest = w;
@@ -3477,7 +3557,7 @@ function loopBody(t) {
     } else if (attackTargetSimId) {
       const s = sims.find(v => v.id === attackTargetSimId && v.map === myMap());
       if (!s || !s.alive) attackTargetSimId = null;
-      else if (Math.hypot(s.x - me.x, s.y - me.y) > cdef().range) { stepToward(s, moveSpd() * dt / 1000); moved = true; }
+      else if (Math.hypot(s.x - me.x, s.y - me.y) > atkRange()) { stepToward(s, moveSpd() * dt / 1000); moved = true; }
       else tryAttack(now, s);
     } else if (dest) {
       if (Math.hypot(dest.x - me.x, dest.y - me.y) < 10 && !mouseDown) dest = null;
@@ -3513,7 +3593,7 @@ updateDoc(meRef, { x: me.x, y: me.y, hp: me.hp, ...(me.mp != null ? { mp: Math.r
   }
 
   if (!me.dead && now - loginAt > 5000 && now - (me.lastHurtAt || 0) > 4000 && me.hp < maxHpOf()) {
-    me.hp = Math.min(maxHpOf(), me.hp + maxHpOf() * .02 * dt / 1000);
+    me.hp = Math.min(maxHpOf(), me.hp + maxHpOf() * .02 * (1 + (me.stRegen || 0) * .15) * dt / 1000); /* 재생 스탯 */
     if (Math.abs(me.hp - sentHp) >= 5 || me.hp >= maxHpOf()) hpDirty = true;
   }
 
@@ -3621,8 +3701,7 @@ function addStat(k) {
       me.hp = Math.min(maxHpOf(), (me.hp || 0) + 15);
       updateDoc(meRef, { hp: me.hp }).catch(() => {});
     }
-    const NM = { stAtk: '힘', stHp: '체력', stDef: '방어', stSpd: '민첩', stWis: '지혜', stCrit: '치명' };
-    float(me.x, me.y - 30, `${NM[k]} +1`, '#7fe3a0');
+    float(me.x, me.y - 30, `${STAT_DEFS[k]?.n || k} +1`, '#7fe3a0');
   }).catch(() => {});
 }
 
@@ -3814,7 +3893,7 @@ async function init() {
   window.__DBG = () => ({ page: myPage(), me: { x: Math.round(me.x), y: Math.round(me.y), lv: me.lv, map: me.map, bag: me.bagSize, conq: JSON.stringify(me.conq || {}) },
     sims: sims.filter(s => s.alive).slice(0, 20).map(s => ({ id: s.id, x: Math.round(s.x), y: Math.round(s.y), d: Math.round(Math.hypot(s.x - me.x, s.y - me.y)), boss: s.boss, lv: simLevel(s) })) });
   $('loading').style.display = 'none';
-  document.querySelector(`.stbtn[data-st="${cdef().rec}"]`)?.classList.add('rec');
+  renderStatButtons();
   if (isMobileUI()) toast('💡 아이템은 가까이 가면 자동으로 줍습니다');
   const mn = $('mapName');
   if (mn) mn.textContent = pageDef(pageNum()).name;

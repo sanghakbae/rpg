@@ -49,7 +49,7 @@
     background: #000; color: #888; z-index: 99; font-size: 15px; white-space: pre-line; text-align: center; padding: 20px; }
 
   /* ===== HUD ===== */
-  #hud { position: fixed; top: 12px; left: 12px; width: 350px; padding: 9px 14px 10px; z-index: 10; font-size: 15px; opacity: .92; }
+  #hud { position: fixed; top: 12px; left: 12px; width: 525px; padding: 9px 14px 10px; z-index: 10; font-size: 15px; opacity: .92; }
   #hud:hover { opacity: 1; }
   #hud .toprow { display: flex; align-items: baseline; gap: 8px; margin-bottom: 5px; cursor: pointer; }
   #hud .toprow .arr { color: #778; font-size: 12px; display: inline-block; transition: transform .15s; }
@@ -71,13 +71,13 @@
   #stats b { color: #eee; }
   #goldRow { margin-top: 5px; padding-top: 5px; border-top: 1px solid #333; color: #ffd700; font-weight: bold; }
   #btnRow { display: flex; gap: 7px; margin-top: 7px; }
-  #btnRow button { flex: 1; padding: 7px 0; font-size: 13px; font-weight: bold;
+  #btnRow button { flex: 1; padding: 7px 0; font-size: 13px; font-weight: bold; white-space: nowrap;
     background: linear-gradient(#c9a227, #8f6f14); color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.5); }
   #btnRow button:hover { filter: brightness(1.18); }
 
   /* 인벤토리 */
   /* --hudB: JS(uiInsets)가 HUD 실측 높이(px)로 갱신하는 CSS 변수 */
-  #invPanel { position: fixed; left: 12px; top: calc(var(--hudB, 372px) + 10px); width: 400px; padding: 12px; z-index: 10;
+  #invPanel { position: fixed; left: 12px; top: calc(var(--hudB, 372px) + 10px); width: 525px; padding: 12px; z-index: 10;
     display: none; max-height: calc(100vh - var(--hudB, 372px) - 24px); overflow-y: auto; }
   #invPanel.open { display: block; }
   #invPanel h3 { font-size: 13px; color: #888; margin: 2px 0 8px 2px; letter-spacing: 1px; }
@@ -190,7 +190,7 @@
 
   /* 스탯 포인트 */
   #statPtsRow { display: none; margin-top: 6px; padding-top: 6px; border-top: 1px solid #333; align-items: center; gap: 5px; flex-wrap: wrap; font-size: 13.5px; color: #ffd700; }
-  .stbtn { padding: 4px 9px; font-size: 12px; font-weight: bold; background: linear-gradient(#c9a227, #8f6f14); color: #fff; border-radius: 4px; }
+  .stbtn { padding: 4px 9px; font-size: 12px; font-weight: bold; background: linear-gradient(#c9a227, #8f6f14); color: #fff; border-radius: 4px; white-space: nowrap; }
   .stbtn:hover { filter: brightness(1.2); }
   .stbtn.rec { outline: 1.5px solid #ffd700; box-shadow: 0 0 7px rgba(255,215,0,.45); } /* 직업 추천 스탯 */
 
@@ -209,7 +209,8 @@
   /* 세계지도 */
   #worldMap { position: fixed; inset: 0; z-index: 60; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.75); }
   #worldMap.open { display: flex; }
-  #wmBox { width: 560px; max-height: 86vh; overflow-y: auto; padding: 18px 22px; }
+  #wmBox { width: 640px; max-height: 90vh; overflow-y: auto; padding: 18px 22px; }
+  #wmMap { width: 100%; display: block; border-radius: 8px; border: 1px solid #3a4a66; margin: 6px 0 12px; }
   #wmBox h2 { color: #ffd700; font-size: 18px; letter-spacing: 2px; margin-bottom: 4px; }
   #wmInfo { color: #8aa; font-size: 12px; margin-bottom: 12px; }
   #wmGrid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; }
@@ -428,6 +429,7 @@
   <div id="wmBox" class="panel">
     <h2>🌍 세계지도</h2>
     <div id="wmInfo"></div>
+    <canvas id="wmMap" width="800" height="600"></canvas>
     <div id="wmGrid"></div>
     <div style="text-align:center;"><button id="wmClose">닫기 [V]</button></div>
   </div>
@@ -466,7 +468,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=22"
+<script type="module" src="game.js?v=23"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

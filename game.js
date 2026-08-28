@@ -3130,6 +3130,34 @@ function toggleWorldMap() {
 }
 const BIO_COLORS = ['#2e8455', '#1f6039', '#c9a227', '#aed6f1', '#4a7a5c', '#c0392b', '#5d656e', '#7d8790', '#6c3483', '#5dade2'];
 function renderWorldMap() {
+  /* 현재 구역 실제 지도(텍스처+마커)를 크게 렌더 */
+  const wc = $('wmMap');
+  if (wc) {
+    const wctx = wc.getContext('2d');
+    const kx = wc.width / WORLD.w, ky = wc.height / WORLD.h;
+    wctx.drawImage(getTex(myMap()), 0, 0, WORLD.w, WORLD.h, 0, 0, wc.width, wc.height);
+    for (const s of sims) {
+      if (!s.alive || s.map !== myMap()) continue;
+      wctx.fillStyle = s.type === 'boss' || s.boss ? '#ff3030' : '#ffb347';
+      wctx.beginPath(); wctx.arc(s.x * kx, s.y * ky, s.boss ? 7 : 4, 0, 7); wctx.fill();
+      wctx.strokeStyle = 'rgba(0,0,0,.6)'; wctx.lineWidth = 1; wctx.stroke();
+    }
+    wctx.fillStyle = '#ffd700';
+    for (const l of Object.values(lootItems)) {
+      if ((l.map || 'm1') !== myMap()) continue;
+      wctx.fillRect(l.x * kx - 2, l.y * ky - 2, 4, 4);
+    }
+    /* 내 위치: 흰 점 + 펄스 링 + 라벨 */
+    wctx.fillStyle = '#fff';
+    wctx.beginPath(); wctx.arc(me.x * kx, me.y * ky, 6, 0, 7); wctx.fill();
+    wctx.strokeStyle = '#ffd700'; wctx.lineWidth = 2.5;
+    wctx.beginPath(); wctx.arc(me.x * kx, me.y * ky, 10, 0, 7); wctx.stroke();
+    wctx.font = 'bold 15px sans-serif'; wctx.textAlign = 'center';
+    wctx.fillStyle = '#ffd700';
+    wctx.shadowColor = 'rgba(0,0,0,.9)'; wctx.shadowBlur = 4;
+    wctx.fillText('📍 ' + myName, me.x * kx, me.y * ky - 16);
+    wctx.shadowBlur = 0;
+  }
   const grid = $('wmGrid');
   let html = '';
   for (let n = 1; n <= MAX_PAGE; n++) {

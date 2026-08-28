@@ -3616,6 +3616,7 @@ async function init() {
       gold: 100, inv: {}, equipped: {}, skills: {}, q: {}, qc: {},
       dead: false, color: colorOf(uid), map: 'p1', conq: {}, statPts: 0, lastSeen: Date.now(), mp: maxMpOf(),
     });
+    me = { ...me, cls: choice.cls, map: 'p1', gold: 100, hp: c.hp, maxHp: c.hp, atk: c.atk }; /* 스냅샷 도착 전 로컬 동기화 */
     await sysMsg(`${myName}(${c.name})님이 월드에 입장했습니다.`);
   } else {
     const d = snap.data();
@@ -3623,10 +3624,16 @@ async function init() {
     myCls = d.cls || 'warrior';
     muted = !!d.muted;
     if (!d.cls) await updateDoc(meRef, { cls: 'warrior' });
+    /* 문서 전체를 지금 병합해야 아래 ensurePage/watchMonsters가 올바른 구역(me.map)을 본다
+       — onSnapshot 병합만 믿으면 p2+에서 재접속 시 p1 몬스터를 구독해 현재 구역이 텅 빔 */
+    const { x: _x, y: _y, hp: _hp, ...rest } = d;
+    me = { ...me, ...rest };
+    me.dead = false; /* DB에도 아래에서 dead:false로 기록 */
     me.x = Number.isFinite(d.x) ? d.x : SPAWN.x;
     me.y = Number.isFinite(d.y) ? d.y : SPAWN.y;
+    me.hp = Number.isFinite(d.hp) ? clampN(d.hp, 1, maxHpOf()) : maxHpOf(); /* 저장된 HP 복원(이전엔 항상 기본값 100) */
     cam.x = me.x; cam.y = me.y;
-    await updateDoc(meRef, { lastSeen: Date.now(), dead: false, ...(d.mp == null ? { mp: 100 + ((d.lv || 1) - 1) * 5 + (d.stWis || 0) * 12 } : {}) }); /* me가 로드되기 전이라 d 기준으로 계산 */
+    await updateDoc(meRef, { lastSeen: Date.now(), dead: false, ...(d.mp == null ? { mp: maxMpOf() } : {}) });
   }
 
   await ensureWorld();

@@ -785,7 +785,10 @@ const WEAPON_VARIANTS = {
   club_chief:   { warrior: 'club_chief', archer: 'bow_chief', rogue: 'dagger_chief', mage: 'staff_chief' },
   knight_sword: { warrior: 'knight_sword', archer: 'knight_bow', rogue: 'knight_dagger', mage: 'knight_staff' },
 };
-const classWeapon = id => (WEAPON_VARIANTS[id] && WEAPON_VARIANTS[id][myCls]) || id;
+/* 어떤 변형이든(예: 활을 마법사가 획득) 내 직업 무기로 상호 치환 가능하도록 역방향 색인 */
+const WEAPON_FAMILY_OF = {};
+for (const fam of Object.values(WEAPON_VARIANTS)) for (const vid of Object.values(fam)) WEAPON_FAMILY_OF[vid] = fam;
+const classWeapon = id => { const fam = WEAPON_FAMILY_OF[id]; return (fam && fam[myCls]) || id; };
 function rollDrops(type) {
   const drops = (DROP_TABLE[type] || []).filter(([, p]) => Math.random() < p).map(([id]) => classWeapon(id));
   if (Math.random() < UNIQUE_RATE) drops.push(classWeapon(UNIQUE_POOL[Math.floor(Math.random() * UNIQUE_POOL.length)]));
@@ -1184,11 +1187,13 @@ async function pickup(lid, l) {
       const psnap = await tx.get(meRef);
       if (!psnap.exists()) return;
       const cand = lsnap.data();
-      const r = computeAddToInv(psnap.data(), cand.itemId);
+      /* 바닥의 타 직업 무기(다른 플레이어 드롭/과거 드롭)도 줍는 순간 내 직업 무기로 치환 */
+      const giveId = classWeapon(cand.itemId);
+      const r = computeAddToInv(psnap.data(), giveId);
       if (!r) { res = 'full'; return; }
       tx.delete(ref);
       tx.update(meRef, r.upd);
-      item = cand; res = r.res; soldG = r.sold || 0;
+      item = { ...cand, itemId: giveId }; res = r.res; soldG = r.sold || 0;
     });
     if (res === 'full') {
       bagFullUntil = Date.now() + 2500; /* 자동 루팅 재시도 폭주 방지 */

@@ -3183,10 +3183,13 @@ document.querySelector('#rankPanel h3').addEventListener('click', e => {
   $('rankPanel').classList.toggle('folded');
 });
 $('questBtn').onclick = () => { sfx('click'); togglePanel('questPanel'); };
-$('logoutBtn').onclick = async () => {
+async function doLogout() {
   try { await signOut(auth); } catch (e) {}
   location.reload();
-};
+}
+$('logoutBtn').onclick = doLogout;
+$('minimap').onclick = () => { sfx('click'); toggleWorldMap(); }; /* 미니맵 탭 → 세계지도 */
+$('hudLogout').onclick = e => { e.stopPropagation(); doLogout(); }; /* HUD 접기 클릭과 분리 */
 document.querySelectorAll('#mobileBar [data-mb]').forEach(b => b.onclick = () => {
   sfx('click');
   const k = b.dataset.mb;

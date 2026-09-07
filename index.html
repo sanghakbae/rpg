@@ -378,7 +378,8 @@
 
 <div id="hotbar">
   <div class="hslot panel" id="hb1"><span class="key">1</span><span class="ic2">✦</span><span class="nm">-</span><div class="cd" style="display:none"></div></div>
-  <div class="hslot panel" id="hb2"><span class="key">2</span><span class="ic2">💚</span><span class="nm">회복술</span><div class="cd" style="display:none"></div></div>
+  <div class="hslot panel" id="hb2"><span class="key">2</span><span class="ic2">✦</span><span class="nm">-</span><div class="cd" style="display:none"></div></div>
+  <div class="hslot panel" id="hb3"><span class="key">3</span><span class="ic2">💚</span><span class="nm">회복술</span><div class="cd" style="display:none"></div></div>
 </div>
 
 <div id="mobileBar">
@@ -400,7 +401,7 @@
   <b>❓ 조작법</b>
   <div class="hbody">
     <b>이동</b> WASD/화살표/빈 곳 클릭<br>
-    <b>공격</b> Space/몬스터 클릭 · <b>스킬</b> 1·2<br>
+    <b>공격</b> Space/몬스터 더블클릭 · <b>스킬</b> 1·2·3<br>
     <b>가방</b> I · <b>샵</b> B · <b>퀘스트</b> Q<br>
     루팅은 아이템에 접근 시 자동
   </div>
@@ -448,6 +449,7 @@
 
 <footer id="footer">
   <span>© 2026 에테리아</span>
+  <span id="verTag"></span>
   <a id="privacyLink">개인정보처리방침</a>
   <a href="privacy.html" target="_blank">전체 보기</a>
 </footer>
@@ -479,7 +481,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=38"
+<script type="module" src="game.js?v=44"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();
@@ -491,6 +493,7 @@
     if (e.target.id === 'privacyModal') e.target.classList.remove('open');
   });
   document.getElementById('wmClose').onclick = () => document.getElementById('worldMap').classList.remove('open');
+  try { var m = /game\.js\?v=(\d+)/.exec(document.querySelector('script[type="module"]').src); if (m) document.getElementById('verTag').textContent = 'v' + m[1]; } catch (e) {}
 </script>
 </body>
 </html>

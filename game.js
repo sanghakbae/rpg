@@ -156,6 +156,67 @@ const SLOTS = [
 const SLOT_ICONS = { weapon: '⚔', armor: '🛡', helmet: '🪖', pants: '👖', gloves: '🧤', boots: '🥾', bracelet: '📿', necklace: '🧿', ring: '💍' };
 const ITEM_ICONS = { potion: '🧪', potion_mp: '💧', potion_hi: '⚗️', potion_mm: '🔵', scroll_normal: '📜', scroll_adv: '📜', scroll_top: '📜' };
 const itemIcon = raw => ITEM_ICONS[splitStack(raw)[0]] || SLOT_ICONS[getItem(raw).slot] || '📦';
+/* 가방용 큰 썸네일 (픽셀아트 캔버스 → dataURL 캐시) */
+const thumbCache = {};
+function itemThumb(rawId) {
+  try {
+    const [bid] = splitStack(rawId);
+    const key = itemSprite(bid);
+    if (thumbCache[key]) return thumbCache[key];
+    const url = buildSprite(key).cv.toDataURL();
+    thumbCache[key] = url;
+    return url;
+  } catch (e) { return ''; }
+}
+/* 리치 호버 툴팁 */
+let tipEl = null, tipLastRaw = '', tipLastT = 0;
+function itemTipHtml(rawId) {
+  const [bid, cnt] = splitStack(rawId);
+  const it = getItem(bid);
+  const col = RARITY_COLOR[it.rarity] || '#aaa';
+  const th = itemThumb(rawId);
+  let h = `<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">`
+    + (th ? `<img src="${th}" style="width:44px;height:44px;image-rendering:pixelated;">` : `<span style="font-size:30px;">${itemIcon(rawId)}</span>`)
+    + `<div><b style="color:${col};font-size:14px;">${esc(it.name)}</b>${cnt > 1 ? ` <span style="color:#ffd700">x${cnt}</span>` : ''}`
+    + `<div style="color:${col};font-size:11px;">${RARITY_KR[it.rarity] || '일반'} · 점수 <b style="color:#fff">${itemScore(rawId).toLocaleString()}</b></div></div></div>`;
+  const st = itemStat(it);
+  if (st) h += `<div style="color:#cdd;font-size:12px;margin-bottom:4px;">${esc(st)}</div>`;
+  if (it.heal) h += `<div style="color:#7fe3a0;font-size:12px;">사용: HP +${it.heal} 회복</div>`;
+  if (it.mana) h += `<div style="color:#7fc7ff;font-size:12px;">사용: MP +${it.mana} 회복</div>`;
+  if (it.scroll) h += `<div style="color:#9fd;font-size:12px;">장비에 끌어다 놓으면 강화 시도</div>`;
+  if (it._base) {
+    const sl = setLineFor(it._base);
+    if (sl) h += `<div style="color:#9fd;font-size:11.5px;margin:4px 0;white-space:pre-line;">${esc(sl)}</div>`;
+  }
+  h += `<div style="color:#889;font-size:11px;">판매 +${sellPrice(rawId).toLocaleString()} G</div>`;
+  h += `<div style="color:#667;font-size:10.5px;margin-top:4px;">좌클릭: 장착/사용 · 우클릭: 강화/판매</div>`;
+  return h;
+}
+function showTip(html, x, y, anchor) {
+  if (!tipEl) { tipEl = document.createElement('div'); tipEl.id = 'itemTip'; document.body.appendChild(tipEl); }
+  tipEl.innerHTML = html;
+  tipEl.style.display = 'block';
+  placeTip(x, y, anchor);
+}
+function placeTip(x, y, anchor) {
+  if (!tipEl) return;
+  const r = tipEl.getBoundingClientRect();
+  const panel = anchor && anchor.closest ? anchor.closest('#invPanel') : null;
+  let lx, ly;
+  if (panel) {
+    /* 등록창 왼쪽에 상세 표시 */
+    const pr = panel.getBoundingClientRect();
+    lx = pr.left - r.width - 10;
+    if (lx < 8) lx = pr.right + 10;
+    ly = Math.min(Math.max(y - 40, 8), innerHeight - r.height - 8);
+  } else {
+    lx = Math.min(x + 14, innerWidth - r.width - 8);
+    ly = Math.min(y + 16, innerHeight - r.height - 8);
+  }
+  tipEl.style.left = lx + 'px';
+  tipEl.style.top = ly + 'px';
+}
+function hideTip() { if (tipEl) tipEl.style.display = 'none'; tipLastRaw = ''; }
 
 const ITEMS = {
   /* 무기: 직업 전용(cls) — 드롭 시 사냥한 직업의 변형으로 치환됨(WEAPON_VARIANTS) */
@@ -223,7 +284,12 @@ function getItem(id) {
   id = String(id);
   const star = id.indexOf('*');
   if (star >= 0) id = id.slice(0, star);
-  if (itemDefCache[id]) return itemDefCache[id];
+  const cacheKey = id;
+  if (itemDefCache[cacheKey]) return itemDefCache[cacheKey];
+  /* 스탯 랜덤롤 접미사 (~85~115): 같은 등급도 능력치 상이 */
+  let pct = 100;
+  const tilde = id.indexOf('~');
+  if (tilde >= 0) { pct = Math.max(50, Math.min(150, +id.slice(tilde + 1) || 100)); id = id.slice(0, tilde); }
   const plus = id.indexOf('+');
   let out;
   if (plus < 0) {
@@ -240,12 +306,30 @@ function getItem(id) {
       if (base.atk) out.atk = Math.round(base.atk * m);
       if (base.def) out.def = Math.round(base.def * m);
       if (base.heal) out.heal = Math.round(base.heal * (1 + lv * .15));
+      if (base.mana) out.mana = Math.round(base.mana * (1 + lv * .15));
       if (base.crit) out.crit = +(base.crit + lv * .01).toFixed(3);
       if (base.spd) out.spd = Math.round(base.spd * m);
     }
   }
-  itemDefCache[id] = out;
+  if (pct !== 100 && out && (out.atk || out.def || out.heal || out.mana || out.crit || out.spd)) {
+    const m2 = pct / 100;
+    out = { ...out };
+    for (const k of ['atk', 'def', 'heal', 'mana', 'spd']) if (out[k]) out[k] = Math.max(1, Math.round(out[k] * m2));
+    if (out.crit) out.crit = +(out.crit * m2).toFixed(3);
+    out._pct = pct;
+    out.name = `${out.name} (${pct}%)`;
+  }
+  itemDefCache[cacheKey] = out;
   return out;
+}
+/* 아이템 파워 점수 (등급+스탯+강화+롤 종합) */
+function itemScore(rawId) {
+  const [bid] = splitStack(rawId);
+  const it = getItem(bid);
+  const base = (RARITY_RANK[it.rarity] ?? 0) * 100;
+  const stats = (it.atk || 0) * 10 + (it.def || 0) * 10 + (it.spd || 0) * 4
+    + Math.round((it.crit || 0) * 1000) + (it.heal || 0) + (it.mana || 0);
+  return base + stats;
 }
 const RARITY_KR = { common: '일반', uncommon: '고급', rare: '희귀', epic: '영웅', legend: '전설', unique: '유니크' };
 const RARITY_COLOR = { common: '#aaa', uncommon: '#2ecc71', rare: '#3498db', epic: '#9b59b6', legend: '#ffd700', unique: '#ff4d4d' };
@@ -291,6 +375,12 @@ const SETS = {
 };
 const SET_PIECE_TO_SET = {};
 for (const [sid, s] of Object.entries(SETS)) for (const pid of s.pieces.flat()) SET_PIECE_TO_SET[pid] = sid;
+/* 세트 지역락: 밴드(10구역 단위) — 해당 지역에서만 드랍 */
+const SET_BANDS = { cloth: [0], leather: [1], trinket: [2, 3], chief: [4, 5], steel: [6], knight: [7], crown: [8, 9] };
+const SET_PIECE_BAND = {};
+for (const [sid, bands] of Object.entries(SET_BANDS)) for (const pid of (SETS[sid].pieces || []).flat()) SET_PIECE_BAND[pid] = bands;
+const bandOfPage = n => Math.min(9, Math.max(0, Math.floor((((n || 1) - 1)) / 10)));
+const setRegionText = sid => (SET_BANDS[sid] || []).map(b => `${BIOMES[b].name} ${b * 10 + 1}~${b * 10 + 10}`).join(' · ');
 const BONUS_LABEL = { atk: ['공격', 0], def: ['방어', 0], crit: ['치명타', 1], spd: ['속도', 0], hp: ['HP', 0], mp: ['MP', 0],
   atkMul: ['공격 증폭', 2], defMul: ['방어 증폭', 2], critDmgMul: ['치명피해 증폭', 2],
   bossMul: ['보스 피해', 2], takenMul: ['받는 피해 감소', 2], expMul: ['경험치', 2], goldMul: ['골드', 2] };
@@ -339,6 +429,7 @@ function setLineFor(baseId) {
   const next = Object.keys(s.bonus).map(Number).sort((a, b) => a - b).find(t => t > n);
   let line = `◈ ${s.name} 세트 (${n}/${total})`;
   if (next) line += `\n다음: ${next}셋 — ${bonusText(s.bonus[next])}`;
+  line += `\n드랍: ${setRegionText(sid)}`;
   return line;
 }
 const DROP_TABLE = {
@@ -372,6 +463,167 @@ const SKILLS = {
   mana_shield:  { cls: 'mage',    icon: '🔮', name: '마나 보호막',   desc: '방어력 영구 증가 (+2)',                        type: 'passive', def: 2,   cost: 450 },
   heal:         { cls: 'all',     icon: '💚', name: '회복술',       desc: '최대 HP의 40% 즉시 회복',                      type: 'active', cd: 20000, cost: 800, mp: 30 },
 };
+
+/* ================= 스킬 트리 (직업별 100종) =================
+   결정적 생성(난수 없음): 저장된 tree{id:true}와 항상 일치.
+   구성/티어: 10티어×10노드 = 액티브4+패시브4+스탯2 */
+const TREE_ARCHS = ['nuke', 'cleave', 'storm', 'chain', 'dash', 'volley', 'heal'];
+const TREE_PSTATS = ['atk', 'def', 'crit', 'spd'];
+const TREE_ADJ = {
+  warrior: ['파괴의', '처형의', '분쇄의', '강철의', '광전사의', '수호자의', '파멸의', '불굴의', '전장의', '피의', '승리의', '심판의', '격노의', '대지의', '맹렬한', '고고한'],
+  archer: ['추적자의', '매의', '바람의', '달빛의', '숲의', '예리한', '신속의', '명중의', '야생의', '은빛의', '폭풍의', '정밀한', '질풍의', '황혼의', '새벽의', '무자비한'],
+  rogue: ['그림자의', '암살자의', '독사의', '밤의', '은밀한', '치명적인', '교활한', '월광의', '맹독의', '무형의', '적막의', '비열한', '날랜', '어둠의', '비밀의', '잔인한'],
+  mage: ['화염의', '얼음의', '번개의', '비전의', '별빛의', '심연의', '마력의', '폭풍의', '신비한', '고대의', '영혼의', '수정핵의', '용암의', '극광의', '혼돈의', '지혜의'],
+};
+const TREE_NOUN_A = {
+  warrior: ['참격', '일격', '베기', '돌진', '포효', '연격', '격파', '휩쓸기'],
+  archer: ['사격', '저격', '연사', '화살비', '조준', '관통', '속사', '곡사'],
+  rogue: ['일격', '베기', '독침', '급습', '연무', '참수', '비수', '그림자걸음'],
+  mage: ['화염구', '폭발', '창', '폭풍', '별똥', '노바', '빔', '메테오'],
+};
+const TREE_NOUN_P = { atk: ['격투 수련', '무기 단련'], def: ['호신 수련', '갑주 단련'], crit: ['집중', '통찰'], spd: ['신속', '민첩'] };
+const TREE_ICONS = {
+  warrior: ['⚔️', '🪓', '🔨', '💥', '🌪️', '🛡️', '🔥', '💢', '🌀', '⚡'],
+  archer: ['🏹', '🎯', '💘', '🌪️', '⚡', '🦅', '🌙', '💨', '🔭', '✨'],
+  rogue: ['🗡️', '🌑', '⚡', '🐍', '🌙', '💜', '🌀', '🔪', '💨', '☠️'],
+  mage: ['🔥', '❄️', '⚡', '☄️', '🌟', '💫', '🔮', '🌪️', '✨', '💎'],
+};
+const TREE_COL = { warrior: '#ffb347', archer: '#e8d9a0', rogue: '#b388ff', mage: '#ff7f27' };
+const TREES = {};
+const TREES_ALL = {};
+(function buildTrees() {
+  const used = new Set();
+  const uniq = base => { let n = base, k = 2; while (used.has(n)) n = `${base} ${k++}`; used.add(n); return n; };
+  const suf = t => (t >= 8 ? ' · 진' : t >= 5 ? ' · 강' : '');
+  const ROMAN = ['Ⅰ', 'Ⅱ', 'Ⅲ', 'Ⅳ', 'Ⅴ', 'Ⅵ', 'Ⅶ', 'Ⅷ', 'Ⅸ', 'Ⅹ'];
+  for (const cls of ['warrior', 'archer', 'rogue', 'mage']) {
+    TREES[cls] = {};
+    const adj = TREE_ADJ[cls], nouns = TREE_NOUN_A[cls], icons = TREE_ICONS[cls];
+    for (let tier = 1; tier <= 10; tier++) {
+      for (let i = 0; i < 10; i++) {
+        const id = `${cls}_t${tier}_${String(i + 1).padStart(2, '0')}`;
+        const slot = (tier + i) % 10;
+        let d;
+        if (slot < 4) {
+          const arch = TREE_ARCHS[(tier + i) % TREE_ARCHS.length];
+          const baseM = { nuke: 3.2, cleave: 1.8, storm: 1.35, chain: 1.5, dash: 2.4, volley: 1.15, heal: 0 }[arch];
+          const mult = arch === 'heal' ? 0 : +(baseM * (1 + (tier - 1) * .32)).toFixed(2);
+          const hitDesc = arch === 'heal' ? `HP ${(20 + tier * 2)}% 회복`
+            : arch === 'chain' ? `3연타 ${Math.round(mult * 100)}%` : arch === 'volley' ? `5발 ${Math.round(mult * 100)}%`
+            : arch === 'dash' ? `돌진 ${Math.round(mult * 100)}%` : `${Math.round(mult * 100)}%`;
+          const aoeDesc = (arch === 'cleave' || arch === 'storm') ? ` (주변 ${arch === 'storm' ? 150 + tier * 10 : 120 + tier * 6})` : '';
+          d = { cls, tier, kind: 'active', arch, icon: icons[(tier * 3 + i) % icons.length],
+            name: uniq(`${adj[(tier * 5 + i * 3) % adj.length]} ${nouns[(tier * 2 + i) % nouns.length]}${suf(tier)}`),
+            desc: hitDesc + aoeDesc, mp: 14 + tier * 2, cd: 6000 + tier * 900,
+            mult, aoe: arch === 'storm' ? 150 + tier * 10 : arch === 'cleave' ? 120 + tier * 6 : 0,
+            hits: arch === 'chain' ? 3 : arch === 'volley' ? 5 : 1,
+            dash: arch === 'dash', self: arch === 'cleave' || arch === 'storm',
+            healPct: arch === 'heal' ? (.2 + tier * .02) : 0 };
+        } else if (slot < 8) {
+          const st = TREE_PSTATS[(tier + i) % 4];
+          const v = st === 'crit' ? +(tier * .008).toFixed(3) : st === 'spd' ? 2 + ((tier / 2) | 0) : 1 + ((tier / 3) | 0);
+          const lbl = st === 'atk' ? '공격' : st === 'def' ? '방어' : st === 'crit' ? '치명타' : '속도';
+          const val = st === 'crit' ? `+${Math.round(v * 100)}%p` : `+${v}`;
+          d = { cls, tier, kind: 'passive', icon: '📈',
+            name: uniq(`${adj[(tier * 7 + i * 2) % adj.length]} ${TREE_NOUN_P[st][(tier + i) % 2]}${suf(tier)}`),
+            desc: `${lbl} 영구 증가 (${val})`, [st]: v };
+        } else {
+          const hp = (tier + i) % 2 === 0;
+          d = { cls, tier, kind: 'stat', icon: hp ? '❤️' : '💧',
+            name: `${hp ? '체력' : '마나'} 강화 ${ROMAN[tier - 1]}`,
+            desc: `최대 ${hp ? 'HP' : 'MP'} +${hp ? 20 * tier : 10 * tier}`, [hp ? 'hp' : 'mp']: hp ? 20 * tier : 10 * tier };
+        }
+        TREES[cls][id] = d; TREES_ALL[id] = d;
+      }
+    }
+  }
+})();
+const skillDef = id => SKILLS[id] || TREES_ALL[id];
+const hasSkill = id => SKILLS[id] ? skillLv(id) >= 1 : !!((me.tree || {})[id]);
+const treeCost = tier => 150 * tier * tier;
+const treeTierReq = tier => ({ lv: 1 + (tier - 1) * 2, pts: (tier - 1) * 3 });
+function treeStat(f) {
+  let a = 0;
+  const t = me.tree || {};
+  for (const id in t) { const d = TREES_ALL[id]; if (d && t[id]) a += d[f] || 0; }
+  return a;
+}
+function treeOwnedCount(cls) {
+  let n = 0;
+  const t = me.tree || {};
+  for (const id in t) if (t[id] && TREES_ALL[id] && TREES_ALL[id].cls === cls) n++;
+  return n;
+}
+function buyTreeNode(id) {
+  const d = TREES_ALL[id];
+  if (!d || (me.tree || {})[id]) return;
+  const cost = treeCost(d.tier), req = treeTierReq(d.tier);
+  if ((me.lv || 1) < req.lv) { toast(`🔒 Lv ${req.lv}부터 해금`); return; }
+  if (treeOwnedCount(d.cls) < req.pts) { toast(`🔒 같은 계열 ${req.pts}개 선행 습득 필요`); return; }
+  runTransaction(db, async tx => {
+    const snap = await tx.get(meRef);
+    if (!snap.exists()) return false;
+    const p = snap.data();
+    if (((p.tree || {})[id]) || (p.gold || 0) < cost) return false;
+    tx.update(meRef, { gold: p.gold - cost, [`tree.${id}`]: true, q: { ...(p.q || {}), skills_bought: ((p.q || {}).skills_bought || 0) + 1 } });
+    return true;
+  }).then(ok => {
+    if (!ok) { toast('💰 골드가 부족합니다'); return; }
+    sfx('buy'); toast(`✦ ${d.name} 습득!`, 'sysq'); float(me.x, me.y - 34, `${d.name} 습득!`, '#7fe3a0');
+    renderTree();
+  }).catch(() => {});
+}
+function castTreeSkill(id) {
+  const d = TREES_ALL[id];
+  if (!d) return;
+  const now = Date.now(), castPage = myPage();
+  const col = TREE_COL[d.cls] || '#ffd700';
+  const pow = totalAtk() * skillPow();
+  const hit = (t, m, crit) => attackResult(t, Math.max(1, Math.round(pow * m * rand(.9, 1.1))), crit);
+  me.swing = now;
+  if (d.arch === 'heal') {
+    const amt = Math.round(maxHpOf() * d.healPct * skillPow());
+    me.hp = Math.min(maxHpOf(), (me.hp || 0) + amt);
+    updateDoc(meRef, { hp: me.hp }).catch(() => {});
+    float(me.x, me.y - 34, `+${amt} HP`, '#2ecc71');
+    rings.push({ x: me.x, y: me.y, r: 70, t: 0, max: 450, color: '46,204,113' });
+    fxSparks(me.x, me.y - 10, 12, '#7fe3a0', 110);
+    sfx('heal');
+    return;
+  }
+  const t = nearestSim(d.self ? (d.aoe + 40) : 340);
+  if (!t) { float(me.x, me.y - 34, '대상 없음', '#aaa'); return; }
+  if (d.dash) {
+    poofs.push({ x: me.x, y: me.y, vx: 0, vy: 0, r: 16, t: 0, color: '#34495e', g: -60 });
+    me.x = clampN(t.x + rand(-40, 40), 40, WORLD.w - 40);
+    me.y = clampN(t.y + rand(-40, 40), 40, WORLD.h - 40);
+    cam.x = me.x; cam.y = me.y;
+  }
+  const cx = d.self ? me.x : t.x, cy = d.self ? me.y : t.y;
+  rings.push({ x: cx, y: cy, r: Math.max(50, d.aoe || 60), t: 0, max: 400, color: col === '#ffb347' ? '255,140,0' : '200,200,255' });
+  fxSparks(cx, cy, 14, col, 170);
+  if (d.arch === 'volley') for (let k = 0; k < d.hits; k++) fireShot(t.x + rand(-30, 30), t.y + rand(-30, 30), col, 300, 4);
+  else slashes.push({ x: me.x, y: me.y, a: Math.atan2(t.y - me.y, t.x - me.x), t: 0, w: 7, len: 52, color: col });
+  doShake(6); sfx(d.arch === 'dash' || d.arch === 'chain' ? 'crit' : 'boom');
+  const victims = d.aoe ? sims.filter(s => s.alive && Math.hypot(s.x - cx, s.y - cy) < d.aoe) : [t];
+  if (!victims.length) { float(me.x, me.y - 34, '대상 없음', '#aaa'); return; }
+  victims.forEach((v, vi) => {
+    for (let h = 0; h < (d.hits > 1 && !d.aoe ? d.hits : 1); h++) {
+      setTimeout(() => {
+        if (myPage() !== castPage || !v.alive) return;
+        hit(v, d.mult, h === (d.hits > 1 && !d.aoe ? d.hits : 1) - 1 && Math.random() < totalCrit());
+      }, (vi * 60) + h * 130);
+    }
+  });
+  if (d.aoe && d.hits > 1) {
+    for (let h = 1; h < d.hits; h++) {
+      setTimeout(() => {
+        if (myPage() !== castPage) return;
+        for (const v of sims.filter(s => s.alive && Math.hypot(s.x - cx, s.y - cy) < d.aoe)) hit(v, d.mult, false);
+      }, h * 200);
+    }
+  }
+}
 const POTION_SHOP = [
   ['potion',    '🧪', 50],
   ['potion_mp', '💧', 50],
@@ -514,7 +766,8 @@ const skillCdUntil = {};
 const PALETTE = ['#e74c3c', '#3498db', '#9b59b6', '#1abc9c', '#f39c12', '#e91e63', '#00bcd4'];
 const colorOf = id => PALETTE[[...id].reduce((a, c) => a + c.charCodeAt(0), 0) % PALETTE.length];
 
-const skillLv = id => (me.skills || {})[id] || 0;
+const skillLv = id => ((me.skills || {})[id] || 0) + (((me.skillEnh || {})[id]) || 0); /* 강화분 포함 */
+const sLv = id => 1 + (skillLv(id) - 1) * .1; /* 액티브 위력 스케일 */
 const passSum = f => Object.keys(SKILLS).reduce((a, id) => a + (SKILLS[id][f] || 0) * skillLv(id), 0);
 const eqStats = f => Object.values(me.equipped || {}).reduce((a, id) => a + (getItem(id)[f] || 0), 0);
 const cdef = () => CLASSES[myCls] || CLASSES.warrior;
@@ -657,7 +910,7 @@ function makeSim(id, d) {
 
 function sdef(s) {
   if (!s.uniq) return s.def;
-  if (!s._ud) s._ud = { ...s.def, name: '★' + s.def.name, hp: Math.round(s.def.hp * 6), maxHp: Math.round(s.def.hp * 6), atk: Math.round(s.def.atk * 1.8), exp: s.def.exp * 8, gold: s.def.gold * 15, r: Math.round(s.def.r * 1.25), aggro: Math.round(s.def.aggro * 1.3) };
+  if (!s._ud) s._ud = { ...s.def, name: '★' + s.def.name, hp: Math.round(s.def.hp * 3.5), maxHp: Math.round(s.def.hp * 3.5), atk: Math.round(s.def.atk * 1.4), exp: s.def.exp * 8, gold: s.def.gold * 15, r: Math.round(s.def.r * 1.15), aggro: Math.round(s.def.aggro * 1.15) };
   return s._ud;
 }
 
@@ -875,19 +1128,36 @@ const WEAPON_VARIANTS = {
 /* 어떤 변형이든(예: 활을 마법사가 획득) 내 직업 무기로 상호 치환 가능하도록 역방향 색인 */
 const WEAPON_FAMILY_OF = {};
 for (const fam of Object.values(WEAPON_VARIANTS)) for (const vid of Object.values(fam)) WEAPON_FAMILY_OF[vid] = fam;
-const classWeapon = id => { const fam = WEAPON_FAMILY_OF[id]; return (fam && fam[myCls]) || id; };
+const classWeapon = raw => {
+  let suf = '';
+  let id = String(raw);
+  const ti = id.indexOf('~');
+  if (ti >= 0) { suf = id.slice(ti); id = id.slice(0, ti); }
+  const fam = WEAPON_FAMILY_OF[id];
+  return ((fam && fam[myCls]) || id) + suf;
+};
 function rollDrops(type) {
   /* orc 계열(페이지 보스)은 전용 테이블이 없어 빈손 버그 — boss 테이블 공유 */
   const table = DROP_TABLE[type] || (type === 'orc' ? DROP_TABLE.boss : []);
-  const drops = table.filter(([, p]) => Math.random() < p).map(([id]) => classWeapon(id));
-  if (Math.random() < UNIQUE_RATE) drops.push(classWeapon(UNIQUE_POOL[Math.floor(Math.random() * UNIQUE_POOL.length)]));
-  if (Math.random() < LEGEND_RATE) drops.push(classWeapon(LEGEND_POOL[Math.floor(Math.random() * LEGEND_POOL.length)]));
+  const band = bandOfPage(pageNum());
+  const allow = id => { const b = SET_PIECE_BAND[getItem(id)._base || id]; return !b || b.includes(band); };
+  const drops = table.filter(([, p]) => Math.random() < p).map(([id]) => classWeapon(id)).filter(allow);
+  const uniqPool = UNIQUE_POOL.filter(id => allow(classWeapon(id)));
+  if (Math.random() < UNIQUE_RATE && uniqPool.length) drops.push(classWeapon(uniqPool[Math.floor(Math.random() * uniqPool.length)]));
+  const legPool = LEGEND_POOL.filter(id => allow(classWeapon(id)));
+  if (Math.random() < LEGEND_RATE && legPool.length) drops.push(classWeapon(legPool[Math.floor(Math.random() * legPool.length)]));
   return drops;
 }
 
 async function dropLoot(type, x, y) {
   for (const itemId of rollDrops(type)) {
-    await addDoc(collection(db, 'loot'), { itemId, x: x + rand(-24, 24), y: y + rand(-24, 24), map: myMap(), ts: Date.now() }).catch(() => {});
+    let gid = itemId;
+    const it0 = getItem(itemId);
+    if (it0.slot && !it0.scroll) {
+      const roll = 85 + Math.floor(Math.random() * 31); /* 85~115% 랜덤롤 (장비만, 소모품은 스택 유지) */
+      if (roll !== 100) gid = `${itemId}~${roll}`;
+    }
+    await addDoc(collection(db, 'loot'), { itemId: gid, x: x + rand(-24, 24), y: y + rand(-24, 24), map: myMap(), ts: Date.now() }).catch(() => {});
   }
 }
 
@@ -1031,7 +1301,7 @@ function fireShot(tx, ty, color, dur, size = 5) {
 }
 
 function tryAttack(now, forced = null) {
-  if (!ready || me.dead || worldMapOpen()) return; /* 지도 오버레이 뒤에서 눈먼 전투 방지 */
+  if (!ready || me.dead || worldMapOpen() || paused) return; /* 지도 오버레이 뒤에서 눈먼 전투 방지 */
   const cd = atkCdOf();
   if (now < lastAttackAt + cd) return;
   lastAttackAt = now;
@@ -1040,11 +1310,11 @@ function tryAttack(now, forced = null) {
   if (cdef().melee) {
     slashes.push({ x: me.x, y: me.y, a: target ? me.face : -Math.PI / 2, t: 0, w: myCls === 'rogue' ? 2.4 : 3.6, len: myCls === 'rogue' ? 30 : 38 });
     sfx('swing');
-    me.swing = now; /* 공격 모션 재생 트리거 (없어서 평타 모션이 죽어 있었음) */
+    me.swing = now; me.atkSlowUntil = now + 180; /* 공격 모션 재생 트리거 (없어서 평타 모션이 죽어 있었음) */
   } else if (target) {
     fireShot(target.x, target.y, myCls === 'archer' ? '#e8d9a0' : '#c89bff', Math.min(600, Math.hypot(target.x - me.x, target.y - me.y) / 520 * 1000), myCls === 'archer' ? 4 : 8);
     sfx(myCls === 'archer' ? 'shoot' : 'cast');
-    me.swing = now;
+    me.swing = now; me.atkSlowUntil = now + 180;
   }
   if (!target) return;
   const crit = Math.random() < totalCrit();
@@ -1053,13 +1323,13 @@ function tryAttack(now, forced = null) {
 }
 
 function useSkill(slot) {
-  if (!ready || me.dead || worldMapOpen()) return;
+  if (!ready || me.dead || worldMapOpen() || paused) return;
   const now = Date.now();
-  const acts = classActiveIds();
-  const id = slot === 3 ? 'heal' : acts[slot - 1];
-  if (!id) return;
-  const def = SKILLS[id];
-  if (skillLv(id) < 1) { float(me.x, me.y - 34, '미습득 스킬 (B: 샵)', '#aaa'); return; }
+  const id = boundId(slot);
+  if (!id) { if (slot <= 5) toast('⌨️ 빈 슬롯 — 스킬샵/트리에서 등록'); return; }
+  const def = skillDef(id);
+  if (!def) return;
+  if (!hasSkill(id)) { float(me.x, me.y - 34, '미습득 스킬 (B: 샵)', '#aaa'); return; }
   if (now < (skillCdUntil[id] || 0)) return;
   if (mapFading) return; /* 맵 전환 중 시전 금지 — 지연 콜백이 새 구역 몬스터를 때리는 사고 방지 */
   const castPage = myPage(); /* 지연 폭발/발사 콜백용 구역 스냅샷 */
@@ -1067,7 +1337,7 @@ function useSkill(slot) {
   if ((me.mp ?? maxMpOf()) < mpc) { float(me.x, me.y - 34, '마나 부족!', '#5dade2'); return; }
 
   if (id === 'heal') {
-    const amt = Math.round(maxHpOf() * .4 * skillPow()); /* me.maxHp는 생성 시점 값이라 낡음 */
+    const amt = Math.round(maxHpOf() * .4 * sLv('heal') * skillPow()); /* me.maxHp는 생성 시점 값이라 낡음 */
     me.hp = Math.min(maxHpOf(), (me.hp || 0) + amt);
     updateDoc(meRef, { hp: me.hp }).catch(() => {});
     float(me.x, me.y - 34, `+${amt} HP`, '#2ecc71');
@@ -1081,13 +1351,13 @@ function useSkill(slot) {
     rings.push({ x: t.x, y: t.y, r: 48, t: 0, max: 320, color: '255,140,0' });
     fxSparks(t.x, t.y, 14, '#ffb347', 160);
     doShake(6); sfx('crit');
-    attackResult(t, Math.max(1, Math.round(totalAtk() * 4 * skillPow() * rand(.9, 1.1))), true);
+    attackResult(t, Math.max(1, Math.round(totalAtk() * 4 * sLv('power_strike') * skillPow() * rand(.9, 1.1))), true);
   } else if (id === 'multishot') {
     const targets = sims.filter(s => s.alive && Math.hypot(s.x - me.x, s.y - me.y) < 240);
     if (!targets.length) { float(me.x, me.y - 34, '대상 없음', '#aaa'); return; }
     for (const t of targets) {
       fireShot(t.x, t.y, '#e8d9a0', Math.hypot(t.x - me.x, t.y - me.y) / 520 * 1000 + 60, 4);
-      const dmg = Math.max(1, Math.round(totalAtk() * 1.5 * skillPow() * rand(.9, 1.1)));
+      const dmg = Math.max(1, Math.round(totalAtk() * 1.5 * sLv('multishot') * skillPow() * rand(.9, 1.1)));
       setTimeout(() => { if (myPage() === castPage) attackResult(t, dmg, false); }, 140);
     }
     sfx('swing');
@@ -1101,7 +1371,7 @@ function useSkill(slot) {
     slashes.push({ x: me.x, y: me.y, a: Math.atan2(t.y - me.y, t.x - me.x), t: 0, w: 7, len: 50, color: '#b388ff' });
     fxSparks(t.x, t.y, 16, '#9b59b6', 170);
     doShake(6); sfx('boom');
-    attackResult(t, Math.max(1, Math.round(totalAtk() * 6 * skillPow())), true);
+    attackResult(t, Math.max(1, Math.round(totalAtk() * 6 * sLv('shadow_strike') * skillPow())), true);
   } else if (id === 'fireball') {
     const t = nearestSim(340);
     if (!t) { float(me.x, me.y - 34, '대상 없음', '#aaa'); return; }
@@ -1114,7 +1384,7 @@ function useSkill(slot) {
       doShake(9); sfx('boom');
       const victims = sims.filter(s => s.alive && Math.hypot(s.x - t.x, s.y - t.y) < 145);
       for (const v of victims) {
-        const dmg = Math.max(1, Math.round(totalAtk() * 2.2 * skillPow() * rand(.9, 1.1)));
+        const dmg = Math.max(1, Math.round(totalAtk() * 2.2 * sLv('fireball') * skillPow() * rand(.9, 1.1)));
         attackResult(v, dmg, false);
       }
     }, 240);
@@ -1127,7 +1397,7 @@ function useSkill(slot) {
     doShake(7); sfx('boom');
     me.swing = now;
     for (const v of victims) {
-      const dmg = Math.max(1, Math.round(totalAtk() * 2 * skillPow() * rand(.9, 1.1)));
+      const dmg = Math.max(1, Math.round(totalAtk() * 2 * sLv('whirlwind') * skillPow() * rand(.9, 1.1)));
       attackResult(v, dmg, Math.random() < totalCrit());
     }
   } else if (id === 'piercing') {
@@ -1145,7 +1415,7 @@ function useSkill(slot) {
     fxSparks(me.x + dx * 30, me.y + dy * 30, 10, '#ffd27f', 150);
     sfx('shoot');
     me.swing = now;
-    const dmg = Math.max(1, Math.round(totalAtk() * 2.4 * skillPow() * rand(.9, 1.1)));
+    const dmg = Math.max(1, Math.round(totalAtk() * 2.4 * sLv('piercing') * skillPow() * rand(.9, 1.1)));
     victims.forEach((v, i) => {
       setTimeout(() => { if (myPage() === castPage) attackResult(v, dmg, Math.random() < totalCrit()); }, i * 90);
     });
@@ -1159,7 +1429,7 @@ function useSkill(slot) {
       setTimeout(() => {
         if (myPage() !== castPage || !t.alive) return;
         fxSparks(t.x, t.y, 8, '#b388ff', 140);
-        attackResult(t, Math.max(1, Math.round(totalAtk() * 1.7 * skillPow() * rand(.9, 1.1))), i === 2);
+        attackResult(t, Math.max(1, Math.round(totalAtk() * 1.7 * sLv('phantom') * skillPow() * rand(.9, 1.1))), i === 2);
       }, i * 130);
     }
   } else if (id === 'frost_nova') {
@@ -1171,10 +1441,10 @@ function useSkill(slot) {
     doShake(8); sfx('boom');
     me.swing = now;
     for (const v of victims) {
-      const dmg = Math.max(1, Math.round(totalAtk() * 2 * skillPow() * rand(.9, 1.1)));
+      const dmg = Math.max(1, Math.round(totalAtk() * 2 * sLv('frost_nova') * skillPow() * rand(.9, 1.1)));
       attackResult(v, dmg, false);
     }
-  }
+  } else if (TREES_ALL[id]) castTreeSkill(id);
   if (mpc) {
     me.mp = (me.mp ?? maxMpOf()) - mpc;
     updateDoc(meRef, { mp: Math.round(me.mp) }).catch(() => {});
@@ -1189,18 +1459,23 @@ function renderShop() {
   const list = Object.entries(SKILLS).filter(([, d]) => d.cls === myCls || d.cls === 'all');
   let html = list.map(([id, d]) => {
     const lv = skillLv(id);
-    const maxed = lv >= MAX_SKILL_LV;
-    const cost = skillCost(d, lv);
+    const baseLv = (me.skills || {})[id] || 0;
+    const enhLv = ((me.skillEnh || {})[id]) || 0;
+    const maxed = baseLv >= MAX_SKILL_LV;
+    const cost = skillCost(d, baseLv);
     const afford = (me.gold || 0) >= cost;
     const stat = d.atk ? `공격 +${d.atk}` : d.def ? `방어 +${d.def}` : d.spd ? `속도 +${d.spd}` : d.crit ? `치명타 +${Math.round(d.crit * 100)}%p` : '';
+    const enhCost = Math.round(d.cost * 2 * (1 + enhLv));
     return `<div class="srow">
       <div class="si">${d.icon}</div>
       <div class="sm">
-        <div><span class="st">${esc(d.name)}</span>${d.type === 'passive' ? `<span class="slv">${stat}</span>` : ''}<span class="slv">Lv ${lv}/${MAX_SKILL_LV}</span></div>
+        <div><span class="st">${esc(d.name)}</span>${d.type === 'passive' ? `<span class="slv">${stat}</span>` : ''}<span class="slv">Lv ${baseLv}${enhLv ? `+${enhLv}` : ''}/${MAX_SKILL_LV}</span></div>
         <div class="sd">${esc(d.desc)}${d.mp ? ` · 마나 ${d.mp}` : ''}${d.cd ? ` · 재사용 ${d.cd / 1000}s` : ''}</div>
+        ${(lv >= 1 && d.type === 'active') ? bindBtns(id) : ''}
       </div>
-      ${maxed ? `<button class="buyBtn" disabled>MAX</button>`
-              : `<button class="buyBtn" data-buy="${id}" ${afford ? '' : 'disabled'}>${cost} G</button>`}
+      ${!maxed ? `<button class="buyBtn" data-buy="${id}" ${afford ? '' : 'disabled'}>${cost} G</button>`
+              : enhLv >= 5 ? `<button class="buyBtn" disabled>MAX</button>`
+              : `<button class="buyBtn" data-enh="${id}">${enhCost}G<br>강화+${enhLv + 1}</button>`}
     </div>`;
   }).join('');
   for (const [pid, picon, pcost] of POTION_SHOP) {
@@ -1229,6 +1504,8 @@ function renderShop() {
     </div>`;
   body.innerHTML = html;
   body.querySelectorAll('[data-buy]').forEach(b => b.onclick = () => buySkill(b.dataset.buy));
+  body.querySelectorAll('[data-enh]').forEach(b => b.onclick = () => enhanceSkill(b.dataset.enh));
+  body.querySelectorAll('[data-bind]').forEach(b => b.onclick = () => { const [s, id] = b.dataset.bind.split(':'); bindSet(s, id); renderShop(); });
   body.querySelectorAll('[data-potion]').forEach(b => b.onclick = () => buyPotion(b.dataset.potion));
   const bb = $('buyBag');
   if (bb) bb.onclick = buyBag;
@@ -1438,7 +1715,8 @@ function computeAddToInv(p, itemId) {
       } else if (it.slot && usable && eq[it.slot]) {
         const cur = getItem(eq[it.slot]);
         const cR = RARITY_RANK[cur.rarity] ?? 0, nR = RARITY_RANK[it.rarity] ?? 0;
-        if (nR > cR || (nR === cR && (it._lv || 0) > (cur._lv || 0))) {
+        const cP = (cur.atk || 0) + (cur.def || 0), nP = (it.atk || 0) + (it.def || 0);
+        if (nR > cR || (nR === cR && (it._lv || 0) > (cur._lv || 0)) || (nR === cR && (it._lv || 0) === (cur._lv || 0) && nP > cP)) {
           /* 더 좋은 장비 자동 장착 + 기존 장비는 자동 판매 */
           sold = sellPrice(eq[it.slot]);
           upd.gold = (p.gold || 0) + sold;
@@ -1467,6 +1745,7 @@ function addToInv(itemId) {
   }).catch(() => null);
 }
 
+let selPotKey = null, selPotT = 0;
 function slotClick(rawId) {
   runTransaction(db, async tx => {
     const snap = await tx.get(meRef);
@@ -1478,6 +1757,19 @@ function slotClick(rawId) {
     if (!key) return;
     const itemId = inv[key];
     const it = getItem(itemId);
+    if (it.heal || it.mana) {
+      /* 가방에서 실수로 먹는 것 방지: 첫 탭은 선택만, 1.5초 내 다시 누르면 사용 */
+      const selK = key + ':' + itemId;
+      if (selPotKey !== selK || Date.now() - selPotT > 1500) {
+        selPotKey = selK; selPotT = Date.now();
+        setTimeout(() => {
+          toast(`${it.heal ? '🧪' : '💧'} ${it.name} (${it.heal ? 'HP +' + it.heal : 'MP +' + it.mana}) — 한 번 더 누르면 사용`);
+          sfx('click');
+        }, 0);
+        return;
+      }
+      selPotKey = null;
+    }
     if (it.heal) {
       const nhp = Math.min(maxHpOf(), (me.hp || 0) + it.heal);
       const [bid, cnt] = splitStack(itemId);
@@ -1544,7 +1836,7 @@ function openEnhModal(scrollRaw, targetRaw) {
   const [sb] = splitStack(scrollRaw);
   const sc = getItem(sb);
   const t = getItem(targetRaw);
-  if (!sc.scroll || t.heal || t.mana || t.scroll) return;
+  if (!sc.scroll || t.scroll) return;
   const lv = t._lv || 0;
   const rMul = t.rarity === 'unique' ? 4 : t.rarity === 'legend' ? 3 : t.rarity === 'epic' ? 2 : 1;
   const cost = 300 * (lv + 1) * rMul;
@@ -1583,6 +1875,70 @@ function findInvKey(inv, rawId) {
   return null;
 }
 
+/* 등급별 일괄판매 */
+let bulkArmed = '', bulkAway = null;
+function sellByGrade(grade) {
+  runTransaction(db, async tx => {
+    const snap = await tx.get(meRef);
+    if (!snap.exists()) return null;
+    const p = snap.data();
+    const inv = { ...(p.inv || {}) };
+    let gain = 0, n = 0;
+    for (const [k, v] of Object.entries(inv)) {
+      const [bid] = splitStack(v);
+      if ((getItem(bid).rarity || 'common') !== grade) continue;
+      gain += sellPrice(v); n++;
+      delete inv[k];
+    }
+    if (!n) return null;
+    tx.update(meRef, { gold: (p.gold || 0) + gain, inv: sortInvMap(inv) });
+    return { gain, n };
+  }).then(r => {
+    if (!r) return;
+    sfx('coin');
+    toast(`💰 ${RARITY_KR[grade]} ${r.n}개 일괄판매 → <b style="color:#ffd700">+${r.gain.toLocaleString()} G</b>`);
+    renderInvUI();
+  }).catch(() => {});
+}
+function toggleBulkMenu() {
+  closeEnhMenu();
+  let m = $('bulkMenu');
+  if (m) { m.remove(); bulkArmed = ''; return; }
+  const byGrade = {};
+  for (const v of Object.values(me.inv || {})) {
+    const [bid] = splitStack(v);
+    const r = getItem(bid).rarity || 'common';
+    if (!byGrade[r]) byGrade[r] = { n: 0, gain: 0 };
+    byGrade[r].n += 1; byGrade[r].gain += sellPrice(v);
+  }
+  const grades = Object.keys(byGrade);
+  if (!grades.length) { toast('가방이 비어 있습니다'); return; }
+  m = document.createElement('div');
+  m.id = 'bulkMenu';
+  m.style.cssText = 'position:fixed;z-index:9999;background:#141a26;border:1px solid #3a4a66;border-radius:8px;padding:8px;min-width:220px;box-shadow:0 8px 24px rgba(0,0,0,.6);';
+  const btn = $('bulkSellBtn');
+  const br = btn ? btn.getBoundingClientRect() : { left: 100, bottom: 100 };
+  m.style.left = Math.min(br.left, innerWidth - 240) + 'px';
+  m.style.top = (br.bottom + 6) + 'px';
+  m.innerHTML = `<div style="color:#ffd700;font-size:12px;font-weight:bold;margin-bottom:6px;">등급별 일괄판매 (장착 제외)</div>` + grades.map(g =>
+    `<button data-grade="${g}" style="display:flex;justify-content:space-between;gap:12px;width:100%;padding:7px 10px;font-size:12px;background:#1c2536;color:${RARITY_COLOR[g]};border:1px solid #2b3547;border-radius:6px;margin-bottom:4px;cursor:pointer;">`
+    + `<span>■ ${RARITY_KR[g]} ${byGrade[g].n}개</span><span style="color:#ffd700">+${byGrade[g].gain.toLocaleString()}G</span></button>`).join('')
+    + `<div style="color:#667;font-size:10.5px;margin-top:2px;">같은 등급을 한 번 더 누르면 판매</div>`;
+  document.body.appendChild(m);
+  m.querySelectorAll('[data-grade]').forEach(b => b.onclick = ev => {
+    ev.stopPropagation();
+    if (bulkArmed === b.dataset.grade) { const g = b.dataset.grade; bulkArmed = ''; m.remove(); sellByGrade(g); }
+    else {
+      bulkArmed = b.dataset.grade;
+      m.querySelectorAll('[data-grade]').forEach(x => x.style.borderColor = '#2b3547');
+      b.style.borderColor = '#ff6b6b';
+      setTimeout(() => { if (bulkArmed === b.dataset.grade) { bulkArmed = ''; if (document.body.contains(b)) b.style.borderColor = '#2b3547'; } }, 3000);
+    }
+  });
+  if (bulkAway) document.removeEventListener('pointerdown', bulkAway);
+  bulkAway = e => { const mm = $('bulkMenu'); if (mm && !mm.contains(e.target) && e.target.id !== 'bulkSellBtn') { mm.remove(); bulkArmed = ''; } };
+  setTimeout(() => document.addEventListener('pointerdown', bulkAway), 0);
+}
 function sellItem(itemId) {
   runTransaction(db, async tx => {
     const snap = await tx.get(meRef);
@@ -1635,11 +1991,12 @@ function showEnhMenu(x, y, rawId) {
   closeEnhMenu();
   const c = countScrolls();
   const it0 = getItem(rawId);
-  const isConsumable = !!(it0.heal || it0.mana || it0.scroll);
+  const noEnh = !!(it0.scroll);
   const lv = it0._lv || 0;
   enhMenuEl = document.createElement('div');
+  enhMenuEl.id = 'enhMenu';
   enhMenuEl.style.cssText = 'position:fixed;z-index:9999;background:#141a26;border:1px solid #3a4a66;border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:6px;box-shadow:0 8px 24px rgba(0,0,0,.6);min-width:180px;';
-  if (!isConsumable) for (const [g, label, col] of ENH_GRADES) {
+  if (!noEnh) for (const [g, label, col] of ENH_GRADES) {
     const b = document.createElement('button');
     b.style.cssText = `display:flex;justify-content:space-between;gap:12px;padding:7px 10px;font-size:13px;background:${c[g] ? '#1c2536' : '#161d2a'};color:${c[g] ? col : '#556'};border:1px solid #2b3547;border-radius:6px;cursor:${c[g] ? 'pointer' : 'not-allowed'};text-align:left;`;
     b.innerHTML = `<span>${label}</span><span style="color:#889">${c[g]}개 · ${Math.round(ENH_CHANCE[g](lv))}%</span>`;
@@ -1667,10 +2024,15 @@ function enhanceItem(itemId, grade = 'normal') {
     const inv = { ...(p.inv || {}) };
     const eq = { ...(p.equipped || {}) };
     const key = findInvKey(inv, itemId);
-    if (!key) return 'gone';
-    const id = inv[key];
+    let eqSlot = null;
+    if (!key) {
+      /* 장착 중 강화: 가방에 없으면 장착칸에서 탐색 */
+      for (const [s, v] of Object.entries(eq)) if (v === itemId) { eqSlot = s; break; }
+      if (!eqSlot) return 'gone';
+    }
+    const id = eqSlot ? eq[eqSlot] : inv[key];
     const it = getItem(id);
-    if (it.heal || it.mana || it.scroll) return 'no';
+    if (it.scroll) return 'no';
     let scIdx = null, scBase = null, scCnt = 0;
     for (const [k, v] of Object.entries(inv)) {
       const [b, c] = splitStack(v);
@@ -1685,15 +2047,22 @@ function enhanceItem(itemId, grade = 'normal') {
     const chance = ENH_CHANCE[grade](lv);
     if (scCnt > 1) inv[scIdx] = scBase + '*' + (scCnt - 1); else delete inv[scIdx];
     /* 강화 대상은 항상 가방의 사본 — 같은 id가 장착돼 있어도 별개 아이템이므로 건드리지 않음 */
+    const [, tcnt] = splitStack(id);
     let result;
     if (Math.random() * 100 < chance) {
-      const nid = it._base + '+' + (lv + 1);
-      inv[key] = nid;
-      tx.update(meRef, { gold: p.gold - cost, inv: sortInvMap(inv) });
+      const nid = it._base + '+' + (lv + 1) + (it._pct && it._pct !== 100 ? `~${it._pct}` : '');
+      if (eqSlot) eq[eqSlot] = nid;
+      else if (tcnt > 1) {
+        inv[key] = splitStack(id)[0] + (tcnt - 1 > 1 ? '*' + (tcnt - 1) : '');
+        let placed = false;
+        for (let i = 0; i < (p.bagSize || 18); i++) if (inv[String(i)] == null) { inv[String(i)] = nid; placed = true; break; }
+        if (!placed) return 'full';
+      } else inv[key] = nid;
+      tx.update(meRef, { gold: p.gold - cost, inv: sortInvMap(inv), ...(eqSlot ? { equipped: eq } : {}) });
       result = { ok: true, nid };
     } else {
-      delete inv[key];
-      tx.update(meRef, { gold: p.gold - cost, inv: sortInvMap(inv) });
+      if (eqSlot) delete eq[eqSlot]; else delete inv[key];
+      tx.update(meRef, { gold: p.gold - cost, inv: sortInvMap(inv), ...(eqSlot ? { equipped: eq } : {}) });
       result = { ok: false };
     }
     return result;
@@ -1702,16 +2071,19 @@ function enhanceItem(itemId, grade = 'normal') {
     if (r === 'gone') { toast('아이템을 찾을 수 없습니다'); renderInvUI(); return; }
     if (r === 'poor') { toast('💰 골드가 부족합니다'); return; }
     if (r === 'noscroll') { toast('📜 강화 주문서가 없습니다'); return; }
+    if (r === 'full') { toast('🎒 빈 슬롯이 없습니다'); renderInvUI(); return; }
     if (r === 'no') return;
     if (r === null) { toast('강화에 실패했습니다 — 다시 시도하세요'); return; }
     if (r.ok) {
       sfx('levelup');
+      enhFxFx(true);
       toast(`🔨 강화 성공! <b style="color:${RARITY_COLOR[getItem(r.nid).rarity]}">${getItem(r.nid).name}</b>`, 'sysq');
       float(me.x, me.y - 40, '강화 성공!', '#ffd700');
       rings.push({ x: me.x, y: me.y, r: 70, t: 0, max: 450, color: '255,215,0' });
       fxSparks(me.x, me.y - 10, 14, '#ffd700', 140);
     } else {
       sfx('die');
+      enhFxFx(false);
       doShake(10);
       toast('💥 <b>강화 실패 — 아이템이 파괴되었습니다!</b>');
       float(me.x, me.y - 40, '파괴...', '#ff5050');
@@ -1722,8 +2094,171 @@ function enhanceItem(itemId, grade = 'normal') {
 }
 
 let invUIKey = '';
+if (typeof $ !== 'undefined' && $('invPanel') && !$('invPanel')._tipBound) {
+  $('invPanel')._tipBound = true;
+  $('invPanel').addEventListener('mousemove', e => {
+    const t = e.target.closest ? e.target.closest('.islot[data-raw], .eslot[data-raw]') : null;
+    if (!t || !t.dataset.raw) { hideTip(); return; }
+    const now = Date.now();
+    if (t.dataset.raw !== tipLastRaw || now - tipLastT > 150) {
+      tipLastRaw = t.dataset.raw; tipLastT = now;
+      showTip(itemTipHtml(t.dataset.raw), e.clientX, e.clientY, t);
+    } else placeTip(e.clientX, e.clientY, t);
+  });
+  $('invPanel').addEventListener('mouseleave', hideTip);
+}
+/* 퀵슬롯 바인딩 (1~5) */
+function boundId(slot) {
+  const b = (me.binds || {})[slot];
+  if (b) return b;
+  if (+slot === 3) return 'heal';
+  const acts = classActiveIds();
+  return acts[+slot - 1];
+}
+function bindSet(slot, id) {
+  if (!meRef) return;
+  updateDoc(meRef, { [`binds.${slot}`]: id }).catch(() => {});
+  toast(`⌨️ ${slot}번에 ${skillDef(id).name} 등록`);
+}
+function bindBtns(id) {
+  let h = '<div class="bindrow">';
+  for (let s = 1; s <= 5; s++) {
+    const cur = ((me.binds || {})[s]) || (s === 3 ? 'heal' : (classActiveIds()[s - 1] || ''));
+    h += `<button data-bind="${s}:${id}" class="${cur === id ? 'cur' : ''}">[${s}]</button>`;
+  }
+  return h + '</div>';
+}
+/* 물약 퀵슬롯 (6 체력 / 7 마나) */
+function potCount(kind) {
+  const ids = kind === 'hp' ? ['potion', 'potion_hi'] : ['potion_mp', 'potion_mm'];
+  let n = 0;
+  for (const v of Object.values(me.inv || {})) { const [bid, cnt] = splitStack(v); if (ids.includes(bid)) n += cnt; }
+  return n;
+}
+function usePotion(kind) {
+  if (!ready || me.dead) return;
+  const ids = kind === 'hp' ? ['potion', 'potion_hi'] : ['potion_mp', 'potion_mm'];
+  const pref = (me.potPref || {})[kind];
+  const order = pref ? [pref, ...ids.filter(x => normId(x) !== normId(pref))] : ids;
+  runTransaction(db, async tx => {
+    const snap = await tx.get(meRef);
+    if (!snap.exists()) return;
+    const p = snap.data();
+    const inv = { ...(p.inv || {}) };
+    for (const pid of ids) {
+      for (const [k, v] of Object.entries(inv)) {
+        const [bid, cnt] = splitStack(v);
+        if (normId(bid) !== pid) continue;
+        const it = getItem(bid);
+        if (kind === 'hp' && it.heal) {
+          const nhp = Math.min(maxHpOf(), (me.hp || 0) + it.heal);
+          if (cnt > 1) inv[k] = bid + '*' + (cnt - 1); else delete inv[k];
+          tx.update(meRef, { inv, hp: nhp });
+          setTimeout(() => { me.hp = nhp; hpDirty = true; float(me.x, me.y - 30, `+${it.heal} HP`, '#2ecc71'); rings.push({ x: me.x, y: me.y, r: 50, t: 0, max: 350, color: '46,204,113' }); sfx('potion'); }, 0);
+          return;
+        }
+        if (kind === 'mp' && it.mana) {
+          const nmp = Math.min(maxMpOf(), (me.mp ?? 0) + it.mana);
+          if (cnt > 1) inv[k] = bid + '*' + (cnt - 1); else delete inv[k];
+          tx.update(meRef, { inv, mp: Math.round(nmp) });
+          setTimeout(() => { me.mp = nmp; float(me.x, me.y - 30, `+${it.mana} MP`, '#3498db'); rings.push({ x: me.x, y: me.y, r: 50, t: 0, max: 350, color: '52,152,219' }); sfx('potion'); }, 0);
+          return;
+        }
+      }
+    }
+    setTimeout(() => toast(kind === 'hp' ? '🧪 체력 물약이 없습니다' : '💧 마나 물약이 없습니다'), 0);
+  }).catch(() => {});
+}
+/* 스킬 트리 UI */
+function renderTree() {
+  const body = $('treeBody');
+  if (!body) return;
+  const cls = myCls;
+  const owned = treeOwnedCount(cls);
+  let html = `<div class="srow"><div class="si">🌳</div><div class="sm">`
+    + `<div><span class="st">${CLASSES[cls].name} 트리</span><span class="slv">${owned}/100</span></div>`
+    + `<div class="sd">공격 <b style="color:#fff">+${treeStat('atk')}</b> · 방어 +${treeStat('def')} · 치명 +${Math.round(treeStat('crit') * 100)}%p · 속도 +${treeStat('spd')} · HP +${treeStat('hp')} · MP +${treeStat('mp')}</div>`
+    + `</div></div>`;
+  for (let tier = 1; tier <= 10; tier++) {
+    const req = treeTierReq(tier), cost = treeCost(tier);
+    html += `<div class="tTier">T${tier} <span>Lv${req.lv} · ${req.pts}pts · ${cost.toLocaleString()}G</span></div><div class="tGrid">`;
+    for (const [id, d] of Object.entries(TREES[cls])) {
+      if (d.tier !== tier) continue;
+      const has = (me.tree || {})[id];
+      const can = has || (owned >= req.pts && (me.lv || 1) >= req.lv && (me.gold || 0) >= cost);
+      html += `<div class="tnode ${has ? 'owned' : can ? 'can' : 'lock'}" data-tree="${id}" title="${esc(d.name)} — ${esc(d.desc)}">`
+        + `<div class="ti">${d.icon}</div><div class="tn">${esc(d.name)}</div>`
+        + `<div class="tc">${has ? '✔' : cost.toLocaleString() + 'G'}</div>`
+        + (has && d.kind === 'active' ? bindBtns(id) : '') + `</div>`;
+    }
+    html += `</div>`;
+  }
+  body.innerHTML = html;
+  body.querySelectorAll('[data-tree]').forEach(el => el.onclick = () => buyTreeNode(el.dataset.tree));
+  body.querySelectorAll('[data-bind]').forEach(el => el.onclick = ev => { ev.stopPropagation(); const [s, id] = el.dataset.bind.split(':'); bindSet(s, id); renderTree(); });
+}
+let treeT = 0;
+function renderTreeThrottled() { if (Date.now() - treeT > 700) { treeT = Date.now(); renderTree(); } }
+/* 스킬 강화 (MAX 이후 +1~+5, 주문서+성공률) */
+function enhanceSkill(id) {
+  const def = SKILLS[id];
+  if (!def) return;
+  const base = (me.skills || {})[id] || 0;
+  if (base < MAX_SKILL_LV) { toast('MAX까지 먼저 배우세요'); return; }
+  const enh = ((me.skillEnh || {})[id]) || 0;
+  if (enh >= 5) { toast('강화 최대치입니다'); return; }
+  const grade = enh < 2 ? 'normal' : enh < 4 ? 'adv' : 'top';
+  const cost = Math.round(def.cost * 2 * (1 + enh));
+  runTransaction(db, async tx => {
+    const snap = await tx.get(meRef);
+    if (!snap.exists()) return null;
+    const p = snap.data();
+    if (((p.skills || {})[id] || 0) < MAX_SKILL_LV) return 'nolvl';
+    if ((((p.skillEnh || {})[id]) || 0) >= 5) return 'maxed';
+    if ((p.gold || 0) < cost) return 'poor';
+    const inv = { ...(p.inv || {}) };
+    let scIdx = null, scBase = null, scCnt = 0;
+    for (const [k, v] of Object.entries(inv)) {
+      const [b, c] = splitStack(v);
+      const sc = getItem(b);
+      if (sc.scroll && (sc.grade || 'normal') === grade) { scIdx = k; scBase = b; scCnt = c; break; }
+    }
+    if (scIdx === null) return 'noscroll';
+    if (scCnt > 1) inv[scIdx] = scBase + '*' + (scCnt - 1); else delete inv[scIdx];
+    const ok = Math.random() * 100 < (90 - enh * 12);
+    if (ok) { const se = { ...((p.skillEnh) || {}) }; se[id] = enh + 1; tx.update(meRef, { gold: p.gold - cost, inv: sortInvMap(inv), skillEnh: se }); }
+    else tx.update(meRef, { gold: p.gold - cost, inv: sortInvMap(inv) });
+    return ok ? 'ok' : 'fail';
+  }).then(r => {
+    if (r === 'ok') { sfx('levelup'); toast(`✦ ${def.name} 강화 +${enh + 1}!`, 'sysq'); enhFxFx(true); renderShop(); }
+    else if (r === 'fail') { sfx('die'); toast(`💥 ${def.name} 강화 실패 (재료 소멸)`); enhFxFx(false); renderShop(); }
+    else if (r === 'poor') toast('💰 골드가 부족합니다');
+    else if (r === 'noscroll') toast('📜 강화 주문서가 없습니다');
+  }).catch(() => {});
+}
+/* 강화 성공/실패 이펙트 (장비·스킬 공용) */
+function enhFxFx(ok) {
+  let ov = $('enhFx');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'enhFx';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:200;pointer-events:none;opacity:0;transition:opacity .12s;';
+    document.body.appendChild(ov);
+  }
+  ov.style.background = ok
+    ? 'radial-gradient(ellipse at center, rgba(255,215,0,.28), transparent 70%)'
+    : 'radial-gradient(ellipse at center, rgba(255,40,40,.32), transparent 70%)';
+  ov.style.opacity = 1;
+  setTimeout(() => { ov.style.opacity = 0; }, ok ? 450 : 650);
+  doShake(ok ? 12 : 18);
+  hitStopUntil = Math.max(hitStopUntil, Date.now() + (ok ? 150 : 300));
+  fxSparks(me.x, me.y - 10, ok ? 26 : 34, ok ? '#ffd700' : '#ff5050', ok ? 220 : 260);
+  rings.push({ x: me.x, y: me.y, r: 90, t: 0, max: 550, color: ok ? '255,215,0' : '255,60,60' });
+  float(me.x, me.y - 64, ok ? '강화 성공!' : '파괴...', ok ? '#ffd700' : '#ff5050', true);
+}
 function renderInvUI() {
   /* 위치 저장 에코 스냅샷마다 호출되므로 실제 내용이 바뀐 경우에만 DOM 재구축 */
+  hideTip();
   const key = JSON.stringify([me.inv, me.equipped, me.bagSize, me.skills]);
   if (key === invUIKey) return;
   invUIKey = key;
@@ -1739,7 +2274,9 @@ function renderInvUI() {
       const it = getItem(itemId);
       const [, scnt] = splitStack(itemId);
       div.dataset.r = it.rarity || 'common';
-      div.innerHTML = `<span class="ic">${itemIcon(itemId)}</span>` + (scnt > 1 ? `<span class="scnt">${scnt}</span>` : '');
+      const th = itemThumb(itemId);
+      div.innerHTML = (th ? `<img class="ic" src="${th}" alt="">` : `<span class="ic">${itemIcon(itemId)}</span>`) + (scnt > 1 ? `<span class="scnt">${scnt}</span>` : '');
+      div.dataset.raw = itemId;
       { const sl = it._base ? setLineFor(it._base) : '';
         div.title = `${it.name} [${RARITY_KR[it.rarity] || '일반'}]\n${itemStat(it) || '소모품'}${sl ? '\n' + sl : ''}\n좌클릭: 장착/사용 · 우클릭: 강화/판매`; }
       div.onclick = () => { if (it.scroll) { toast('📜 주문서를 장비 위로 끌어다 놓으세요'); return; } slotClick(itemId); };
@@ -1796,7 +2333,7 @@ function renderInvUI() {
     const total = s.pieces.length;
     const lines = Object.keys(s.bonus).map(Number).sort((a, b) => a - b).map(t =>
       `<div style="color:${n >= t ? '#7fe3a0' : '#667'}">${n >= t ? '✔' : '○'} ${t}셋: ${esc(bonusText(s.bonus[t]))}</div>`).join('');
-    return `<div style="margin-bottom:4px;"><b style="color:${s.color}">◈ ${esc(s.name)}</b> <span style="color:#ffd700">${n}/${total}</span>${lines}</div>`;
+    return `<div style="margin-bottom:4px;"><b style="color:${s.color}">◈ ${esc(s.name)}</b> <span style="color:#ffd700">${n}/${total}</span> <span style="color:#889;font-size:10.5px">📍${esc(setRegionText(sid))}</span>${lines}</div>`;
   }).join('');
   if (setHtml) { setRow.innerHTML = setHtml; setRow.style.display = 'block'; }
   else setRow.style.display = 'none';
@@ -1820,10 +2357,13 @@ function renderInvUI() {
     if (itemId) {
       const it = getItem(itemId);
       div.dataset.r = it.rarity || 'common';
-      div.innerHTML = `<span class="slbl">${label}</span><span style="color:${it.color}">${SLOT_ICONS[slot]} ${esc(it.name)}</span>`;
+      const th2 = itemThumb(itemId);
+      div.innerHTML = `<span class="slbl">${label}</span>` + (th2 ? `<img class="eic" src="${th2}" alt="">` : `<span style="color:${it.color}">${SLOT_ICONS[slot]}</span>`) + `<span class="enm" style="color:${it.color}">${esc(it.name)}</span>`;
+      div.dataset.raw = itemId;
       const sl = it._base ? setLineFor(it._base) : '';
-      div.title = `${it.name} [${RARITY_KR[it.rarity] || '일반'}]\n${itemStat(it)}${sl ? '\n' + sl : ''}\n클릭: 해제`;
+      div.title = `${it.name} [${RARITY_KR[it.rarity] || '일반'}]\n${itemStat(it)}${sl ? '\n' + sl : ''}\n클릭: 해제 · 우클릭: 강화`;
       div.onclick = () => unequip(slot);
+      div.oncontextmenu = e => { e.preventDefault(); showEnhMenu(e.clientX, e.clientY, itemId); };
     } else {
       div.innerHTML = `<span class="slbl">${label}</span><span style="color:#556">${SLOT_ICONS[slot]} -</span>`;
     }
@@ -1965,83 +2505,127 @@ function monsterHitMe(s, now) {
 /* ================= 픽셀 아트 스프라이트 ================= */
 const SPRITE_DEFS = {
   warrior: {
-    pal: { O: '#1a1d24', H: '#a8b2bd', h: '#5d656e', S: '#f2c79a', s: '#d9a878', E: '#1a1d24', A: '#c0392b', D: '#8e2a20', G: '#d9b23c', B: '#6b4a2f', L: '#3a3f4a', l: '#262b33' },
+    pal: { O: '#1a1d24', H: '#a8b2bd', h: '#5d656e', S: '#f2c79a', s: '#d9a878', E: '#1a1d24', A: '#c0392b', D: '#8e2a20', G: '#d9b23c', B: '#6b4a2f', L: '#3a3f4a', l: '#262b33', W: '#ffffff' },
     rows: [
-      '...OOOOOO...',
-      '..OHHHHHHO..',
-      '.OHHHHHHHHO.',
-      '.OhhhhhhhhO.',
-      '.OSESSSSESO.',
-      '.OSSSssSSSO.',
-      '..OSSSSSSO..',
-      '.OAAAAAAAAO.',
-      'OAAGAAAAAAAO',
-      'OAaDAAAADAaO',
-      '.OADAAAADAO.',
-      '..OBBBBBBO..',
-      '..OLLLOLLO..',
-      '..OllOOllO..',
-      '..OOO..OOO..',
+      '...OOOOOOOOOOOOOO...',
+      '...OHHHHHHHHHHHHO...',
+      '...OHHHHHHHHHHHHO...',
+      '...OhhhhhhhhhhhhO...',
+      '...OhhhhhhhhhhhhO...',
+      '....OHHHHHHHHHHO....',
+      '....OSESSSSSESSO....',
+      '....OSWSSSSSESSO....',
+      '....OSSSssssSSSO....',
+      '....OOSSSSSSSSOO....',
+      '...OOAAAAAAAAAAOO...',
+      '..OOOAAAAAAAAAAOOO..',
+      '..OOAAAAAAAAAAAAOO..',
+      '..OAAAAAAAAAAAAAAO..',
+      '..OOSSAAAAAAAASSOO..',
+      '..OAAAAAAAAAAAAAAO..',
+      '..OAAAAAAAAAAAAAAO..',
+      '...OAAAAAAAAAAAAO...',
+      '...OOBBGGGGGGBBOO...',
+      '...OOOLLLLLLLLOOO...',
+      '...OOLLLLLLLLLLOO...',
+      '...OOLLLLLLLLLLOO...',
+      '...OOllllllllllOO...',
+      '...OOllllllllllOO...',
+      '..OOOllll..llllOOO..',
+      '..OOOOOOO..OOOOOOO..',
     ],
   },
   archer: {
-    pal: { O: '#1a1d24', C: '#2e7d52', c: '#1e5c3a', F: '#e74c3c', S: '#f2c79a', s: '#d9a878', E: '#1a1d24', A: '#27ae60', D: '#1e8449', G: '#d9b23c', B: '#6b4a2f', L: '#4a6b3a', l: '#2c3e2a' },
+    pal: { O: '#1a1d24', C: '#2e7d52', c: '#1e5c3a', F: '#e74c3c', S: '#f2c79a', s: '#d9a878', E: '#1a1d24', A: '#27ae60', D: '#1e8449', G: '#d9b23c', B: '#6b4a2f', L: '#4a6b3a', l: '#2c3e2a', W: '#ffffff' },
     rows: [
-      '...OCCCCO...',
-      '..OCCCCFCO..',
-      '.OcCCCCCCcO.',
-      '.OSSSSSSSSO.',
-      '.OSESSSSESO.',
-      '.OSSSssSSSO.',
-      '..OSSSSSSO..',
-      '.OAAAAAAAAO.',
-      'OAAGAAAAAAAO',
-      'OAaDAAAADAaO',
-      '.OADAAAADAO.',
-      '..OBBBBBBO..',
-      '..OLLLOLLO..',
-      '..OllOOllO..',
-      '..OOO..OOO..',
+      '...OOOOOOOOOOOOOO...',
+      '...OCCCCCCCCCCCCO...',
+      '...OCCCCCCCCCCCCO...',
+      '...OccccccccccccO...',
+      '...OCCCCFCCFCCCCO...',
+      '....OCCCCCCCCCCO....',
+      '....OSESSSSSESSO....',
+      '....OSWSSSSSESSO....',
+      '....OSSSssssSSSO....',
+      '....OOSSSSSSSSOO....',
+      '...OOAAAAAAAAAAOO...',
+      '..OOOAAAAAAAAAAOOO..',
+      '..OOAAAAAAAAAAAAOO..',
+      '..OAAAAAAAAAAAAAAO..',
+      '..OOSSAAAAAAAASSOO..',
+      '..OAAAAAAAAAAAAAAO..',
+      '..OAAAAAAAAAAAAAAO..',
+      '...OAAAAAAAAAAAAO...',
+      '...OOBBGGGGGGBBOO...',
+      '...OOOLLLLLLLLOOO...',
+      '...OOLLLLLLLLLLOO...',
+      '...OOLLLLLLLLLLOO...',
+      '...OOllllllllllOO...',
+      '...OOllllllllllOO...',
+      '..OOOllll..llllOOO..',
+      '..OOOOOOO..OOOOOOO..',
     ],
   },
   rogue: {
-    pal: { O: '#1a1d24', K: '#34495e', k: '#22303f', S: '#e8bd93', s: '#c49a6c', E: '#1a1d24', A: '#5d6d7e', D: '#43505c', G: '#d9b23c', B: '#2c2620', L: '#2c3e50', l: '#1a2530' },
+    pal: { O: '#1a1d24', K: '#34495e', k: '#22303f', S: '#e8bd93', s: '#c49a6c', E: '#1a1d24', A: '#5d6d7e', D: '#43505c', G: '#d9b23c', B: '#2c2620', L: '#2c3e50', l: '#1a2530', W: '#ffffff' },
     rows: [
-      '...OOOOOO...',
-      '..OKKKKKKO..',
-      '.OKKKKKKKKO.',
-      '.OKSSSSSSKO.',
-      '.OSESSSSESO.',
-      '.OKSSssSSKO.',
-      '..OKSSSSKO..',
-      '.OKKAAAAKKO.',
-      'OAKAGAAAAGO.',
-      'OAkADAAAADkO',
-      '.OADAAAADAO.',
-      '..OBBBBBBO..',
-      '..OLLLOLLO..',
-      '..OllOOllO..',
-      '..OOO..OOO..',
+      '...OOOOOOOOOOOOOO...',
+      '...OKKKKKKKKKKKKO...',
+      '...OKKKKKKKKKKKKO...',
+      '...OKkkkkkkkkkkKO...',
+      '...OKKKKKKKKKKKKO...',
+      '.OKKSSSSSSSSSSSSKKO.',
+      '....OSESSSSSESSO....',
+      '....OSWSSSSSESSO....',
+      '....OSSSssssSSSO....',
+      '....OOSSSSSSSSOO....',
+      '...OOAAAAAAAAAAOO...',
+      '..OOOAAAAAAAAAAOOO..',
+      '..OOAAAAAAAAAAAAOO..',
+      '..OAAAAAAAAAAAAAAO..',
+      '..OOSSAAAAAAAASSOO..',
+      '..OAAAAAAAAAAAAAAO..',
+      '..OAAAAAAAAAAAAAAO..',
+      '...OAAAAAAAAAAAAO...',
+      '...OOBBGGGGGGBBOO...',
+      '...OOOLLLLLLLLOOO...',
+      '...OOLLLLLLLLLLOO...',
+      '...OOLLLLLLLLLLOO...',
+      '...OOllllllllllOO...',
+      '...OOllllllllllOO...',
+      '..OOOllll..llllOOO..',
+      '..OOOOOOO..OOOOOOO..',
     ],
   },
   mage: {
-    pal: { O: '#1a1d24', P: '#6c3483', p: '#4a235a', G: '#ffd700', S: '#f2c79a', s: '#d9a878', E: '#1a1d24', A: '#6c3483', D: '#4a235a' },
+    pal: { O: '#1a1d24', P: '#6c3483', p: '#4a235a', G: '#ffd700', S: '#f2c79a', s: '#d9a878', E: '#1a1d24', A: '#6c3483', D: '#4a235a', W: '#ffffff' },
     rows: [
-      '.....OPO....',
-      '....OPPPO...',
-      '..OPPPPPPO..',
-      '.OPPPPPPPPO.',
-      '.OSESSSSESO.',
-      '.OSSSssSSSO.',
-      '..OSSSSSSO..',
-      '.OPPPPPPPPO.',
-      'OAPPGGGPPPAO',
-      'OApDGGGGDpAO',
-      '.OADGGGGDAO.',
-      '.OPPPPPPPPO.',
-      '.OPPPPPPPPO.',
-      '.OpPPPPPpPO.',
-      '..OOOOOOOO..',
+      '.........OO.........',
+      '....OPPPPPPPPPPO....',
+      '...OPPPPPPPPPPPPO...',
+      '..OPPPPPPPPPPPPPPO..',
+      '.OGPPPPPPPPPPPPPPGO.',
+      '.OpppppppSSpppppppO.',
+      '....OSESSSSSESSO....',
+      '....OSWSSSSSESSO....',
+      '....OSSSssssSSSO....',
+      '....OOSSSSSSSSOO....',
+      '...OOAAAAAAAAAAOO...',
+      '..OOOAAAAAAAAAAOOO..',
+      '..OOAAAAAAAAAAAAOO..',
+      '..OAAAAAAAAAAAAAAO..',
+      '..OOSSAAAAAAAASSOO..',
+      '..OAAAAAAAAAAAAAAO..',
+      '..OAAAAAAAAAAAAAAO..',
+      '...OAAAAAAAAAAAAO...',
+      '...OOBBGGGGGGBBOO...',
+      '...OOOLLLLLLLLOOO...',
+      '...OOLLLLLLLLLLOO...',
+      '...OOLLLLLLLLLLOO...',
+      '...OOllllllllllOO...',
+      '...OOllllllllllOO...',
+      '..OOOllll..llllOOO..',
+      '..OOOOOOO..OOOOOOO..',
     ],
   },
   slime: {
@@ -2176,13 +2760,82 @@ const ITEM_SHAPES = {
   ring:   ['..LL..', '.LLLL.', '..MM..', '.M..M.', 'M....M', '.MMMM.'],
   potion: ['..GGG..', '...G...', '..MMM..', '.MLMMD.', '.MMMMM.', '.MMMMM.', '.MMMMM.', '..DDD..'],
   scroll: ['..WWW..', '.WWWWW.', '.WB.BW.', '.WWWWW.', '.W.BBW.', '.WWWWW.', '..WWW..'],
+  /* 검 */
+  w_sword_wood: ['...M...', '..MMM..', '..MMM..', '..MMM..', '..MMM..', '..MMM..', '.BBBBB.', '...B...'],
+  w_sword_iron: ['...M...', '..MMM..', '..MLM..', '..MLM..', '..MLM..', '..MLM..', '..MLM..', '.GGGGG.', '...G...', '...B...'],
+  w_sword_epic: ['...M...', '..MLM..', '..MLM..', '..MLM..', '..MLM..', '..MLM..', '..MLM..', '..MLM..', '.GGGGG.', '...G...', '...G...'],
+  w_sword_chief: ['..MMMM..', '..MLMM..', '..MLMM..', '..MLMM..', '..MLMM..', '..MLMM..', 'GGGGGGGG', '...GG...', '...WW...'],
+  w_sword_knight: ['...MM...', '..MMMM..', '..MLMM..', '..MLMM..', '..MLMM..', '..MLMM..', '..MLMM..', 'GGGGGGGG', '...WW...', '...BB...'],
+  /* 활 */
+  w_bow_wood: ['..MM...', '...MMW.', '....MW.', '....MW.', '...MMW.', '..MM...'],
+  w_bow_iron: ['.GMMM..', '..MMMW.', '...MMW.', '...MMW.', '..MMMW.', '.GMMM..'],
+  w_bow_epic: ['.GGMM..', '..MMLW.', '...MLW.', '...MLW.', '..MMLW.', '.GGMM..'],
+  w_bow_chief: ['.GGMMM...', '..MMMLW..', '...MMMW..', '...MMMW..', '..MMMLW..', '.GGMMM...'],
+  w_bow_knight: ['.GGMMM...', '..MMMLW..', '...MMMW..', '...MMMW..', '..MMMLW..', '.GGMMM...'],
+  /* 단검 */
+  w_dagger_wood: ['..M..', '..M..', '.BBB.', '..B..'],
+  w_dagger_iron: ['..M..', '..M..', '..M..', '.GGG.', '..B..'],
+  w_dagger_epic: ['..M..', '..M..', '..M..', '..M..', '.GGG.', '..B..'],
+  w_dagger_chief: ['..MM..', '..MM..', '..MM..', '.GGGG.', '..WW..', '..BB..'],
+  w_dagger_knight: ['..MM..', '..MM..', '..MM..', '.GGGG.', '..WW..', '..BB..'],
+  /* 지팡이 */
+  w_staff_wood: ['..MM..', '..MM..', '...M...', '...M...', '...M...', '...M...', '...M...', '...M...', '...M...'],
+  w_staff_iron: ['.MMMM.', 'MMWMMM', '.MMMM.', '...M...', '...M...', '...M...', '...M...', '...M...', '...M...', '...B...'],
+  w_staff_epic: ['.MMMM.', 'MMWMMM', '.MMMM.', '..GGG..', '...M...', '...ML..', '...M...', '...ML..', '...M...', '...B...'],
+  w_staff_chief: ['.WWWW.', 'WWMWWW', '.WWWW.', '...M...', '...M...', '...M...', '...M...', '...B...'],
+  w_staff_knight: ['.MMMM.', 'MMWMMM', '.MMMM.', 'GGGGGGG', '...M...', '...M...', '...M...', '...M...', '...B...'],
+  /* 방어구 */
+  armor_leather: ['MM.....MM', 'MMM...MMM', 'MMMMMMMMM', 'MLMMMMMDM', 'MLMMMMMDM', '.MMMMMMM.', '.MGMMMMGM.', '.DMMMMMD.', '..DDDDD..'],
+  armor_plate: ['.MM...MM.', 'MMMMMMMMM', 'MLMMGMMDM', 'MLMMMMMDM', 'MLMMMMMDM', '.MMMMMMM.', '.MMMGMMM.', '.DMMMMMD.', '..DDDDD..'],
+  helmet_horn: ['..MMMM..', '.MMMMMM.', 'MMMMMMMM', '.MLMMDM.', '.MMMMMM.'],
+  helmet_crown: ['.G.G.G.', 'GGGGGGG', '.MMMMM.', '.MWWWM.'],
+  pants_leather: ['.MMMMM.', '.MMMMM.', '.MLMDM.', '.MMMMM.', '.MMDMM.', '.MM.MM.', '.MM.MM.', '.DD.DD.'],
+  pants_plate: ['.MMMMM.', 'MLMMMMDM', '.MLMDM.', 'MLMMMMDM', '.MMMMM.', '.MM.MM.', '.MM.MM.', '.DD.DD.'],
+  gloves_leather: ['..MMM..', '.MMMMM.', '.MLMMM.', '.MMMMM.', 'DDDDDDD', '.MMMMM.', '..DDD..'],
+  gloves_steel: ['..MMM..', '.MGGGM.', '.MMMMM.', '.MDMDM.', '.MMMMM.', '.MMMMM.', '..DDD..'],
+  boots_leather: ['.MM..MM.', '.MMGGMM.', '.MMGGMM.', '.ML..MD.', '.MMMMMM.', '.DDDDDD.'],
+  boots_wind: ['WMM..MMW', '.MMGGMM.', '.MMGGMM.', '.ML..MD.', '.MMMMMM.', '.DDDDDD.'],
+  bracelet_jade: ['..MMMM..', '.MLLMDM.', '.MLGMDM.', '.MLGMDM.', '.MLLMDM.', '..MMMM..'],
+  necklace_ruby: ['G.....G', '.G...G.', '..GGGG.', '...MM...', '..MMMM..', '..MWWMM.', '...MMM..', '....D....'],
+  ring_gem: ['..LL..', '.LLLL.', '..MM..', '.MWWMM.', 'M....M', '.MMMM.'],
+  potion_hi: ['..GGG..', '...G...', '..MMM..', '.MLMMD.', '.MGMMGM.', '.MMMMM.', '.MMMMM.', '.MMMMM.', '..DDD..'],
+  potion_mp: ['...G...', '..MMM..', '.MMMMM.', 'MLMWMDM', 'MMMMMMM', '.MMMMM.', '..DDD..'],
+  potion_mm: ['..GGG..', '...G...', '..MMM..', '.MMMMM.', 'MLMWMDM', 'MMMMMMM', '.MMMMM.', '..DDD..'],
+  scroll_adv: ['..WWW..', '.WWWWW.', '.WBBBB.', '.WWWWW.', '.WBBBW.', '.WWWWW.', '..WWW..'],
+  scroll_top: ['..WWW..', '.WWWWW.', '.WGGGW.', '.WWWWW.', '.WGGGW.', '.WWWWW.', '..WWW..'],
 };
+function itemShapeKey(id, it) {
+  const base = it._base || id;
+  if (it.scroll) return 'scroll_' + (it.grade || 'normal');
+  if (it.heal) return it.heal > 100 ? 'potion_hi' : 'potion';
+  if (it.mana) return it.mana > 60 ? 'potion_mm' : 'potion_mp';
+  if (it.slot === 'weapon') {
+    const cls = it.cls || '';
+    const kind = cls === 'archer' ? 'bow' : cls === 'rogue' ? 'dagger' : cls === 'mage' ? 'staff' : 'sword';
+    const tier = /flame|storm|shadow/.test(base) ? 'epic' : /iron|crystal/.test(base) ? 'iron' : /chief/.test(base) ? 'chief' : /knight/.test(base) ? 'knight' : 'wood';
+    return `w_${kind}_${tier}`;
+  }
+  if (it.slot === 'helmet' && /crown|slime/i.test(base)) return 'helmet_crown';
+  if (it.slot === 'helmet' && /leather/.test(base)) return 'helmet_horn';
+  if (it.slot === 'armor' && /leather/.test(base)) return 'armor_leather';
+  if (it.slot === 'armor' && /plate/.test(base)) return 'armor_plate';
+  if (it.slot === 'pants' && /leather/.test(base)) return 'pants_leather';
+  if (it.slot === 'pants' && /plate/.test(base)) return 'pants_plate';
+  if (it.slot === 'gloves' && /leather/.test(base)) return 'gloves_leather';
+  if (it.slot === 'gloves' && /steel/.test(base)) return 'gloves_steel';
+  if (it.slot === 'boots' && /leather/.test(base)) return 'boots_leather';
+  if (it.slot === 'boots' && /wind/.test(base)) return 'boots_wind';
+  if (it.slot === 'bracelet' && /jade/.test(base)) return 'bracelet_jade';
+  if (it.slot === 'necklace' && /ruby/.test(base)) return 'necklace_ruby';
+  if (it.slot === 'ring' && /shadow|lich/.test(base)) return 'ring_gem';
+  return it.slot;
+}
 function itemSprite(id) {
   const it = getItem(id);
-  const slotKey = it.scroll ? 'scroll' : it.heal ? 'potion' : (it.slot && ITEM_SHAPES[it.slot] ? it.slot : 'bracelet');
+  const shape = itemShapeKey(id, it);
   const col = it.color || '#ccc';
-  const key = 'itspr_' + slotKey + '_' + col;
-  if (!SPRITE_DEFS[key]) SPRITE_DEFS[key] = { pal: { M: col, D: shade(col, .55), L: shade(col, 1.5), G: '#d9b23c', W: '#e8e4d8', B: '#8a6b45' }, rows: ITEM_SHAPES[slotKey] };
+  const key = 'itspr_' + shape + '_' + col;
+  if (!SPRITE_DEFS[key]) SPRITE_DEFS[key] = { pal: { M: col, D: shade(col, .55), L: shade(col, 1.5), G: '#d9b23c', W: '#e8e4d8', B: '#8a6b45' }, rows: ITEM_SHAPES[shape] || ITEM_SHAPES[it.slot] || ITEM_SHAPES.bracelet };
   return key;
 }
 
@@ -2193,14 +2846,14 @@ function buildSprite(name) {
   const h = def.rows.length;
   const w = Math.max(...def.rows.map(r => r.length));
   const cv2 = document.createElement('canvas');
-  cv2.width = w; cv2.height = h;
+  cv2.width = w + 2; cv2.height = h + 2; /* 외곽선 1px 여백 */
   const c = cv2.getContext('2d');
   def.rows.forEach((row, y) => {
     for (let x = 0; x < row.length; x++) {
       const ch = row[x];
       if (ch === '.' || ch === ' ' || !def.pal[ch]) continue;
       c.fillStyle = def.pal[ch];
-      c.fillRect(x, y, 1, 1);
+      c.fillRect(x + 1, y + 1, 1, 1);
     }
   });
   /* 자동 베벨: 위가 뚫린 픽셀은 하이라이트, 아래가 뚫린 픽셀은 셰이드 — 전 스프라이트 공통 입체감 */
@@ -2209,18 +2862,33 @@ function buildSprite(name) {
     for (let x = 0; x < row.length; x++) {
       const ch = row[x];
       if (ch === '.' || ch === ' ' || ch === 'O' || !def.pal[ch]) continue;
-      if (!solidAt(y - 1, x)) { c.fillStyle = 'rgba(255,255,255,.22)'; c.fillRect(x, y, 1, 1); }
-      else if (!solidAt(y + 1, x)) { c.fillStyle = 'rgba(0,0,0,.2)'; c.fillRect(x, y, 1, 1); }
+      if (!solidAt(y - 1, x)) { c.fillStyle = 'rgba(255,255,255,.3)'; c.fillRect(x + 1, y + 1, 1, 1); }
+      else if (!solidAt(y + 1, x)) { c.fillStyle = 'rgba(0,0,0,.28)'; c.fillRect(x + 1, y + 1, 1, 1); }
     }
   });
+  /* 자동 외곽선: 빈칸인데 8방향 중 실체와 닿으면 테두리 — 전 스프라이트 공통 선명도 */
+  const oc = def.outline || '#14161c';
+  const cellAt = (yy, xx) => { const r = def.rows[yy]; if (!r) return null; const ch2 = r[xx]; return (ch2 && ch2 !== '.' && ch2 !== ' ') ? ch2 : null; };
+  for (let y = 0; y < h + 2; y++) {
+    for (let x = 0; x < w + 2; x++) {
+      if (cellAt(y - 1, x - 1) !== null) continue;
+      let adj = false;
+      for (let dy = -1; dy <= 1 && !adj; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const nch = cellAt(y - 1 + dy, x - 1 + dx);
+        if (nch && nch !== 'O' && def.pal[nch]) { adj = true; break; }
+      }
+      if (adj) { c.fillStyle = oc; c.globalAlpha = .92; c.fillRect(x, y, 1, 1); c.globalAlpha = 1; }
+    }
+  }
   const white = document.createElement('canvas');
-  white.width = w; white.height = h;
+  white.width = w + 2; white.height = h + 2;
   const wc = white.getContext('2d');
   wc.drawImage(cv2, 0, 0);
   wc.globalCompositeOperation = 'source-in';
   wc.fillStyle = '#fff';
-  wc.fillRect(0, 0, w, h);
-  spriteCache[name] = { cv: cv2, white, w, h };
+  wc.fillRect(0, 0, w + 2, h + 2);
+  spriteCache[name] = { cv: cv2, white, w: w + 2, h: h + 2 };
   return spriteCache[name];
 }
 function drawSprite(name, x, y, scale = 4, opts = {}) {
@@ -2645,6 +3313,16 @@ function gotoPage(n) {
     watchMonsters();
     watchLoot(); /* 루팅도 구역별 구독 재설정 */
     sysMsg(`${myName}님이 ${pageDef(n).name}(으)로 이동했습니다.`);
+    try {
+      const b = bandOfPage(n);
+      const seen = JSON.parse(localStorage.getItem('seenBands') || '[]');
+      if (!seen.includes(b)) {
+        seen.push(b);
+        localStorage.setItem('seenBands', JSON.stringify(seen));
+        const sets = Object.keys(SET_BANDS).filter(sid => SET_BANDS[sid].includes(b));
+        if (sets.length) toast(`📍 ${BIOMES[b].name}: ${sets.map(sid => `◈${SETS[sid].name}`).join(' ')} 세트 드랍 지역!`, 'sysq');
+      }
+    } catch (e) {}
     setTimeout(() => { if (ov) ov.style.opacity = 0; mapFading = false; }, 300);
   }, 380);
 }
@@ -2845,21 +3523,24 @@ function eqSpriteName(cls, eq) {
     if (a) {
       pal.A = a.color; pal.D = shade(a.color, .55);
       pal.T = shade(a.color, 1.5);
-      rows[7] = '.TAAAAAAAAT.'; /* 어깨 견장 트림 */
+      rows[11] = '....OTAAAAAAAATO....';
     }
     if (p) { pal.L = shade(p.color, 1.05); pal.l = shade(p.color, .45); }
     if (h) {
-      /* 색만 바꾸던 것에서 투구 실루엣으로 교체 (눈은 4행이라 전 직업 공통 적용 가능) */
       pal.M = h.color; pal.m = shade(h.color, .55); pal.Q = shade(h.color, 1.55);
-      rows[0] = '...OMMMMO...';
-      rows[1] = '..OMQQQMMO..';
-      rows[2] = '.OMMMMMMMMO.';
-      rows[3] = '.OmmMMMMmmO.';
+      rows[0] = '.......MMMMMM.......';
+      rows[1] = '.....MMQQQQQQMM.....';
+      rows[2] = '....OMMMMMMMMMMO....';
+      rows[3] = '....OmmMMMMMMmmO....';
+      rows[4] = '....OMMMMMMMMMMO....';
+      rows[5] = '...OMMMMMMMMMMMMO...';
     }
     if (b) {
       pal.Z = b.color; pal.z = shade(b.color, .55);
-      rows[13] = '..OZzOOZzO..';
-      rows[14] = '..ZZZ..ZZZ..';
+      rows[22] = '...OOZZZZZZZZZZOO...';
+      rows[23] = '...OOZZZZZZZZZZOO...';
+      rows[24] = '..OOOZZZZ..ZZZZOOO..';
+      rows[25] = '..OOOOOOO..OOOOOOO..';
     }
     SPRITE_DEFS[key] = { pal, rows };
   }
@@ -2972,6 +3653,9 @@ function drawHero20(o, now, moving, fx, fy, bobY, c = ctx) {
     c.fillRect(bx - 4.5, by + 1.5, 9, 2);
     c.fillStyle = 'rgba(255,255,255,.28)';
     c.fillRect(bx - 4.5, by - 3, 9, 1.4);
+    c.strokeStyle = 'rgba(0,0,0,.35)'; c.lineWidth = .9;   /* 끈 디테일 */
+    c.beginPath(); c.moveTo(bx - 1, by - 2); c.lineTo(bx - 1, by + 1); c.stroke();
+    c.beginPath(); c.moveTo(bx + 1.5, by - 2); c.lineTo(bx + 1.5, by + 1); c.stroke();
   };
   if (!isMage) { bootAt(-5 + stepL, 6); bootAt(5 + stepR, 6); }
   else { bootAt(-6 + stepL * .4, 7); bootAt(6 + stepR * .4, 7); }
@@ -2992,6 +3676,10 @@ function drawHero20(o, now, moving, fx, fy, bobY, c = ctx) {
   c.fillStyle = '#d9b23c';                              /* 버클 */
   roundRect(c, -2.5, -16, 5, 3.5, 1); c.fill();
   c.strokeStyle = OL; c.lineWidth = .8; c.stroke();
+  c.fillStyle = '#e74c3c';                                /* 버클 보석 */
+  c.beginPath(); c.arc(0, -14.2, 1.1, 0, 7); c.fill();
+  c.fillStyle = 'rgba(255,255,255,.8)';
+  c.beginPath(); c.arc(-.4, -14.6, .4, 0, 7); c.fill();
   if (armorIt && (armorIt.rarity === 'legend' || armorIt.rarity === 'unique')) {
     c.shadowColor = trimC; c.shadowBlur = 8;          /* 전설·유니크 엠블럼 */
     c.fillStyle = trimC;
@@ -3206,11 +3894,11 @@ function heroFrames(cls, eq, faceBake = Math.PI / 2) {
   if (set) { frameCache.delete(key); frameCache.set(key, set); return set; } /* LRU */
   set = bakeHeroFrames(cls, eq || {}, faceBake);
   frameCache.set(key, set);
-  while (frameCache.size > 8) frameCache.delete(frameCache.keys().next().value);
+  while (frameCache.size > 6) frameCache.delete(frameCache.keys().next().value);
   return set;
 }
 function bakeFrame(cls, eq, face, oExtra, tBake, squash, rot) {
-  const S = 128, OX = 64, OY = 86;
+  const S = 192, OX = 96, OY = 129; /* 고해상 베이크 (128 박스에 축소 블릿 → 선명) */
   const cv2 = document.createElement('canvas');
   cv2.width = S; cv2.height = S;
   const c = cv2.getContext('2d');
@@ -3600,51 +4288,48 @@ function drawChar(o) {
   const bobY = moving ? Math.abs(Math.sin(stepPh)) * 2.4 : Math.sin(now / 600) * .8;
 
   ctx.fillStyle = 'rgba(0,0,0,.32)';
-  ctx.beginPath(); ctx.ellipse(o.x, o.y + 11, 15, 5.5, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(o.x, o.y + 12, 24, 8, 0, 0, 7); ctx.fill();
   if (o.isSelf && !o.dead) {
     ctx.strokeStyle = 'rgba(255,215,0,.7)'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.ellipse(o.x, o.y + 11, 18, 7, 0, 0, 7); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(o.x, o.y + 12, 28, 10, 0, 0, 7); ctx.stroke();
   }
 
-  /* 3D 우선, 실패 시 20프레임 2D로 폴백 (스테이지는 2D 고정) */
+  /* 벡터 20프레임 (해상도 무관 초정밀 — 픽셀 없음) */
   const eq = o.equipped || {};
-  if (!window.__stage && threeState === 'idle') initThree();
-  const use3D = !window.__stage && threeState === 'ready';
   const sw = (!o.dead && o.swing) ? (now - o.swing) / 220 : -1;
+  let fr = null;
+  try {
+    const fs = heroFrames(o.cls || 'warrior', eq);
+    if (o.dead) fr = fs.dead;
+    else if (sw >= 0 && sw < 1) fr = fs.atk[Math.min(FR_ATK - 1, Math.floor(sw * FR_ATK))];
+    else if (!o.dead && o.isSelf && now < hurtUntil) fr = fs.hurt;
+    else if (moving) fr = fs.walk[((Math.floor(stepPh / (2 * Math.PI) * FR_WALK) % FR_WALK) + FR_WALK) % FR_WALK];
+    else fr = fs.idle[Math.floor(now / 300) % FR_IDLE];
+  } catch (e) { fr = null; }
   ctx.save();
   ctx.translate(o.x, o.y - bobY);
+  if (!o.dead && o.swing) {
+    const lunge = Math.sin(Math.min(1, (now - o.swing) / 150) * Math.PI);
+    if (lunge > 0) ctx.translate(Math.cos(face) * 10 * lunge, Math.sin(face) * 10 * lunge);
+  }
   if (o.dead) ctx.globalAlpha = .45;
   else if (moving) ctx.rotate(Math.sin(stepPh) * .055); /* 걸음 스웨이 */
-  if (use3D) {
-    drawHero3D(o, eq, now, moving, stepPh, flip, sw);
-  } else {
-    let fr = null;
-    try {
-      const fs = heroFrames(o.cls || 'warrior', eq);
-      if (o.dead) fr = fs.dead;
-      else if (sw >= 0 && sw < 1) fr = fs.atk[Math.min(FR_ATK - 1, Math.floor(sw * FR_ATK))];
-      else if (!o.dead && o.isSelf && now < hurtUntil) fr = fs.hurt;
-      else if (moving) fr = fs.walk[((Math.floor(stepPh / (2 * Math.PI) * FR_WALK) % FR_WALK) + FR_WALK) % FR_WALK];
-      else fr = fs.idle[Math.floor(now / 300) % FR_IDLE];
-    } catch (e) { fr = null; }
-    if (!o.dead && flip) ctx.scale(-1, 1);
-    ctx.imageSmoothingEnabled = false;
-    if (fr) ctx.drawImage(fr, -64, -86, 128, 128);
-    else { ctx.fillStyle = '#e74c3c'; ctx.beginPath(); ctx.arc(0, -24, 17, 0, 7); ctx.fill(); } /* 최후 대체 렌더 */
-  }
+  if (!o.dead && flip) ctx.scale(-1, 1);
+  if (fr) { const HB = 1.56; ctx.drawImage(fr, -64 * HB, -86 * HB, 128 * HB, 128 * HB); } /* 캐릭터 20% 확대 */
+  else { ctx.fillStyle = '#e74c3c'; ctx.beginPath(); ctx.arc(0, -24, 17, 0, 7); ctx.fill(); }
   ctx.restore();
 
   if (!o.dead && o.hp < o.maxHp) {
     ctx.fillStyle = 'rgba(0,0,0,.6)';
-    roundRect(ctx, o.x - 18, o.y - 70, 36, 6.5, 3); ctx.fill();
+    roundRect(ctx, o.x - 18, o.y - 104, 36, 6.5, 3); ctx.fill();
     ctx.fillStyle = '#2ecc71';
-    ctx.fillRect(o.x - 17, o.y - 69, 34 * clampN(o.hp / o.maxHp, 0, 1), 4.5);
+    ctx.fillRect(o.x - 17, o.y - 103, 34 * clampN(o.hp / o.maxHp, 0, 1), 4.5);
   }
   ctx.font = (o.isSelf ? 'bold ' : '') + '12px sans-serif';
   ctx.textAlign = 'center';
   ctx.fillStyle = o.isSelf ? '#fff' : (CLASSES[o.cls]?.color || '#eee');
   ctx.shadowColor = 'rgba(0,0,0,.85)'; ctx.shadowBlur = 3;
-  ctx.fillText(o.name, o.x, o.y - 76);
+  ctx.fillText(o.name, o.x, o.y - 110);
   ctx.shadowBlur = 0;
 }
 
@@ -4120,7 +4805,7 @@ function drawSlime(s, now) {
   ctx.beginPath(); ctx.ellipse(s.x, s.y + 10, r0(s) * .95, r0(s) * .36, 0, 0, 7); ctx.fill();
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  drawMob3D(s, now, s.sprId || 'slime', s.x, s.y + 9, s.uniq ? 5.6 : 4.5, { squashX: 1 + wob * .07, squashY: 1 - wob * .07, flash, bob: s.movingF ? Math.abs(Math.sin(now / 140 + s.blink)) * 3 : 0 }, { base: 'slime', rowsPx: 11 });
+  drawSprite(s.sprId || 'slime', s.x, s.y + 9, s.uniq ? 5.6 : 4.5, { squashX: 1 + wob * .07, squashY: 1 - wob * .07, flash, bob: s.movingF ? Math.abs(Math.sin(now / 140 + s.blink)) * 3 : 0 });
   drawKindExtras(s, now);
   mobUI(s, false);
 }
@@ -4131,7 +4816,7 @@ function drawGoblin(s, now) {
   ctx.beginPath(); ctx.ellipse(s.x, s.y + 12, r0(s) * .95, r0(s) * .36, 0, 0, 7); ctx.fill();
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  drawMob3D(s, now, s.sprId || 'goblin', s.x, s.y + 11, s.uniq ? 5.6 : 4.5, { flash, bob: s.movingF ? Math.abs(Math.sin(now / 110)) * 3 : 0 }, { base: 'goblin', rowsPx: 15 });
+  drawSprite(s.sprId || 'goblin', s.x, s.y + 11, s.uniq ? 5.6 : 4.5, { flash, bob: s.movingF ? Math.abs(Math.sin(now / 110)) * 3 : 0 });
   drawKindExtras(s, now);
   mobUI(s, false);
 }
@@ -4142,7 +4827,7 @@ function drawWolf(s, now) {
   ctx.beginPath(); ctx.ellipse(s.x, s.y + 13, r0(s) * 1.2, r0(s) * .32, 0, 0, 7); ctx.fill();
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  drawMob3D(s, now, s.sprId || 'wolf', s.x, s.y + 12, s.uniq ? 5.6 : 4.5, { flip: flip < 0, flash, bob: s.movingF ? Math.abs(Math.sin(now / 75)) * 2 : 0 }, { base: 'wolf', rowsPx: 13 });
+  drawSprite(s.sprId || 'wolf', s.x, s.y + 12, s.uniq ? 5.6 : 4.5, { flip: flip < 0, flash, bob: s.movingF ? Math.abs(Math.sin(now / 75)) * 2 : 0 });
   drawKindExtras(s, now);
   mobUI(s, false);
 }
@@ -4152,7 +4837,7 @@ function drawSkeleton(s, now) {
   ctx.beginPath(); ctx.ellipse(s.x, s.y + 12, r0(s) * .9, r0(s) * .34, 0, 0, 7); ctx.fill();
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  drawMob3D(s, now, s.sprId || 'skeleton', s.x, s.y + 11, s.uniq ? 6.2 : 5, { flash, bob: s.movingF ? Math.abs(Math.sin(now / 120)) * 3 : 0 }, { base: 'skeleton', rowsPx: 15 });
+  drawSprite(s.sprId || 'skeleton', s.x, s.y + 11, s.uniq ? 6.2 : 5, { flash, bob: s.movingF ? Math.abs(Math.sin(now / 120)) * 3 : 0 });
   drawKindExtras(s, now);
   mobUI(s, false);
 }
@@ -4177,7 +4862,7 @@ function drawLich(s, now) {
   ctx.beginPath(); ctx.ellipse(s.x, s.y + 14, r0(s) * .8, r0(s) * .3, 0, 0, 7); ctx.fill();
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  drawMob3D(s, now, s.sprId || 'lich', s.x, s.y + 16 - fl, s.uniq ? 6.6 : 5.5, { flash }, { base: 'lich', rowsPx: 17 });
+  drawSprite(s.sprId || 'lich', s.x, s.y + 16 - fl, s.uniq ? 6.6 : 5.5, { flash });
   drawKindExtras(s, now);
   for (let i = 0; i < 2; i++) {
     const a = now / 400 + i * Math.PI;
@@ -4217,7 +4902,7 @@ function drawBoss(s, now) {
   const swing = s.swingT && now - s.swingT < 320 ? (now - s.swingT) / 320 : -1;
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  drawMob3D(s, now, s.sprId || 'orc', s.x, s.y + 16, s.uniq ? 6.6 : 5.5, { flash, bob: Math.sin(now / 300) * 2 }, { base: 'orc', rowsPx: 17 });
+  drawSprite(s.sprId || 'orc', s.x, s.y + 16, s.uniq ? 6.6 : 5.5, { flash, bob: Math.sin(now / 300) * 2 });
   drawKindExtras(s, now);
 
   ctx.save();
@@ -5227,17 +5912,32 @@ function updateHUD() {
   if (pts > 0) setTxt('uiPts', String(pts));
 }
 
+function setPot(el, n, kind) {
+  const box = $(el);
+  if (!box) return;
+  const pref = kind ? ((me.potPref || {})[kind] || '') : '';
+  const k = 'pot' + el;
+  const sig = 'n' + n + '|' + pref;
+  if (domCache[k] === sig) return;
+  domCache[k] = sig;
+  box.querySelector('.cnt').textContent = n;
+  box.classList.toggle('locked', n <= 0);
+  if (kind && pref) {
+    const ic = box.querySelector('.ic2');
+    if (ic) ic.textContent = itemIcon(pref);
+  }
+}
 function updateHotbar(now) {
-  const acts = classActiveIds();
-  const ids = [acts[0], acts[1], 'heal'];
-  [['hb1', 0], ['hb2', 1], ['hb3', 2]].forEach(([el, i]) => {
+  const ids = [1, 2, 3, 4, 5].map(boundId);
+  [['hb1', 0], ['hb2', 1], ['hb3', 2], ['hb4', 3], ['hb5', 4]].forEach(([el, i]) => {
     const box = $(el);
+    if (!box) return;
     const id = ids[i];
     const nm = box.querySelector('.nm'), ic = box.querySelector('.ic2'), cdEl = box.querySelector('.cd');
     if (!id) { nm.textContent = '-'; ic.textContent = '?'; return; }
-    const def = SKILLS[id];
+    const def = skillDef(id);
     const k = 'hb' + el;
-    const locked = skillLv(id) < 1;
+    const locked = !hasSkill(id);
     const remain = (skillCdUntil[id] || 0) - now;
     const cdSec = remain > 0 && !locked ? Math.ceil(remain / 1000) : 0;
     const sig = `${id}|${locked}|${cdSec}`;
@@ -5251,6 +5951,8 @@ function updateHotbar(now) {
       cdEl.textContent = cdSec;
     } else cdEl.style.display = 'none';
   });
+  setPot('hbHp', potCount('hp'), 'hp');
+  setPot('hbMp', potCount('mp'), 'mp');
 }
 
 /* ================= 입력 ================= */
@@ -5379,6 +6081,8 @@ function togglePanel(id) {
     el.classList.add('open');
     if (id === 'shopPanel') renderShop();
     if (id === 'questPanel') renderQuests();
+    if (id === 'treePanel') renderTree();
+    if (id === 'dexPanel') renderDex();
   }
 }
 const rb2 = $('reviveBtn');
@@ -5439,6 +6143,41 @@ document.querySelectorAll('#mobileBar [data-mb]').forEach(b => b.onclick = () =>
 $('hb1').onclick = () => useSkill(1);
 $('hb2').onclick = () => useSkill(2);
 $('hb3').onclick = () => useSkill(3);
+$('hb4').onclick = () => useSkill(4);
+$('hb5').onclick = () => useSkill(5);
+$('hbHp').onclick = () => usePotion('hp');
+$('hbMp').onclick = () => usePotion('mp');
+for (const [hbId, kind] of [['hbHp', 'hp'], ['hbMp', 'mp']]) {
+  const box = $(hbId);
+  box.ondragover = e => e.preventDefault();
+  box.ondrop = e => {
+    e.preventDefault();
+    const src = e.dataTransfer.getData('text/plain');
+    if (!src || !meRef) return;
+    const [bid] = splitStack(src);
+    const it = getItem(bid);
+    if ((kind === 'hp' && !it.heal) || (kind === 'mp' && !it.mana) || it.scroll) { toast('🧪 여기에 둘 수 없는 아이템입니다'); return; }
+    updateDoc(meRef, { [`potPref.${kind}`]: bid }).catch(() => {});
+    me.potPref = { ...(me.potPref || {}), [kind]: bid };
+    toast(`${kind === 'hp' ? '🧪' : '💧'} 퀵슬롯 지정: ${it.name}`);
+    sfx('click');
+  };
+}
+$('bulkSellBtn').onclick = e => { e.stopPropagation(); sfx('click'); toggleBulkMenu(); };
+document.querySelectorAll('#dockL [data-p]').forEach(b => b.onclick = () => {
+  sfx('click');
+  const k = b.dataset.p;
+  if (k === 'invPanel') toggleInv();
+  else if (k === 'worldMap') toggleWorldMap();
+  else if (k === 'chat') toggleChat();
+  else togglePanel(k);
+});
+$('modalDim').onclick = () => {
+  document.querySelectorAll('.sidepanel').forEach(p => p.classList.remove('open'));
+  $('invPanel').classList.remove('open');
+  $('worldMap').classList.remove('open');
+  closeEnhMenu(); closeEnhModal();
+};
 document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => $(b.dataset.close).classList.remove('open'));
 
 addEventListener('keydown', e => {
@@ -5459,6 +6198,12 @@ addEventListener('keydown', e => {
   if (e.code === 'Digit1') useSkill(1);
   if (e.code === 'Digit2') useSkill(2);
   if (e.code === 'Digit3') useSkill(3);
+  if (e.code === 'Digit4') useSkill(4);
+  if (e.code === 'Digit5') useSkill(5);
+  if (e.code === 'Digit6') usePotion('hp');
+  if (e.code === 'Digit7') usePotion('mp');
+  if (e.code === 'KeyT') { sfx('click'); toggleTree(); }
+  if (e.code === 'KeyL') toggleChat();
   if (e.code === 'KeyI') toggleInv();
   if (e.code === 'KeyB') { sfx('click'); togglePanel('shopPanel'); }
   if (e.code === 'KeyQ') { sfx('click'); togglePanel('questPanel'); }
@@ -5582,6 +6327,19 @@ function stageMode() {
   ];
   for (const s of stageSims) { s.x = s.homeX; s.y = s.homeY; s.movingF = true; s.dirA = Math.PI / 2; }
   for (const s of stageSims) s.map = myMap(); /* 클릭 판정(simAt)용 맵 통일 */
+  if (new URLSearchParams(location.search).get('bag')) {
+    me.inv = { 0: 'sword_wood', 1: 'sword_iron+2~112', 2: 'armor_plate', 3: 'potion*5', 4: 'scroll_normal*2', 5: 'ring_shadow', 6: 'crown_gold', 7: 'boots_wind~93', 8: 'potion_hi*3' };
+    me.equipped = { weapon: 'sword_flame', armor: 'armor_leather', helmet: 'cap_leather' };
+    renderInvUI();
+    $('invPanel').classList.add('open');
+  }
+  if (new URLSearchParams(location.search).get('panel') === 'tree') {
+    me.gold = 5000; me.lv = 10;
+    me.tree = { warrior_t1_01: true, warrior_t1_02: true, warrior_t1_03: true };
+    me.binds = { 1: 'power_strike', 2: 'whirlwind', 3: 'heal' };
+    renderTree();
+    $('treePanel').classList.add('open');
+  }
   sims = stageSims; /* 클릭 판정(simAt)이 스테이지 몬스터를 볼 수 있게 */
   ready = true; /* 입력 핸들러 테스트용 (메인 루프는 __stage 가드로 정지 유지) */
   window.__stageApi = { get dest() { return dest; }, get attackTarget() { return attackTargetSimId; } };
@@ -5660,6 +6418,29 @@ requestAnimationFrame(loop);
     if (loopErrMsg !== lastLoopErr) { lastLoopErr = loopErrMsg; console.error('[loop]', err); toast('⚠️ 렌더 오류: ' + esc(loopErrMsg)); }
   }
 }
+/* 중앙 모달 + 일시정지 (독/ESC 등 모든 토글은 MutationObserver가 자동 감지) */
+let paused = false, pauseStart = 0, chatVisible = true;
+function syncModal() {
+  const open = !!document.querySelector('#invPanel.open,.sidepanel.open,#worldMap.open,#enhModal,#enhMenu');
+  const dim = $('modalDim');
+  if (dim) dim.classList.toggle('on', open);
+  document.querySelectorAll('#dockL [data-p]').forEach(b => {
+    const id = b.dataset.p;
+    if (id === 'chat') { b.classList.toggle('on', chatVisible); return; }
+    const el = document.getElementById(id);
+    b.classList.toggle('on', !!(el && el.classList.contains('open')));
+  });
+  if (open && !paused) { paused = true; pauseStart = Date.now(); }
+  else if (!open && paused) {
+    paused = false;
+    const d = Date.now() - pauseStart;
+    for (const k in skillCdUntil) skillCdUntil[k] = (skillCdUntil[k] || 0) + d;
+    if (me.deadUntil) me.deadUntil += d;
+  }
+}
+if (typeof MutationObserver !== 'undefined') new MutationObserver(() => { try { syncModal(); } catch (e) {} }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['class'], childList: true });
+function toggleChat() { chatVisible = !chatVisible; $('chatBox').style.display = chatVisible ? '' : 'none'; syncModal(); }
+function toggleTree() { togglePanel('treePanel'); if ($('treePanel').classList.contains('open')) renderTree(); }
 function loopBody(t) {
   const now = Date.now();
   const dt = Math.min(50, t - lastT);
@@ -5681,6 +6462,7 @@ function loopBody(t) {
   if (!Number.isFinite(me.vy)) me.vy = 0;
   if (!Number.isFinite(me.stepPh)) me.stepPh = 0;
   if (!Number.isFinite(dustT)) dustT = 0;
+  if (paused) { updateHUD(); updateHotbar(now); draw(now); return; } /* 모달 열림: 렌더만, 로직 정지 */
   let moved = false;
   const frozen = now < hitStopUntil;
   const wmUp = worldMapOpen();
@@ -5691,7 +6473,7 @@ function loopBody(t) {
     if (keys.KeyS || keys.ArrowDown) dy += 1;
     if (keys.KeyA || keys.ArrowLeft) dx -= 1;
     if (keys.KeyD || keys.ArrowRight) dx += 1;
-    const maxSpd = moveSpd();
+    const maxSpd = moveSpd() * (Date.now() < (me.atkSlowUntil || 0) ? .45 : 1); /* 타격 직후 감속 */
     if (dx || dy) {
       dest = null; attackTargetSimId = null;
       const len = Math.hypot(dx, dy);
@@ -5800,6 +6582,7 @@ if (meRef) updateDoc(meRef, { x: me.x, y: me.y, hp: me.hp, ...(me.mp != null ? {
   updateHotbar(now);
   if ($('shopPanel').classList.contains('open')) renderShopThrottled();
   if ($('questPanel').classList.contains('open')) renderQuestsThrottled();
+  if ($('treePanel') && $('treePanel').classList.contains('open')) renderTreeThrottled();
   if (SCENE3D && !sceneFailed) updateScene3D(now, dt);
   else draw(now);
 }

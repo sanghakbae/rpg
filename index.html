@@ -107,9 +107,14 @@
   .islot { aspect-ratio: 1; background: rgba(255,255,255,.06); border: 1px solid #444; border-radius: 6px;
     display: flex; align-items: center; justify-content: center; cursor: pointer; position: relative; }
   .islot:hover { border-color: #ffd700; }
-  .islot .ic { font-size: 21px; font-weight: bold; pointer-events: none; }
-  .islot .scnt { position: absolute; top: 2px; right: 4px; font-size: 14px; font-weight: bold; color: #ffd700;
-    text-shadow: 0 1px 2px #000, 0 0 5px rgba(0,0,0,.9); pointer-events: none; }
+  .islot .ic { width: 46px; height: 46px; object-fit: contain; font-size: 34px; line-height: 46px; text-align: center; font-weight: bold; pointer-events: none; image-rendering: pixelated; }
+  .islot .scnt { position: absolute; top: 2px; right: 4px; font-size: 16px; font-weight: bold; color: #ffd700;
+    text-shadow: 0 1px 2px #000, 0 0 6px rgba(0,0,0,.9); pointer-events: none; }
+  .eslot .eic { width: 26px; height: 26px; object-fit: contain; image-rendering: pixelated; pointer-events: none; }
+  .eslot .enm { font-size: 10.5px; pointer-events: none; }
+  #itemTip { position: fixed; z-index: 120; display: none; max-width: 255px; padding: 10px 12px; background: rgba(8,12,20,.96);
+    border: 1px solid rgba(255,215,0,.35); border-radius: 8px; color: #ddd; font-size: 12px; line-height: 1.6;
+    pointer-events: none; box-shadow: 0 6px 24px rgba(0,0,0,.6); }
 
   /* 인벤 섹션 접기 */
   #invPanel h3.tog { cursor: pointer; }
@@ -157,6 +162,33 @@
   .qbar div { height: 100%; background: #27ae60; }
   .qdone .st { text-decoration: line-through; color: #7fa; }
 
+  /* 좌측 아이콘 독 + 중앙 모달 */
+  #dockL { position: fixed; left: 10px; top: 50%; transform: translateY(-50%); z-index: 60; display: flex; flex-direction: column; gap: 8px; }
+  #dockL button { width: 46px; height: 46px; font-size: 22px; background: rgba(10,14,22,.9); border: 1px solid rgba(255,255,255,.18); border-radius: 10px; color: #ddd; transition: all .12s; }
+  #dockL button:hover { border-color: #ffd700; transform: scale(1.08); }
+  #dockL button.on { border-color: #ffd700; box-shadow: 0 0 10px rgba(255,215,0,.45); }
+  #modalDim { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 40; display: none; }
+  #modalDim.on { display: block; }
+  #invPanel.open, .sidepanel.open { left: 50% !important; top: 50% !important; transform: translate(-50%,-50%); z-index: 58; }
+  #invPanel.open { width: min(560px, 94vw); max-height: 86vh; }
+  .sidepanel.open { width: min(360px, 94vw); max-height: 86vh; }
+  #worldMap.open { z-index: 60; }
+  #deadOv { z-index: 65 !important; }
+  .tTier { color: #ffd700; font-size: 12px; font-weight: bold; margin: 10px 2px 6px; letter-spacing: 1px; }
+  .tTier span { color: #889; font-weight: normal; font-size: 10.5px; }
+  .tGrid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+  .tnode { background: rgba(255,255,255,.05); border: 1px solid #445; border-radius: 6px; padding: 6px 2px; text-align: center; cursor: pointer; }
+  .tnode .ti { font-size: 20px; }
+  .tnode .tn { font-size: 9px; color: #cdd; margin-top: 2px; line-height: 1.3; min-height: 24px; }
+  .tnode .tc { font-size: 9px; color: #ffd700; margin-top: 2px; }
+  .tnode.owned { border-color: #2ecc71; }
+  .tnode.owned .tc { color: #2ecc71; }
+  .tnode.lock { opacity: .45; }
+  .bindrow { display: flex; gap: 3px; margin-top: 4px; justify-content: center; }
+  .bindrow button { padding: 2px 6px; font-size: 10px; background: #2b3547; color: #9fd; border-radius: 4px; }
+  .bindrow button.cur { background: #c9a227; color: #fff; }
+  .hslot.pot { width: 44px; position: relative; }
+  .hslot .cnt { position: absolute; bottom: 2px; right: 4px; font-size: 10px; font-weight: bold; color: #ffd700; text-shadow: 0 1px 2px #000; }
   #minimap { position: fixed; top: 12px; right: 12px; z-index: 10; opacity: .92; cursor: pointer; }
   #onlineCnt { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 10; padding: 5px 14px; font-size: 12px; color: #9fd; }
 
@@ -187,6 +219,7 @@
 
   /* 가방 개수 + 플래시 */
   #bagCount { float: right; color: #ffd700; }
+  #bulkSellBtn { font-size: 10px; padding: 2px 8px; margin-left: 6px; background: linear-gradient(#c9a227,#8f6f14); color: #fff; border-radius: 4px; }
   #invPanel.flash { animation: invflash 1s ease-out; }
   @keyframes invflash { 0% { box-shadow: 0 0 0 3px #ffd700, 0 0 24px rgba(255,215,0,.8); } 100% { box-shadow: none; } }
 
@@ -284,28 +317,29 @@
     #statPtsRow { font-size: 10.5px; gap: 3px; }
     .stbtn { padding: 2px 5px; font-size: 9.5px; }
 
-    /* 하단 액션 바 */
-    #mobileBar { display: flex; position: fixed; bottom: 0; left: 0; right: 0;
-      height: calc(54px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom);
-      background: rgba(10,14,22,.96); border-top: 1px solid rgba(255,255,255,.13); z-index: 40;
-      align-items: stretch; }
+    /* 하단 액션 바 → 좌측 독으로 대체 */
+    #mobileBar { display: none !important; }
     #mobileBar button { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
       gap: 1px; font-size: 18px; color: #9fb0c8; background: none; border: none; border-right: 1px solid rgba(255,255,255,.07); }
     #mobileBar button:last-child { border-right: none; }
     #mobileBar button span { font-size: 9.5px; letter-spacing: 1px; }
     #mobileBar button:active { background: rgba(255,215,0,.12); }
 
-    /* 핫바: 우측 하단(액션바 위) */
-    #hotbar { left: auto; right: 6px; transform: none; bottom: calc(62px + env(safe-area-inset-bottom)); gap: 8px; z-index: 35; }
-    .hslot { width: 48px; height: 48px; }
+    /* 핫바: 하단 중앙 (스킬5+물약2) */
+    #hotbar { left: 50%; right: auto; transform: translateX(-50%); bottom: calc(8px + env(safe-area-inset-bottom)); gap: 6px; z-index: 35; }
+    .hslot { width: 40px; height: 40px; }
+    .hslot.pot { width: 34px; height: 34px; }
 
     /* 미니맵/카운터: HUD 바로 아래(--hudB 추적), 랭킹은 숨김 */
     #minimap { width: 90px; height: 68px; top: calc(var(--hudB, 150px) + 4px); right: 6px; opacity: .85; }
     #onlineCnt { top: calc(var(--hudB, 150px) + 4px); left: 6px; transform: none; }
     #rankPanel { display: none; }
 
-    /* 채팅: 액션바 위, 핫바 열 비워둠 — 터치엔 hover가 없으니 항상 불투명 */
-    #chatBox { left: 6px; width: calc(100vw - 116px); bottom: calc(60px + env(safe-area-inset-bottom)); opacity: 1; }
+    /* 채팅: 핫바 위 — 터치엔 hover가 없으니 항상 불투명 */
+    #chatBox { left: 6px; width: calc(100vw - 12px); bottom: calc(56px + env(safe-area-inset-bottom)); opacity: 1; }
+    #dockL { left: 6px; gap: 6px; }
+    #dockL button { width: 42px; height: 42px; font-size: 20px; }
+    #deadOv { z-index: 65 !important; }
     #chatLog { height: 64px; }
 
     /* 가방 = 하단 시트 (열림/닫힘 display 규칙은 기본 규칙 공용) */
@@ -359,10 +393,21 @@
   </div><!-- /hudDetail -->
 </div>
 
+<div id="dockL">
+  <button data-p="invPanel" title="가방 [I]">🎒</button>
+  <button data-p="shopPanel" title="스킬샵 [B]">⚔</button>
+  <button data-p="treePanel" title="스킬트리 [T]">🌳</button>
+  <button data-p="questPanel" title="퀘스트 [Q]">📜</button>
+  <button data-p="worldMap" title="세계지도 [V]">🗺</button>
+  <button data-p="dexPanel" title="도감 [C]">📖</button>
+  <button data-p="chat" title="채팅 [L]">💬</button>
+</div>
+<div id="modalDim"></div>
+
 <div id="invPanel" class="panel">
   <h3 class="tog" data-tog="equipGrid">장비 [클릭: 해제] <span class="arr">▾</span></h3>
   <div id="equipGrid"></div>
-  <h3 class="tog" data-tog="invGrid">가방 [클릭: 장착/사용] <span id="bagCount">0/18</span> <span class="arr">▾</span></h3>
+  <h3 class="tog" data-tog="invGrid">가방 [클릭: 장착/사용] <span id="bagCount">0/18</span> <button id="bulkSellBtn">등급판매</button> <span class="arr">▾</span></h3>
   <div id="invGrid"></div>
 </div>
 
@@ -376,10 +421,19 @@
   <div class="spbody" id="questBody"></div>
 </div>
 
+<div id="treePanel" class="sidepanel panel">
+  <header><b>🌳 스킬 트리</b><button data-close="treePanel">✕</button></header>
+  <div class="spbody" id="treeBody"></div>
+</div>
+
 <div id="hotbar">
   <div class="hslot panel" id="hb1"><span class="key">1</span><span class="ic2">✦</span><span class="nm">-</span><div class="cd" style="display:none"></div></div>
   <div class="hslot panel" id="hb2"><span class="key">2</span><span class="ic2">✦</span><span class="nm">-</span><div class="cd" style="display:none"></div></div>
   <div class="hslot panel" id="hb3"><span class="key">3</span><span class="ic2">💚</span><span class="nm">회복술</span><div class="cd" style="display:none"></div></div>
+  <div class="hslot panel" id="hb4"><span class="key">4</span><span class="ic2">✦</span><span class="nm">-</span><div class="cd" style="display:none"></div></div>
+  <div class="hslot panel" id="hb5"><span class="key">5</span><span class="ic2">✦</span><span class="nm">-</span><div class="cd" style="display:none"></div></div>
+  <div class="hslot panel pot" id="hbHp" title="드래그로 물약 지정"><span class="key">6</span><span class="ic2">🧪</span><span class="nm">체력</span><span class="cnt">0</span><div class="cd" style="display:none"></div></div>
+  <div class="hslot panel pot" id="hbMp" title="드래그로 물약 지정"><span class="key">7</span><span class="ic2">💧</span><span class="nm">마나</span><span class="cnt">0</span><div class="cd" style="display:none"></div></div>
 </div>
 
 <div id="mobileBar">
@@ -401,8 +455,8 @@
   <b>❓ 조작법</b>
   <div class="hbody">
     <b>이동</b> WASD/화살표/빈 곳 클릭<br>
-    <b>공격</b> Space/몬스터 더블클릭 · <b>스킬</b> 1·2·3<br>
-    <b>가방</b> I · <b>샵</b> B · <b>퀘스트</b> Q<br>
+    <b>공격</b> Space/몬스터 더블클릭 · <b>스킬</b> 1~5 · <b>물약</b> 6·7<br>
+    <b>창</b> 왼쪽 아이콘 · <b>채팅</b> Enter/L<br>
     루팅은 아이템에 접근 시 자동
   </div>
 </div>
@@ -481,7 +535,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=44"
+<script type="module" src="game.js?v=50"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

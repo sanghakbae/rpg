@@ -34,7 +34,7 @@
   /* 스테이지 모드(?stage=1): 정적 게임 UI 숨김 */
   body.staging #hud, body.staging #invPanel, body.staging #chatBox, body.staging #hotbar, body.staging #mobileBar,
   body.staging #minimap, body.staging #onlineCnt, body.staging #rankPanel, body.staging #help, body.staging #footer,
-  body.staging #toasts, body.staging #bossAlert, body.staging #shopPanel, body.staging #questPanel,
+  body.staging #dockL, body.staging #toasts, body.staging #bossAlert, body.staging #shopPanel, body.staging #questPanel,
   body.staging #dexPanel, body.staging #deadOv, body.staging #worldMap { display: none !important; }
   #googleLoginBtn { display: flex; align-items: center; padding: 13px 34px; font-size: 16px; font-weight: bold;
     background: #fff; color: #3c4043; border-radius: 8px; }
@@ -65,13 +65,13 @@
     background: #000; color: #888; z-index: 99; font-size: 15px; white-space: pre-line; text-align: center; padding: 20px; }
 
   /* ===== HUD ===== */
-  #hud { position: fixed; top: 12px; left: 12px; width: 525px; padding: 9px 14px 10px; z-index: 10; font-size: 15px; opacity: .92; }
+  #hud { position: fixed; top: 12px; left: 12px; width: min(300px, 26vw); padding: 9px 14px 10px; z-index: 10; font-size: 15px; opacity: .92; }
   #hud:hover { opacity: 1; }
   #hud .toprow { display: flex; align-items: baseline; gap: 8px; margin-bottom: 5px; cursor: pointer; }
   #hud .toprow .arr { color: #778; font-size: 12px; display: inline-block; transition: transform .15s; }
-  #hudLogout { display: none; background: none; border: none; font-size: 14px; padding: 0 6px; cursor: pointer; opacity: .8; } /* 모바일 전용 — 데스크톱은 btnRow의 🚪 사용 */
+  #hudLogout { display: inline-block; background: none; border: none; font-size: 14px; padding: 0 6px; cursor: pointer; opacity: .8; } /* HUD 상단 로그아웃 (하단 독과 중복되던 btnRow 제거 후 유일한 로그아웃) */
   #hud.mini .toprow .arr { transform: rotate(-90deg); }
-  #hud.mini #hudDetail { display: none; } /* 접힘: 레벨/이름/HP만 남김 */
+  #hud.mini #hudDetail { display: none; } /* 접힘: 레벨/이름/HP/MP만 남김 */
   #hud .lv { color: #ffd700; font-size: 24px; font-weight: bold; }
   #hud .cls { font-size: 13px; color: #7fc7ff; }
   #hud .name { color: #fff; flex: 1; overflow: hidden; text-overflow: ellipsis; }
@@ -86,10 +86,6 @@
   #stats { color: #aaa; font-size: 14px; line-height: 1.55; }
   #stats b { color: #eee; }
   #goldRow { margin-top: 5px; padding-top: 5px; border-top: 1px solid #333; color: #ffd700; font-weight: bold; }
-  #btnRow { display: flex; gap: 7px; margin-top: 7px; }
-  #btnRow button { flex: 1; padding: 7px 0; font-size: 13px; font-weight: bold; white-space: nowrap;
-    background: linear-gradient(#c9a227, #8f6f14); color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.5); }
-  #btnRow button:hover { filter: brightness(1.18); }
 
   /* 인벤토리 */
   /* --hudB: JS(uiInsets)가 HUD 실측 높이(px)로 갱신하는 CSS 변수 */
@@ -97,21 +93,21 @@
     display: none; max-height: calc(100vh - var(--hudB, 372px) - 24px); overflow-y: auto; }
   #invPanel.open { display: block; }
   #invPanel h3 { font-size: 13px; color: #888; margin: 2px 0 8px 2px; letter-spacing: 1px; }
-  #equipGrid { display: grid; grid-template-columns: repeat(3, 76px); justify-content: center; gap: 10px; margin-bottom: 10px; }
+  #equipGrid { display: grid; grid-template-columns: repeat(3, minmax(120px, 210px)); justify-content: center; gap: 16px; margin-bottom: 16px; }
   .eslot { aspect-ratio: 1; background: rgba(255,255,255,.05); border: 1px dashed #555; border-radius: 6px;
            display: flex; flex-direction: column; align-items: center; justify-content: center;
-           font-size: 12px; cursor: pointer; text-align: center; line-height: 1.25; overflow: hidden; padding: 0 3px; }
-  .eslot .slbl { font-size: 9.5px; color: #667; letter-spacing: 1px; }
+           font-size: 15px; cursor: pointer; text-align: center; line-height: 1.3; overflow: hidden; padding: 0 6px; gap: 4px; }
+  .eslot .slbl { font-size: 13px; color: #778; letter-spacing: 1px; }
   .eslot:hover { border-color: #ffd700; }
-  #invGrid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+  #invGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(58px, 1fr)); gap: 6px; }
   .islot { aspect-ratio: 1; background: rgba(255,255,255,.06); border: 1px solid #444; border-radius: 6px;
     display: flex; align-items: center; justify-content: center; cursor: pointer; position: relative; }
   .islot:hover { border-color: #ffd700; }
-  .islot .ic { width: 46px; height: 46px; object-fit: contain; font-size: 34px; line-height: 46px; text-align: center; font-weight: bold; pointer-events: none; image-rendering: pixelated; }
-  .islot .scnt { position: absolute; top: 2px; right: 4px; font-size: 16px; font-weight: bold; color: #ffd700;
+  .islot .ic { width: 32px; height: 32px; object-fit: contain; font-size: 24px; line-height: 32px; text-align: center; font-weight: bold; pointer-events: none; image-rendering: pixelated; }
+  .islot .scnt { position: absolute; top: 1px; right: 3px; font-size: 12px; font-weight: bold; color: #ffd700;
     text-shadow: 0 1px 2px #000, 0 0 6px rgba(0,0,0,.9); pointer-events: none; }
-  .eslot .eic { width: 26px; height: 26px; object-fit: contain; image-rendering: pixelated; pointer-events: none; }
-  .eslot .enm { font-size: 10.5px; pointer-events: none; }
+  .eslot .eic { width: 64px; height: 64px; object-fit: contain; image-rendering: pixelated; pointer-events: none; }
+  .eslot .enm { font-size: 13px; pointer-events: none; }
   #itemTip { position: fixed; z-index: 120; display: none; max-width: 255px; padding: 10px 12px; background: rgba(8,12,20,.96);
     border: 1px solid rgba(255,215,0,.35); border-radius: 8px; color: #ddd; font-size: 12px; line-height: 1.6;
     pointer-events: none; box-shadow: 0 6px 24px rgba(0,0,0,.6); }
@@ -129,7 +125,7 @@
     width: min(330px, 90vw); box-shadow: 0 10px 40px rgba(0,0,0,.7); font-size: 14px; color: #ccd; line-height: 1.6; }
 
   /* 핫바 */
-  #hotbar { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; z-index: 10; }
+  #hotbar { position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; z-index: 10; }
   .hslot { width: 58px; height: 58px; position: relative; border-radius: 9px; text-align: center;
     display: flex; flex-direction: column; align-items: center; justify-content: center; }
   .hslot .key { position: absolute; top: 3px; left: 6px; font-size: 10px; color: #888; }
@@ -146,6 +142,27 @@
   .sidepanel header { display: flex; align-items: center; padding: 10px 14px; border-bottom: 1px solid #333; }
   .sidepanel header b { flex: 1; color: #ffd700; font-size: 15px; letter-spacing: 2px; }
   .sidepanel header button { background: none; color: #888; font-size: 16px; }
+  .sidepanel header .hgold { color: #ffd700; font-size: 14px; font-weight: bold; margin-right: 12px; }
+  /* 스킬 → 퀵슬롯 드래그 */
+  .srow:has([data-bind]), .tnode:has([data-bind]) { cursor: grab; }
+  #dragGhost { position: fixed; z-index: 200; display: none; width: 52px; height: 52px; margin: -26px 0 0 -26px; border-radius: 12px;
+    align-items: center; justify-content: center; font-size: 30px; background: rgba(10,14,22,.92); border: 2px solid #ffd700;
+    box-shadow: 0 6px 20px rgba(0,0,0,.6); pointer-events: none; }
+  body.skilldrag #hotbar { z-index: 70; } /* 모달 딤 위로 끌어올려 놓을 수 있게 */
+  body.skilldrag .hslot:not(.pot) { border-color: rgba(255,215,0,.55); }
+  .hslot.dropok { border-color: #ffd700 !important; box-shadow: 0 0 14px rgba(255,215,0,.8); transform: scale(1.08); }
+  body.skilldrag { user-select: none; -webkit-user-select: none; }
+  /* 퀵슬롯 클릭 → 배운 스킬 선택 팝오버 */
+  #slotPick { position: fixed; z-index: 80; display: none; flex-direction: column; gap: 4px; padding: 8px; min-width: 190px;
+    background: rgba(10,14,22,.96); border: 1px solid rgba(255,215,0,.45); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.7); }
+  #slotPick.open { display: flex; }
+  #slotPick .spt { color: #ffd700; font-size: 11.5px; letter-spacing: 1px; margin: 0 2px 4px; }
+  #slotPick button { display: flex; align-items: center; gap: 8px; padding: 7px 10px; background: rgba(255,255,255,.05); color: #ddd; font-size: 13px; text-align: left; }
+  #slotPick button:hover { background: rgba(255,215,0,.12); }
+  #slotPick button.cur { border: 1px solid #ffd700; }
+  #slotPick button .spi { font-size: 18px; width: 22px; text-align: center; }
+  #slotPick .spn { color: #667; font-size: 11.5px; padding: 6px 10px; }
+  .hslot:not(.pot) { cursor: pointer; }
   .spbody { overflow-y: auto; padding: 8px; }
   .spbody::-webkit-scrollbar { width: 5px; } .spbody::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
   .srow { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 7px; margin-bottom: 6px; background: rgba(255,255,255,.04); }
@@ -163,20 +180,24 @@
   .qdone .st { text-decoration: line-through; color: #7fa; }
 
   /* 좌측 아이콘 독 + 중앙 모달 */
-  #dockL { position: fixed; left: 10px; top: 50%; transform: translateY(-50%); z-index: 60; display: flex; flex-direction: column; gap: 8px; }
-  #dockL button { width: 46px; height: 46px; font-size: 22px; background: rgba(10,14,22,.9); border: 1px solid rgba(255,255,255,.18); border-radius: 10px; color: #ddd; transition: all .12s; }
+  /* 메뉴 독: 핫바 바로 위 가로 한 줄 (좌측 세로 배치는 HUD·채팅과 겹쳐서 하단 스택으로 통일) */
+  #dockL { position: fixed; left: 50%; transform: translateX(-50%); bottom: 96px; z-index: 60;
+    display: flex; flex-direction: row; justify-content: center; gap: 12px; }
+  #dockL button { width: 69px; height: 69px; font-size: 33px; background: rgba(10,14,22,.9); border: 1px solid rgba(255,255,255,.18); border-radius: 15px; color: #ddd; transition: all .12s; }
   #dockL button:hover { border-color: #ffd700; transform: scale(1.08); }
   #dockL button.on { border-color: #ffd700; box-shadow: 0 0 10px rgba(255,215,0,.45); }
   #modalDim { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 40; display: none; }
   #modalDim.on { display: block; }
   #invPanel.open, .sidepanel.open { left: 50% !important; top: 50% !important; transform: translate(-50%,-50%); z-index: 58; }
-  #invPanel.open { width: min(560px, 94vw); max-height: 86vh; }
-  .sidepanel.open { width: min(360px, 94vw); max-height: 86vh; }
+  #invPanel.open, .sidepanel.open { width: 90vw; height: 90vh; max-height: 90vh; overflow-y: auto; }
   #worldMap.open { z-index: 60; }
   #deadOv { z-index: 65 !important; }
   .tTier { color: #ffd700; font-size: 12px; font-weight: bold; margin: 10px 2px 6px; letter-spacing: 1px; }
   .tTier span { color: #889; font-weight: normal; font-size: 10.5px; }
-  .tGrid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+  .tGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+  #treeBody { column-count: 2; column-gap: 18px; } /* 티어 섹션을 좌우 2열로 — 아래로만 길어지지 않게 */
+  #treeBody > * { break-inside: avoid; }
+  .tnode .ti { font-size: 26px; } .tnode .tn { font-size: 11px; min-height: 28px; } .tnode .tc { font-size: 10.5px; }
   .tnode { background: rgba(255,255,255,.05); border: 1px solid #445; border-radius: 6px; padding: 6px 2px; text-align: center; cursor: pointer; }
   .tnode .ti { font-size: 20px; }
   .tnode .tn { font-size: 9px; color: #cdd; margin-top: 2px; line-height: 1.3; min-height: 24px; }
@@ -193,7 +214,7 @@
   #onlineCnt { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 10; padding: 5px 14px; font-size: 12px; color: #9fd; }
 
   /* 채팅: 평소엔 반투명, 마우스 올리거나 입력 중일 때만 또렷하게 */
-  #chatBox { position: fixed; left: 12px; bottom: 12px; width: 380px; z-index: 10; opacity: .5; transition: opacity .2s; }
+  #chatBox { position: fixed; left: 12px; bottom: 26px; width: 380px; z-index: 10; opacity: .5; transition: opacity .2s; } /* 좌측 하단 — 독은 하단 중앙이라 안 겹침 */
   #chatBox:hover, #chatBox:focus-within { opacity: 1; }
   #chatLog { height: 100px; overflow-y: auto; padding: 8px 10px; font-size: 12px; line-height: 1.55; }
   #chatLog::-webkit-scrollbar { width: 5px; } #chatLog::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
@@ -202,7 +223,7 @@
   #chatInput { width: 100%; background: rgba(0,0,0,.6); border: none; border-top: 1px solid #333; color: #eee;
     padding: 8px 10px; font-size: 13px; outline: none; border-radius: 0 0 8px 8px; }
 
-  #help { position: fixed; bottom: 86px; right: 12px; z-index: 9; padding: 8px 12px; font-size: 11px; color: #999; line-height: 1.7; }
+  #help { position: fixed; bottom: 26px; right: 12px; z-index: 9; padding: 8px 12px; font-size: 11px; color: #999; line-height: 1.7; } /* 우측 하단 */
   #help b { color: #ccc; }
   #help .hbody { display: none; }
   #help:hover .hbody { display: block; }
@@ -248,8 +269,7 @@
   #rankPanel { position: fixed; right: 12px; top: 148px; width: 185px; z-index: 10; padding: 9px 11px; }
   #rankPanel h3 { font-size: 11px; color: #aaa; margin-bottom: 6px; letter-spacing: 1px; cursor: pointer; }
   #rankPanel h3 span { float: right; display: flex; gap: 3px; }
-  #dexPanel { width: 360px; }
-  #invBtn.flash { animation: invflash 1s ease-out; } /* 가방이 닫혀 있어도 획득 피드백 */
+  #dockL button.flash { animation: invflash 1s ease-out; } /* 가방이 닫혀 있어도 획득 피드백 */
   #rankPanel.folded #rankList, #rankPanel.folded h3 span { display: none; }
   #rankPanel.folded h3 { margin-bottom: 0; }
   #rankList { font-size: 12px; line-height: 1.9; color: #ddd; }
@@ -272,17 +292,24 @@
   .wmcell.wmcur { background: var(--bc); border: 2px solid #fff; animation: wmpulse 1s infinite; }
   .wmcell.wmlock { background: #15181e; color: #445; cursor: not-allowed; }
   @keyframes wmpulse { 50% { box-shadow: 0 0 10px #fff; } }
-  #wmClose { margin-top: 12px; padding: 8px 22px; background: #2b3547; color: #ccc; border-radius: 6px; font-size: 13px; }
-  #wmClose:hover { background: #3a4a63; color: #fff; }
 
-  .dexrow { padding: 8px 10px; border-radius: 7px; margin-bottom: 6px; background: rgba(255,255,255,.04); border-left: 3px solid #445; }
+  #dexBody { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 8px; align-content: start; } /* 90vw를 채우게 구역 카드를 여러 열로 */
+  #dexBody .dexsum { grid-column: 1 / -1; }
+  .dexrow { padding: 8px 10px; border-radius: 7px; background: rgba(255,255,255,.04); border-left: 3px solid #445; }
   .dexrow.dexconq { border-left-color: #2ecc71; }
   .dexrow.dexcur { border-left-color: #ffd700; background: rgba(255,215,0,.07); }
   .dexpage { color: #fff; font-size: 12.5px; font-weight: bold; margin-bottom: 4px; }
   .dexok { color: #2ecc71; font-size: 10px; margin-left: 6px; }
-  .dexmons { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11px; color: #9ab; }
-  .dexmons .dexboss { color: #ff8a8a; font-weight: bold; }
-  .dexmons .dexuniq { color: #c9a0ff; }
+  .dexmons { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .dexmon { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 4px 6px;
+    background: rgba(255,255,255,.04); border: 1px solid #334; border-radius: 8px; }
+  .dexmon .dexic { width: 72px; height: 72px; object-fit: contain; image-rendering: pixelated; }
+  .dexmon .dexnm { font-size: 12px; color: #dfe; font-weight: bold; }
+  .dexmon .dexlv { font-size: 10.5px; color: #9ab; }
+  .dexmon.seen { border-color: #2ecc71; }
+  .dexmon.unseen .dexic { filter: grayscale(1) brightness(.45); opacity: .7; } /* 미발견: 회색 실루엣 */
+  .dexmon.unseen .dexnm { color: #667; }
+  .dexsum { color: #ffd700; font-size: 12px; margin: 2px 2px 10px; }
 
   /* 푸터 + 개인정보처리방침 */
   #footer { position: fixed; bottom: 0; left: 0; right: 0; height: 20px; z-index: 8;
@@ -306,13 +333,15 @@
   @media (max-width: 640px) {
     body { overflow: hidden; }
     canvas#game { touch-action: none; -webkit-user-select: none; user-select: none; }
-    #hud { width: calc(100vw - 12px); left: 6px; top: calc(6px + env(safe-area-inset-top)); padding: 7px 9px; font-size: 11px; } /* 노치/다이내믹아일랜드 회피 */
+    /* 상단 바: 화면 가로 100% 고정 (좌우 여백·라운드 없이 상단에 밀착, 노치는 안전영역 패딩으로 회피) */
+    #hud { width: 100%; max-width: none; left: 0; right: 0; top: 0;
+      padding: calc(7px + env(safe-area-inset-top)) 10px 8px; font-size: 11px;
+      border-radius: 0; border-top: none; border-left: none; border-right: none; }
     #hud .lv { font-size: 15px; }
     #hud .cls { font-size: 10px; }
     .barwrap { height: 11px; margin-bottom: 2px; border-radius: 6px; }
     .bartext, #mpText, #expText { font-size: 9px; margin-top: -12px; margin-bottom: 2px; }
-    #stats, #btnRow { display: none; }
-    #hudLogout { display: inline-block; } /* 모바일은 btnRow가 숨겨져 로그아웃이 없으므로 HUD 상단에 노출 */
+    #stats { display: none; }
     #goldRow { margin-top: 3px; padding-top: 3px; font-size: 11.5px; }
     #statPtsRow { font-size: 10.5px; gap: 3px; }
     .stbtn { padding: 2px 5px; font-size: 9.5px; }
@@ -326,7 +355,7 @@
     #mobileBar button:active { background: rgba(255,215,0,.12); }
 
     /* 핫바: 하단 중앙 (스킬5+물약2) */
-    #hotbar { left: 50%; right: auto; transform: translateX(-50%); bottom: calc(8px + env(safe-area-inset-bottom)); gap: 6px; z-index: 35; }
+    #hotbar { left: 50%; right: auto; transform: translateX(-50%); bottom: calc(26px + env(safe-area-inset-bottom)); gap: 6px; z-index: 35; }
     .hslot { width: 40px; height: 40px; }
     .hslot.pot { width: 34px; height: 34px; }
 
@@ -336,14 +365,17 @@
     #rankPanel { display: none; }
 
     /* 채팅: 핫바 위 — 터치엔 hover가 없으니 항상 불투명 */
-    #chatBox { left: 6px; width: calc(100vw - 12px); bottom: calc(56px + env(safe-area-inset-bottom)); opacity: 1; }
-    #dockL { left: 6px; gap: 6px; }
-    #dockL button { width: 42px; height: 42px; font-size: 20px; }
+    #chatBox { left: 6px; width: calc(100vw - 12px); bottom: calc(130px + env(safe-area-inset-bottom)); opacity: 1; }
+    /* 좌측 아이콘 → 모바일에서는 스킬창(핫바) 바로 위 가로 한 줄로 배치 */
+    #dockL { left: 0; right: 0; top: auto; bottom: calc(72px + env(safe-area-inset-bottom)); transform: none;
+      flex-direction: row; justify-content: center; gap: 5px; padding: 0 6px; }
+    #dockL button { width: calc((100vw - 52px) / 7); max-width: 52px; height: auto; aspect-ratio: 1;
+      font-size: min(26px, 6.2vw); border-radius: 12px; }
     #deadOv { z-index: 65 !important; }
     #chatLog { height: 64px; }
 
     /* 가방 = 하단 시트 (열림/닫힘 display 규칙은 기본 규칙 공용) */
-    #invPanel { left: 6px; width: calc(100vw - 12px); top: auto; bottom: calc(60px + env(safe-area-inset-bottom));
+    #invPanel { left: 6px; width: calc(100vw - 12px); top: auto; bottom: calc(130px + env(safe-area-inset-bottom));
       max-height: 46vh; z-index: 45; background: rgba(10,14,22,.95); }
 
     #help { display: none; } /* 키보드 조작법은 터치 기기에서 불필요 */
@@ -374,22 +406,14 @@
   </div>
   <div class="barwrap"><div class="bar" id="hpbar"></div></div>
   <div class="bartext" id="hpText"></div>
-  <div id="hudDetail">
   <div class="barwrap"><div class="bar" id="mpbar"></div></div>
   <div class="bartext" id="mpText"></div>
+  <div id="hudDetail">
   <div class="barwrap"><div class="bar" id="expbar"></div></div>
   <div class="bartext" id="expText"></div>
   <div id="stats">공격 <b id="uiAtk"></b> · 방어 <b id="uiDef"></b> · 치명타 <b id="uiCrit"></b>% · 속도 <b id="uiSpd"></b></div>
   <div id="goldRow">💰 <span id="uiGold">0</span> G</div>
   <div id="statPtsRow">✨ 포인트 <b id="uiPts">0</b><span id="stBtns"></span><!-- 직업별 8종 스탯 버튼: JS(renderStatButtons)가 생성 --></div>
-  <div id="btnRow">
-    <button id="invBtn">가방 [I]</button>
-    <button id="shopBtn">스킬샵 [B]</button>
-    <button id="questBtn">퀘스트 [Q]</button>
-    <button id="mapBtn">세계지도 [V]</button>
-    <button id="dexBtn">도감 [C]</button>
-    <button id="logoutBtn" style="background:linear-gradient(#7a3030,#4d1d1d);">🚪</button>
-  </div>
   </div><!-- /hudDetail -->
 </div>
 
@@ -412,7 +436,7 @@
 </div>
 
 <div id="shopPanel" class="sidepanel panel">
-  <header><b>⚔ 스킬 샵</b><button data-close="shopPanel">✕</button></header>
+  <header><b>⚔ 스킬 샵</b><span id="shopGold" class="hgold">💰 0 G</span><button data-close="shopPanel">✕</button></header>
   <div class="spbody" id="shopBody"></div>
 </div>
 
@@ -497,7 +521,6 @@
     <div id="wmInfo"></div>
     <canvas id="wmMap" width="800" height="600"></canvas>
     <div id="wmGrid"></div>
-    <div style="text-align:center;"><button id="wmClose">닫기 [V]</button></div>
   </div>
 </div>
 
@@ -535,7 +558,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=50"
+<script type="module" src="game.js?v=70"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();
@@ -546,7 +569,7 @@
   document.getElementById('privacyModal').addEventListener('click', e => {
     if (e.target.id === 'privacyModal') e.target.classList.remove('open');
   });
-  document.getElementById('wmClose').onclick = () => document.getElementById('worldMap').classList.remove('open');
+  document.getElementById('worldMap').addEventListener('click', e => { if (e.target.id === 'worldMap') e.target.classList.remove('open'); }); /* 배경 클릭 닫기 (버튼 없음 — 독/V 재클릭 토글) */
   try { var m = /game\.js\?v=(\d+)/.exec(document.querySelector('script[type="module"]').src); if (m) document.getElementById('verTag').textContent = 'v' + m[1]; } catch (e) {}
 </script>
 </body>

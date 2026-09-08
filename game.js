@@ -753,7 +753,15 @@ let cam = { x: SPAWN.x, y: SPAWN.y };
 let floats = [], slashes = [], shots = [], rings = [], poofs = [];
 let othersPrev = {}, mePrev = { x: SPAWN.x, y: SPAWN.y }, meMovingNow = false;
 let mouseDown = false, dest = null, attackTargetSimId = null;
-const view = { x: 0, y: 0 };
+const view = { x: 0, y: 0, z: 1 };
+/* 사용자 확대/축소 배율 (핀치·휠). 실제 배율은 draw()에서 화면 채움 배율과 곱해 clamp된다. */
+let userZoom = 1, pinchD0 = 0, pinchZ0 = 1;
+const USER_ZOOM_MIN = .5, USER_ZOOM_MAX = 3;
+function setUserZoom(v) {
+  userZoom = clampN(v, USER_ZOOM_MIN, USER_ZOOM_MAX);
+  try { localStorage.setItem('zoom', String(userZoom)); } catch (e) {}
+}
+try { const z0 = parseFloat(localStorage.getItem('zoom')); if (z0 > 0) userZoom = clampN(z0, USER_ZOOM_MIN, USER_ZOOM_MAX); } catch (e) {}
 let lastAttackAt = 0, lastPosWrite = 0, hurtUntil = 0, picking = false;
 let sentX = -1, sentY = -1, sentHp = -1, sentMp = null;
 let ready = false;
@@ -800,8 +808,7 @@ function toast(html, kind = '') {
   while (box.children.length > 6) box.firstChild.remove();
 }
 function flashInv() {
-  for (const id of ['invPanel', 'invBtn']) { /* 패널이 닫혀 있으면 가방 버튼이 대신 번쩍 */
-    const p = $(id);
+  for (const p of [$('invPanel'), document.querySelector('#dockL [data-p="invPanel"]')]) { /* 패널이 닫혀 있으면 독의 가방 버튼이 대신 번쩍 */
     if (!p) continue;
     p.classList.remove('flash');
     void p.offsetWidth;
@@ -877,24 +884,37 @@ async function ensureWorldM2() {
 function kindByName(name) {
   return Object.values(KINDS).find(k => k.name === name) || KINDS.slime;
 }
+/* 종류(kind) 전용 스프라이트 id — 없으면 베이스 팔레트를 바꿔 등록. 도감 썸네일도 이걸 쓴다 */
+function kindSprId(k) {
+  const sprId = k.base + '::' + k.name;
+  if (!SPRITE_DEFS[sprId]) {
+    const bp = SPRITE_DEFS[k.base].pal;
+    const keys = Object.keys(bp);
+    SPRITE_DEFS[sprId] = { pal: { ...bp, [keys[1]]: k.main, [keys[2]]: k.shade }, rows: SPRITE_DEFS[k.base].rows };
+  }
+  return sprId;
+}
+const mobThumbCache = {};
+function mobThumb(k) {
+  try {
+    const key = kindSprId(k);
+    if (!mobThumbCache[key]) mobThumbCache[key] = buildSprite(key).cv.toDataURL();
+    return mobThumbCache[key];
+  } catch (e) { return ''; }
+}
 function makeSim(id, d) {
   const isPage = (d.page || '').startsWith('p');
   let def, type, sprId;
   if (isPage) {
     const k = kindByName(d.kind || '슬라임');
     type = k.base;
-    sprId = k.base + '::' + k.name;
+    sprId = kindSprId(k);
     /* 구역 스케일링(pageDiff/pageExp)이 적용된 정본 def 사용 — 이전엔 atk/exp/gold가 10으로 하드코딩돼
        전 구역 밸런스가 죽어 있었음. HP도 문서의 (유니크 인플레이션 가능한) maxHp 대신 정본 기준 */
     const pn3 = +(d.page.slice(1)) || 1;
     const pd3 = pageDef(pn3);
     const kk = d.boss ? pd3.boss : (pd3.kinds.find(x => x.name === (d.kind || '')) || pd3.kinds[0]);
     def = { ...kk, maxHp: kk.hp };
-    if (!SPRITE_DEFS[sprId]) {
-      const bp = SPRITE_DEFS[k.base].pal;
-      const keys = Object.keys(bp);
-      SPRITE_DEFS[sprId] = { pal: { ...bp, [keys[1]]: k.main, [keys[2]]: k.shade }, rows: SPRITE_DEFS[k.base].rows };
-    }
   } else {
     def = d.type === 'boss' ? BOSS_DEF : d.type === 'skeleton' ? SKELETON_DEF : d.type === 'lich' ? LICH_DEF : (MONSTER_TYPES[d.type] || MONSTER_TYPES.slime);
     type = d.type || 'slime';
@@ -1218,6 +1238,13 @@ async function handleKill(sim) {
     sysMsg(`★ 유니크 ${d2.name} 처치!`, 'q');
     toast(`★ 유니크 몬스터 처치!`, 'sysq');
   }
+  /* 도감 해금: 처음 잡은 종류를 기록 (맵 통째로 저장 — 이름에 공백이 있어 점 경로를 못 씀) */
+  const dexKey = (sim.kind || d2.name || '').replace(/^★/, '');
+  if (dexKey && !(me.dex || {})[dexKey]) {
+    me.dex = { ...(me.dex || {}), [dexKey]: true };
+    updateDoc(meRef, { dex: me.dex }).catch(() => {});
+    if ($('dexPanel')?.classList.contains('open')) renderDex();
+  }
   sysMsg(`${myName}님이 ${d2.name}을(를) 처치했습니다!${sim.type === 'boss' || sim.type === 'lich' ? ' 👑👑👑' : ''}`);
 }
 
@@ -1456,6 +1483,7 @@ function useSkill(slot) {
 /* ================= 스킬 샵 ================= */
 function renderShop() {
   const body = $('shopBody');
+  const sg = $('shopGold'); if (sg) sg.textContent = `💰 ${(me.gold || 0).toLocaleString()} G`;
   const list = Object.entries(SKILLS).filter(([, d]) => d.cls === myCls || d.cls === 'all');
   let html = list.map(([id, d]) => {
     const lv = skillLv(id);
@@ -1541,9 +1569,14 @@ function buySkill(id) {
     const q = { ...(p.q || {}) };
     q.skills_bought = (q.skills_bought || 0) + 1;
     tx.update(meRef, { gold: p.gold - cost, [`skills.${id}`]: lv + 1, q });
-    return 'ok';
+    return { ok: true, gold: p.gold - cost, lv: lv + 1, q };
   }).then(r => {
-    if (r === 'ok') { sfx('buy'); toast(`✦ ${SKILLS[id].name} 습득!`, 'sysq'); float(me.x, me.y - 34, `${SKILLS[id].name} 습득!`, '#7fe3a0'); renderShop(); }
+    if (r && r.ok) {
+      /* 스냅샷을 기다리지 않고 바로 반영 — 이전엔 골드/레벨/핫바 잠금이 스냅샷 도착까지 옛 값이었음 */
+      me.gold = r.gold; me.skills = { ...(me.skills || {}), [id]: r.lv }; me.q = r.q;
+      sfx('buy'); toast(`✦ ${SKILLS[id].name} 습득!`, 'sysq'); float(me.x, me.y - 34, `${SKILLS[id].name} 습득!`, '#7fe3a0');
+      renderShop(); try { updateHUD(); } catch (e) {}
+    }
     else if (r === 'poor') { float(me.x, me.y - 34, '골드가 부족합니다', '#ff6b6b'); toast('💰 골드가 부족합니다'); }
   }).catch(() => {});
 }
@@ -2117,6 +2150,7 @@ function boundId(slot) {
 }
 function bindSet(slot, id) {
   if (!meRef) return;
+  me.binds = { ...(me.binds || {}), [slot]: id }; /* 즉시 반영 */
   updateDoc(meRef, { [`binds.${slot}`]: id }).catch(() => {});
   toast(`⌨️ ${slot}번에 ${skillDef(id).name} 등록`);
 }
@@ -2840,55 +2874,86 @@ function itemSprite(id) {
 }
 
 const spriteCache = {};
+/* 셀당 서브픽셀 분할 수 — 실루엣 모따기·베벨·외곽선·내부 음영을 원본 셀보다 잘게 그려 디테일을 올린다.
+   sp.w/sp.h는 예전처럼 '셀' 단위로 유지하므로 호출부(스케일·3D 비율)는 그대로 동작한다. */
+const SPR_SUB = 8;
 function buildSprite(name) {
   if (spriteCache[name]) return spriteCache[name];
   const def = SPRITE_DEFS[name];
   const h = def.rows.length;
   const w = Math.max(...def.rows.map(r => r.length));
+  const S = SPR_SUB, cw = w + 2, chh = h + 2; /* 외곽선 여백 1셀 */
   const cv2 = document.createElement('canvas');
-  cv2.width = w + 2; cv2.height = h + 2; /* 외곽선 1px 여백 */
+  cv2.width = cw * S; cv2.height = chh * S;
   const c = cv2.getContext('2d');
-  def.rows.forEach((row, y) => {
+  c.imageSmoothingEnabled = false;
+  const chAt = (y, x) => { const r = def.rows[y]; if (!r) return null; const k = r[x]; return (k && k !== '.' && k !== ' ' && def.pal[k]) ? k : null; };
+  const any = (y, x) => chAt(y, x) !== null;          /* 외곽선 셀('O') 포함 */
+  const body = (y, x) => { const k = chAt(y, x); return !!k && k !== 'O'; };
+  const OL = def.outline || '#14161c';
+  const OW = Math.max(1, Math.round(S * .375));       /* 외곽선 두께: 3/8 셀 */
+
+  /* 1) 셀 본체 + 내부 음영(서브픽셀 그라데이션) + 모서리 모따기 */
+  for (let y = 0; y < h; y++) {
+    const row = def.rows[y] || '';
     for (let x = 0; x < row.length; x++) {
-      const ch = row[x];
-      if (ch === '.' || ch === ' ' || !def.pal[ch]) continue;
-      c.fillStyle = def.pal[ch];
-      c.fillRect(x + 1, y + 1, 1, 1);
-    }
-  });
-  /* 자동 베벨: 위가 뚫린 픽셀은 하이라이트, 아래가 뚫린 픽셀은 셰이드 — 전 스프라이트 공통 입체감 */
-  const solidAt = (yy, xx) => { const r = def.rows[yy]; if (!r) return false; const ch2 = r[xx]; return !!ch2 && ch2 !== '.' && ch2 !== ' ' && ch2 !== 'O' && !!def.pal[ch2]; };
-  def.rows.forEach((row, y) => {
-    for (let x = 0; x < row.length; x++) {
-      const ch = row[x];
-      if (ch === '.' || ch === ' ' || ch === 'O' || !def.pal[ch]) continue;
-      if (!solidAt(y - 1, x)) { c.fillStyle = 'rgba(255,255,255,.3)'; c.fillRect(x + 1, y + 1, 1, 1); }
-      else if (!solidAt(y + 1, x)) { c.fillStyle = 'rgba(0,0,0,.28)'; c.fillRect(x + 1, y + 1, 1, 1); }
-    }
-  });
-  /* 자동 외곽선: 빈칸인데 8방향 중 실체와 닿으면 테두리 — 전 스프라이트 공통 선명도 */
-  const oc = def.outline || '#14161c';
-  const cellAt = (yy, xx) => { const r = def.rows[yy]; if (!r) return null; const ch2 = r[xx]; return (ch2 && ch2 !== '.' && ch2 !== ' ') ? ch2 : null; };
-  for (let y = 0; y < h + 2; y++) {
-    for (let x = 0; x < w + 2; x++) {
-      if (cellAt(y - 1, x - 1) !== null) continue;
-      let adj = false;
-      for (let dy = -1; dy <= 1 && !adj; dy++) for (let dx = -1; dx <= 1; dx++) {
-        if (!dx && !dy) continue;
-        const nch = cellAt(y - 1 + dy, x - 1 + dx);
-        if (nch && nch !== 'O' && def.pal[nch]) { adj = true; break; }
+      const k = chAt(y, x);
+      if (!k) continue;
+      const px = (x + 1) * S, py = (y + 1) * S;
+      c.fillStyle = def.pal[k];
+      c.fillRect(px, py, S, S);
+      if (k === 'O') continue;                        /* 원본 외곽선 셀은 음영 제외 */
+      /* 내부 세로 그라데이션 — 셀 안에서도 위가 밝고 아래가 어둡게 */
+      for (let i = 0; i < S; i++) {
+        const t = i / (S - 1) - .5;                   /* -0.5 ~ +0.5 */
+        c.fillStyle = t < 0 ? `rgba(255,255,255,${(-t * .13).toFixed(3)})` : `rgba(0,0,0,${(t * .15).toFixed(3)})`;
+        c.fillRect(px, py + i, S, 1);
       }
-      if (adj) { c.fillStyle = oc; c.globalAlpha = .92; c.fillRect(x, y, 1, 1); c.globalAlpha = 1; }
+      /* 노출된 면의 베벨: 위=하이라이트, 아래=셰이드, 좌우=약한 명암 (서브픽셀 두께) */
+      const BV = Math.max(1, Math.round(S / 8));
+      if (!any(y - 1, x)) { c.fillStyle = 'rgba(255,255,255,.34)'; c.fillRect(px, py, S, BV); }
+      if (!any(y + 1, x)) { c.fillStyle = 'rgba(0,0,0,.30)'; c.fillRect(px, py + S - BV, S, BV); }
+      if (!any(y, x - 1)) { c.fillStyle = 'rgba(255,255,255,.14)'; c.fillRect(px, py, BV, S); }
+      if (!any(y, x + 1)) { c.fillStyle = 'rgba(0,0,0,.16)'; c.fillRect(px + S - BV, py, BV, S); }
+      /* 모서리 모따기: 노출된 코너를 계단식 삼각형으로 깎아 45° 실루엣을 만든다 */
+      const K = Math.max(1, Math.round(S / 4));
+      if (!any(y - 1, x) && !any(y, x - 1)) for (let i = 0; i < K; i++) c.clearRect(px, py + i, K - i, 1);
+      if (!any(y - 1, x) && !any(y, x + 1)) for (let i = 0; i < K; i++) c.clearRect(px + S - (K - i), py + i, K - i, 1);
+      if (!any(y + 1, x) && !any(y, x - 1)) for (let i = 0; i < K; i++) c.clearRect(px, py + S - 1 - i, K - i, 1);
+      if (!any(y + 1, x) && !any(y, x + 1)) for (let i = 0; i < K; i++) c.clearRect(px + S - (K - i), py + S - 1 - i, K - i, 1);
+      /* 안쪽 오목 모서리: 대각만 비었으면 그 코너를 살짝 깎아 각을 살린다 */
+      if (any(y - 1, x) && any(y, x - 1) && !any(y - 1, x - 1)) { c.fillStyle = 'rgba(0,0,0,.12)'; c.fillRect(px, py, Math.max(1, Math.round(S / 4)), Math.max(1, Math.round(S / 4))); }
     }
   }
+
+  /* 2) 외곽선: 빈 셀에서 실체와 맞닿은 쪽만 반 셀 두께로 — 예전 1셀 통짜보다 얇아 원본 디테일이 덜 먹힌다 */
+  c.globalAlpha = .92;
+  c.fillStyle = OL;
+  for (let y = -1; y <= h; y++) {
+    for (let x = -1; x <= w; x++) {
+      if (any(y, x)) continue;
+      const px = (x + 1) * S, py = (y + 1) * S;
+      const up = body(y - 1, x), dn = body(y + 1, x), lf = body(y, x - 1), rt = body(y, x + 1);
+      if (up) c.fillRect(px, py, S, OW);
+      if (dn) c.fillRect(px, py + S - OW, S, OW);
+      if (lf) c.fillRect(px, py, OW, S);
+      if (rt) c.fillRect(px + S - OW, py, OW, S);
+      if (!up && !lf && body(y - 1, x - 1)) c.fillRect(px, py, OW, OW);
+      if (!up && !rt && body(y - 1, x + 1)) c.fillRect(px + S - OW, py, OW, OW);
+      if (!dn && !lf && body(y + 1, x - 1)) c.fillRect(px, py + S - OW, OW, OW);
+      if (!dn && !rt && body(y + 1, x + 1)) c.fillRect(px + S - OW, py + S - OW, OW, OW);
+    }
+  }
+  c.globalAlpha = 1;
+
   const white = document.createElement('canvas');
-  white.width = w + 2; white.height = h + 2;
+  white.width = cv2.width; white.height = cv2.height;
   const wc = white.getContext('2d');
   wc.drawImage(cv2, 0, 0);
   wc.globalCompositeOperation = 'source-in';
   wc.fillStyle = '#fff';
-  wc.fillRect(0, 0, w + 2, h + 2);
-  spriteCache[name] = { cv: cv2, white, w: w + 2, h: h + 2 };
+  wc.fillRect(0, 0, white.width, white.height);
+  spriteCache[name] = { cv: cv2, white, w: cw, h: chh, sub: S };
   return spriteCache[name];
 }
 function drawSprite(name, x, y, scale = 4, opts = {}) {
@@ -2900,7 +2965,9 @@ function drawSprite(name, x, y, scale = 4, opts = {}) {
   /* 피격 스쿼시: 맞은 순간 찌그러졌다 복원 (flash 강도에 비례, 전 몬스터 공통) */
   const hsq = (opts.flash || 0) * .22;
   ctx.scale((opts.squashX || 1) + hsq, (opts.squashY || 1) - hsq * .9);
-  ctx.imageSmoothingEnabled = false;
+  /* 레티나 백버퍼에선 서브픽셀 1개 ≈ 1 기기픽셀이라 최근접 샘플링이 가장 선명. 저DPR(1x)만 보간 */
+  ctx.imageSmoothingEnabled = (dpr || 1) < 1.5;
+  ctx.imageSmoothingQuality = 'high';
   const alpha = opts.alpha != null ? opts.alpha : 1;
   if (alpha < 1) ctx.globalAlpha = alpha;
   if (opts.rot) ctx.rotate(opts.rot);
@@ -2918,16 +2985,27 @@ function drawSprite(name, x, y, scale = 4, opts = {}) {
 /* ================= 캔버스 ================= */
 const cv = $('game'), ctx = cv.getContext('2d');
 const mm = $('minimap'), mctx = mm.getContext('2d');
-function resize() { cv.width = innerWidth; cv.height = innerHeight; }
+/* 백버퍼를 기기 픽셀비만큼 키워 렌더 — cvW/cvH는 CSS 픽셀 기준(기존 코드 의미 유지) */
+let dpr = 1, cvW = 0, cvH = 0;
+function resize() {
+  dpr = Math.min(devicePixelRatio || 1, innerWidth <= 640 ? 2 : 3); /* 모바일은 2배까지만 — 채움 비용 억제 */
+  cvW = innerWidth; cvH = innerHeight;
+  cv.width = Math.round(cvW * dpr); cv.height = Math.round(cvH * dpr);
+  cv.style.width = cvW + 'px'; cv.style.height = cvH + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
 addEventListener('resize', resize);
 resize();
 
 /* ================= 월드 텍스처 (프리렌더) ================= */
+/* 지형 텍스처 슈퍼샘플링 배율 — 확대/레티나에서 나무·바위·길이 뭉개지지 않게 원본을 크게 굽는다 */
+const WSS = innerWidth <= 640 ? 1.5 : 2;
 const worldTex = document.createElement('canvas');
-worldTex.width = WORLD.w; worldTex.height = WORLD.h;
+worldTex.width = Math.round(WORLD.w * WSS); worldTex.height = Math.round(WORLD.h * WSS);
 
 function buildWorld() {
   const c = worldTex.getContext('2d');
+  c.setTransform(WSS, 0, 0, WSS, 0, 0); /* 이하 그리기는 전부 월드 좌표 그대로 */
   c.fillStyle = '#26492f';
   c.fillRect(0, 0, WORLD.w, WORLD.h);
   const tints = ['#2a5034', '#224329', '#2d5538', '#1f3f26'];
@@ -3189,8 +3267,9 @@ function getTex(mp) {
 
 function buildWorldM2() {
   const cv2 = document.createElement('canvas');
-  cv2.width = WORLD.w; cv2.height = WORLD.h;
+  cv2.width = Math.round(WORLD.w * WSS); cv2.height = Math.round(WORLD.h * WSS);
   const c = cv2.getContext('2d');
+  c.setTransform(WSS, 0, 0, WSS, 0, 0);
   c.fillStyle = '#241f33';
   c.fillRect(0, 0, WORLD.w, WORLD.h);
   const tints = ['#2a2440', '#1f1b2e', '#302a48', '#262138'];
@@ -3497,7 +3576,7 @@ function drawHeldWeapon(cls, wid, c = ctx) {
       c.beginPath(); c.moveTo(-1.6, yy); c.lineTo(1.6, yy + 2); c.stroke();
     }
     const oc = it ? it.color : '#b388ff';
-    c.shadowColor = oc; c.shadowBlur = 14;
+    c.shadowColor = oc; c.shadowBlur = 14 + (drawHeldWeapon.glow || 0) * 22;
     c.fillStyle = oc;
     c.beginPath(); c.arc(0, -30, 5, 0, 7); c.fill();
     c.fillStyle = shade(oc, 1.35);
@@ -3838,10 +3917,23 @@ function drawHeroGear(o, eq, now, face, c = ctx) {
   /* 휴식 자세는 화면 위쪽으로(위협적이지 않게) — 이동 방향을 따라가면 검이 땅을 찌르고 지팡이가 거꾸로 됨 */
   const restA = -Math.PI / 2 + .32 + Math.sin(now / 320) * .07;
   /* 휘두르기 시작 25%는 휴식→타격호 진입 블렌드 (뚝 끊김 방지) */
-  const wa = sw >= 0 && sw < 1
-    ? (sw < .25 ? restA + (baseA - 1.5 - restA) * (sw / .25) : baseA - 1.5 + sw * 2.6)
-    : restA;
-  const hx = Math.cos(wa) * 17, hy = Math.sin(wa) * 17 + 2;
+  const isStaff = (o.cls === 'mage');
+  /* 지팡이는 세워 쥔다: 로컬 -y(=위)가 화면 위를 향하도록 회전각 ≈ 0. 기존 restA(-90°)는 지팡이를 가로로 눕혔다 */
+  const staffRest = .12 + Math.sin(now / 900) * .05;
+  const castT = (o.castFx && now - o.castFx.t0 < o.castFx.dur) ? (now - o.castFx.t0) / o.castFx.dur : -1;
+  let wa;
+  if (isStaff) {
+    if (castT >= 0) wa = staffRest - Math.sin(castT * Math.PI) * .55;      /* 시전: 지팡이를 앞으로 들어올림 */
+    else if (sw >= 0 && sw < 1) wa = staffRest - Math.sin(sw * Math.PI) * .8; /* 평타: 짧게 내려침 */
+    else wa = staffRest;
+  } else {
+    wa = sw >= 0 && sw < 1
+      ? (sw < .25 ? restA + (baseA - 1.5 - restA) * (sw / .25) : baseA - 1.5 + sw * 2.6)
+      : restA;
+  }
+  /* 지팡이 손 위치: 몸 옆 고정(회전 반경으로 손이 돌면 지팡이가 몸에서 떨어져 보임) */
+  const hx = isStaff ? 11 : Math.cos(wa) * 17; /* 좌우 반전은 캔버스가 처리 — 여기서 부호를 바꾸면 반대편에 붙는다 */
+  const hy = isStaff ? -18 : Math.sin(wa) * 17 + 2;
   /* 무기팔 연결: 어깨→손을 팔로 이어 무기(지팡이) 분리감 제거 */
   {
     const shx = Math.cos(face) < -.05 ? -12 : 12;
@@ -3856,9 +3948,11 @@ function drawHeroGear(o, eq, now, face, c = ctx) {
   c.save();
   c.translate(hx, hy);
   c.rotate(wa);
+  drawHeldWeapon.glow = castT >= 0 ? Math.sin(castT * Math.PI) : 0;
   drawHeldWeapon(o.cls, eq.weapon, c);
+  drawHeldWeapon.glow = 0;
   c.restore();
-  if (sw >= 0 && sw < 1) {
+  if (sw >= 0 && sw < 1 && !isStaff) {
     c.strokeStyle = `rgba(255,255,255,${.55 * (1 - sw)})`;
     c.lineWidth = 3.5;
     const aa = baseA - 1.2 + sw * 2.6;
@@ -3898,10 +3992,12 @@ function heroFrames(cls, eq, faceBake = Math.PI / 2) {
   return set;
 }
 function bakeFrame(cls, eq, face, oExtra, tBake, squash, rot) {
-  const S = 192, OX = 96, OY = 129; /* 고해상 베이크 (128 박스에 축소 블릿 → 선명) */
+  const S = 192, OX = 96, OY = 129; /* 논리 192 박스 — 화면에는 200px로 블릿 */
+  const BK = Math.min(3, Math.max(2, Math.round(dpr || 1))); /* 백버퍼 픽셀비만큼 슈퍼샘플 (최소 2배) */
   const cv2 = document.createElement('canvas');
-  cv2.width = S; cv2.height = S;
+  cv2.width = S * BK; cv2.height = S * BK;
   const c = cv2.getContext('2d');
+  c.scale(BK, BK);
   c.translate(OX, OY);
   if (rot) c.rotate(rot);
   if (squash) c.scale(squash[0], squash[1]);
@@ -3924,7 +4020,15 @@ function bakeHeroFrames(cls, eq, face) {
   }
   const hurt = bakeFrame(cls, eq, face, {}, 1000, [1.18, .84]);
   const dead = bakeFrame(cls, eq, face, {}, 1000, null, Math.PI / 2);
-  return { walk, idle, atk, hurt, dead };
+  /* 머리 꼭대기(논리 px, 발=129 기준 위로 양수): 첫 불투명 행을 찾아 이름표를 스프라이트 바로 위에 붙인다 */
+  let top = 100;
+  try {
+    const f0 = idle[0], k = f0.width / 192, d = f0.getContext('2d').getImageData(0, 0, f0.width, f0.height).data;
+    outer: for (let y = 0; y < f0.height; y++) for (let x = 0; x < f0.width; x += 2) {
+      if (d[(y * f0.width + x) * 4 + 3] > 40) { top = 129 - y / k; break outer; }
+    }
+  } catch (e) {}
+  return { walk, idle, atk, hurt, dead, top };
 }
 const portraitCache = {};
 function heroPortrait(cls) {
@@ -3957,10 +4061,16 @@ const WANT_3D = location.search.includes('3d=1');
 let THREE_NS = null, threeRenderer = null, threeCanvas = null;
 /* 스킬 시전·피격 모션 상태 */
 let heroCast = null, heroHurtT = 0, heroPickT = 0;
+const SKILL_FX_COLOR = { power_strike: '#ffb347', whirlwind: '#ffd166', multishot: '#e8d9a0', piercing: '#f6e58d',
+  shadow_strike: '#b388ff', phantom: '#9b59b6', fireball: '#ff7f27', frost_nova: '#7fd8ff', heal: '#7fe3a0', mana_shield: '#5dade2' };
 const CAST_DUR = { power_strike: 450, whirlwind: 500, multishot: 500, piercing: 500, shadow_strike: 450, phantom: 550, fireball: 550, frost_nova: 550, heal: 600 };
 let lastFace3D = 0, lastT3D = 0, bankSm3D = 0, leanSm3D = 0;
 const threeModels = {};
+/* 3D 전면 비활성: 렌더는 2D 경로 전용. three.js는 로드조차 하지 않는다.
+   (아래 3D 리그/베이크 코드는 호출되지 않는 보존 코드) */
+const ENABLE_3D = false;
 async function initThree() {
+  if (!ENABLE_3D) { threeState = 'off'; return; }
   if (threeState !== 'idle') return;
   threeState = 'loading';
   try {
@@ -4289,6 +4399,31 @@ function drawChar(o) {
 
   ctx.fillStyle = 'rgba(0,0,0,.32)';
   ctx.beginPath(); ctx.ellipse(o.x, o.y + 12, 24, 8, 0, 0, 7); ctx.fill();
+  {
+    /* 시전 서클: 진행도에 따라 조여드는 이중 링 + 회전 룬 */
+    const cf = (!o.dead && o.castFx && now - o.castFx.t0 < o.castFx.dur) ? o.castFx
+      : ((!o.dead && o.isSelf && heroCast && now - heroCast.t0 < heroCast.dur) ? heroCast : null);
+    if (cf) {
+      const pr = clampN((now - cf.t0) / cf.dur, 0, 1);
+      const col = SKILL_FX_COLOR[cf.id] || '#ffd700';
+      ctx.save();
+      ctx.globalAlpha = .85 * (1 - pr * .35);
+      ctx.strokeStyle = col; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.ellipse(o.x, o.y + 12, 46 - pr * 18, (46 - pr * 18) * .38, 0, 0, 7); ctx.stroke();
+      ctx.globalAlpha = .5;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([9, 7]); ctx.lineDashOffset = -now / 24;
+      ctx.beginPath(); ctx.ellipse(o.x, o.y + 12, 62 - pr * 26, (62 - pr * 26) * .38, 0, 0, 7); ctx.stroke();
+      ctx.setLineDash([]);
+      for (let ri = 0; ri < 3; ri++) {
+        const ra = now / 320 + ri * 2.094;
+        ctx.globalAlpha = .8;
+        ctx.fillStyle = col;
+        ctx.beginPath(); ctx.arc(o.x + Math.cos(ra) * (52 - pr * 20), o.y + 12 + Math.sin(ra) * (52 - pr * 20) * .38, 2.6, 0, 7); ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
   if (o.isSelf && !o.dead) {
     ctx.strokeStyle = 'rgba(255,215,0,.7)'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.ellipse(o.x, o.y + 12, 28, 10, 0, 0, 7); ctx.stroke();
@@ -4297,10 +4432,17 @@ function drawChar(o) {
   /* 벡터 20프레임 (해상도 무관 초정밀 — 픽셀 없음) */
   const eq = o.equipped || {};
   const sw = (!o.dead && o.swing) ? (now - o.swing) / 220 : -1;
+  /* 시전 중(자캐는 heroCast, 타인은 o.castFx)에는 베이크 프레임 대신 라이브로 그려 시전 포즈를 살린다 */
+  const castNow = (!o.dead && o.castFx && now - o.castFx.t0 < o.castFx.dur) ? o.castFx
+    : ((!o.dead && o.isSelf && heroCast && now - heroCast.t0 < heroCast.dur) ? heroCast : null);
   let fr = null;
+  let frTop = 0;
   try {
     const fs = heroFrames(o.cls || 'warrior', eq);
-    if (o.dead) fr = fs.dead;
+    frTop = fs.top;
+    if (castNow) fr = 'live';
+    if (fr === 'live') { /* 아래 라이브 렌더 */ }
+    else if (o.dead) fr = fs.dead;
     else if (sw >= 0 && sw < 1) fr = fs.atk[Math.min(FR_ATK - 1, Math.floor(sw * FR_ATK))];
     else if (!o.dead && o.isSelf && now < hurtUntil) fr = fs.hurt;
     else if (moving) fr = fs.walk[((Math.floor(stepPh / (2 * Math.PI) * FR_WALK) % FR_WALK) + FR_WALK) % FR_WALK];
@@ -4315,21 +4457,33 @@ function drawChar(o) {
   if (o.dead) ctx.globalAlpha = .45;
   else if (moving) ctx.rotate(Math.sin(stepPh) * .055); /* 걸음 스웨이 */
   if (!o.dead && flip) ctx.scale(-1, 1);
-  if (fr) { const HB = 1.56; ctx.drawImage(fr, -64 * HB, -86 * HB, 128 * HB, 128 * HB); } /* 캐릭터 20% 확대 */
+  if (fr === 'live') {
+    const HB = 1.56 * 128 / 192; /* 베이크(192 논리박스 → 128*1.56 블릿)와 같은 화면 크기 */
+    ctx.save();
+    ctx.scale(HB, HB);
+    const oLive = { ...o, castFx: castNow, moving, stepPh };
+    const lfx = Math.cos(face), lfy = Math.sin(face);
+    /* 좌우 반전은 바깥에서 이미 적용됨 — 여기서 또 뒤집으면 되돌아간다 */
+    drawHero20(oLive, now, moving, lfx, lfy, 0, ctx);
+    drawHeroGear(oLive, eq, now, face, ctx);
+    ctx.restore();
+  } else if (fr) { const HB = 1.56; ctx.drawImage(fr, -64 * HB, -86 * HB, 128 * HB, 128 * HB); } /* 캐릭터 20% 확대 */
   else { ctx.fillStyle = '#e74c3c'; ctx.beginPath(); ctx.arc(0, -24, 17, 0, 7); ctx.fill(); }
   ctx.restore();
 
+  /* 머리 꼭대기 화면 y: 논리 top(발 기준) × (200/192 블릿 배율) */
+  const headY = o.y - bobY - (frTop || 100) * (128 * 1.56 / 192);
   if (!o.dead && o.hp < o.maxHp) {
     ctx.fillStyle = 'rgba(0,0,0,.6)';
-    roundRect(ctx, o.x - 18, o.y - 104, 36, 6.5, 3); ctx.fill();
+    roundRect(ctx, o.x - 18, headY - 12, 36, 6.5, 3); ctx.fill();
     ctx.fillStyle = '#2ecc71';
-    ctx.fillRect(o.x - 17, o.y - 103, 34 * clampN(o.hp / o.maxHp, 0, 1), 4.5);
+    ctx.fillRect(o.x - 17, headY - 11, 34 * clampN(o.hp / o.maxHp, 0, 1), 4.5);
   }
   ctx.font = (o.isSelf ? 'bold ' : '') + '12px sans-serif';
   ctx.textAlign = 'center';
   ctx.fillStyle = o.isSelf ? '#fff' : (CLASSES[o.cls]?.color || '#eee');
   ctx.shadowColor = 'rgba(0,0,0,.85)'; ctx.shadowBlur = 3;
-  ctx.fillText(o.name, o.x, o.y - 110);
+  ctx.fillText(o.name, o.x, headY - (!o.dead && o.hp < o.maxHp ? 18 : 8));
   ctx.shadowBlur = 0;
 }
 
@@ -4961,8 +5115,13 @@ function uiInsets(now) {
       if (isMobileUI()) T = h.bottom + 8;
     }
     if (isMobileUI()) {
-      const mb = $('mobileBar')?.getBoundingClientRect();
-      if (mb && mb.height) B = innerHeight - mb.top + 8;
+      /* 하단 고정 UI(핫바·좌측독 가로줄·모바일바) 중 가장 위쪽을 기준으로 캐릭터가 가려지지 않게 */
+      let top = Infinity;
+      for (const id of ['mobileBar', 'hotbar', 'dockL']) {
+        const r = $(id)?.getBoundingClientRect();
+        if (r && r.height && r.top < top) top = r.top;
+      }
+      if (top < Infinity) B = innerHeight - top + 8;
     }
     uiInsetCache.T = T; uiInsetCache.B = B; uiInsetCache.t = now;
   }
@@ -5074,7 +5233,7 @@ function drawLootItems(now) {
 function updateMinimap(now) {
   mctx.clearRect(0, 0, 160, 120);
   mctx.globalAlpha = .85;
-  mctx.drawImage(getTex(myMap()), 0, 0, WORLD.w, WORLD.h, 0, 0, 160, 120);
+  { const t = getTex(myMap()); mctx.drawImage(t, 0, 0, t.width, t.height, 0, 0, 160, 120); }
   mctx.globalAlpha = 1;
   const k = .1;
   for (const s of sims) {
@@ -5098,12 +5257,12 @@ function updateMinimap(now) {
     mctx.fillStyle = '#fff';
     mctx.fillRect(me.x * k - 2, me.y * k - 2, 4, 4);
     mctx.strokeStyle = 'rgba(255,255,255,.6)';
-    mctx.strokeRect(view.x * k, view.y * k, Math.min(160, cv.width * k), Math.min(120, cv.height * k)); /* 실제 화면 영역 */
+    mctx.strokeRect(view.x * k, view.y * k, Math.min(160, cvW / (view.z || 1) * k), Math.min(120, cvH / (view.z || 1) * k)); /* 실제 화면 영역 */
   }
 }
 /* ================= 3D 풀씬 (?3d=1) =================
    로직은 2D 그대로, 렌더만 Three.js로. 실패하면 2D로 폴백 */
-const SCENE3D = location.search.includes('3d=1');
+const SCENE3D = false; /* ?3d=1 진입 차단 — 항상 2D 렌더 */
 let sceneLive = false, sceneFailed = false;
 let renderer3D = null, scene3D = null, cam3D = null, ground3D = null, groundTex3D = null, groundMap3D = '';
 let glFxEl = null, camT3D = { x: 800, y: 600 }, lastW3D = 0, lastH3D = 0;
@@ -5145,7 +5304,9 @@ function spriteTex3D(key) {
   if (!t) {
     t = new THREE_NS.CanvasTexture(buildSprite(key).cv);
     t.colorSpace = THREE_NS.SRGBColorSpace;
-    t.magFilter = THREE_NS.NearestFilter;
+    t.magFilter = THREE_NS.LinearFilter;
+    t.minFilter = THREE_NS.LinearMipmapLinearFilter;
+    t.anisotropy = 8;
     texCache3D.set(key, t);
   }
   return t;
@@ -5221,7 +5382,7 @@ function initScene3D() {
     const T = THREE_NS;
     const mob = innerWidth <= 640;
     renderer3D = new T.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    renderer3D.setPixelRatio(Math.min(devicePixelRatio || 1, mob ? 1 : 2));
+    renderer3D.setPixelRatio(Math.min(devicePixelRatio || 1, mob ? 2 : 2.5));
     renderer3D.setSize(innerWidth, innerHeight);
     renderer3D.domElement.id = 'gl';
     renderer3D.domElement.style.cssText = 'position:fixed;inset:0;z-index:0;';
@@ -5642,7 +5803,7 @@ function pickWorld(mx, my) {
 }
 function updateViewRect3D() {
   const a = groundRay3D(0, 0), b = groundRay3D(innerWidth, innerHeight);
-  if (a && b) { view.x = Math.min(a.x, b.x); view.y = Math.min(a.y, b.y); }
+  if (a && b) { view.x = Math.min(a.x, b.x); view.y = Math.min(a.y, b.y); view.z = 1; }
 }
 function updateGlFx(now) {
   if (!glFxEl) return;
@@ -5696,7 +5857,8 @@ function tickStageGL(now, t, dt) {
   updateScene3D(now, dt);
 }
 function draw(now) {
-  const vw = cv.width, vh = cv.height;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const vw = cvW, vh = cvH;
   let shx = 0, shy = 0;
   if (shakeT && now - shakeT < 180) {
     const p = (1 - (now - shakeT) / 180) * shakePow;
@@ -5704,18 +5866,25 @@ function draw(now) {
   } else shakePow = 0;
   /* 가로: 항상 정중앙(부족하면 스크롤). 세로: 모바일 상하 UI를 제외한 밴드 기준 */
   const { T, B } = uiInsets(now);
-  const availH = vh - T - B;
-  const cx = WORLD.w >= vw ? clampN(cam.x - vw / 2, 0, WORLD.w - vw) : (WORLD.w - vw) / 2;
+  /* 창을 늘려 월드(1600x1200)보다 넓어지면 가로/세로 같은 배율로 확대해 화면을 100% 채운다.
+     균등 배율이라 찌그러지지 않고, 좌우 검은 여백도 생기지 않는다. */
+  /* 화면을 최소한 꽉 채우는 배율(zFill) 아래로는 못 줄인다 — 줄이면 월드 밖 검은 여백이 생기므로 */
+  const zFill = Math.max(vw / WORLD.w, (vh - T - B) / WORLD.h);
+  const z = clampN(Math.max(1, zFill) * userZoom, zFill, USER_ZOOM_MAX);
+  const vwW = vw / z, vhW = vh / z, TW = T / z, BW = B / z;
+  const availH = vhW - TW - BW;
+  const cx = WORLD.w >= vwW ? clampN(cam.x - vwW / 2, 0, WORLD.w - vwW) : (WORLD.w - vwW) / 2;
   let cy;
-  if (WORLD.h >= availH) cy = clampN(cam.y - T - availH / 2, -T, WORLD.h - vh + B);
-  else cy = -(T + (availH - WORLD.h) / 2);
-  view.x = cx; view.y = cy;
+  if (WORLD.h >= availH) cy = clampN(cam.y - TW - availH / 2, -TW, WORLD.h - vhW + BW);
+  else cy = -(TW + (availH - WORLD.h) / 2);
+  view.x = cx; view.y = cy; view.z = z;
 
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, vw, vh);
   ctx.save();
-  ctx.translate(-cx + shx, -cy + shy);
-  ctx.drawImage(getTex(myMap()), 0, 0);
+  ctx.scale(z, z);
+  ctx.translate(-cx + shx / z, -cy + shy / z);
+  ctx.drawImage(getTex(myMap()), 0, 0, WORLD.w, WORLD.h);
 
   drawLootItems(now);
   drawPickFlights(now);
@@ -5878,11 +6047,11 @@ function draw(now) {
   const hpR = (me.hp || 0) / maxHpOf();
   if (!me.dead && hpR < .35) {
     const vp = (.3 + Math.sin(now / 260) * .18) * clampN((.35 - hpR) / .35, 0, 1);
-    const vg = ctx.createRadialGradient(cv.width / 2, cv.height / 2, cv.height * .28, cv.width / 2, cv.height / 2, cv.height * .72);
+    const vg = ctx.createRadialGradient(cvW / 2, cvH / 2, cvH * .28, cvW / 2, cvH / 2, cvH * .72);
     vg.addColorStop(0, 'rgba(180,0,0,0)');
     vg.addColorStop(1, `rgba(180,0,0,${vp})`);
     ctx.fillStyle = vg;
-    ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.fillRect(0, 0, cvW, cvH);
   }
 }
 
@@ -5891,7 +6060,9 @@ function draw(now) {
 const domCache = {};
 function setTxt(id, v) { if (domCache['t' + id] !== v) { domCache['t' + id] = v; $(id).textContent = v; } }
 function setBarW(id, pct) { const v = pct.toFixed(1) + '%'; if (domCache['w' + id] !== v) { domCache['w' + id] = v; $(id).style.width = v; } }
+let shopGoldCache = -1;
 function updateHUD() {
+  if (shopGoldCache !== (me.gold || 0)) { shopGoldCache = me.gold || 0; const sg = $('shopGold'); if (sg) sg.textContent = `💰 ${shopGoldCache.toLocaleString()} G`; }
   setTxt('uiLv', String(me.lv));
   setTxt('uiCls', cdef().icon + ' ' + cdef().name);
   setTxt('uiName', myName);
@@ -5955,6 +6126,80 @@ function updateHotbar(now) {
   setPot('hbMp', potCount('mp'), 'mp');
 }
 
+/* ================= 스킬 드래그 → 퀵슬롯 =================
+   스킬샵/스킬트리의 [1]~[5] 버튼이 있는 행(= 등록 가능한 액티브 스킬)을 끌어 핫바 1~5칸에 놓으면 등록.
+   마우스는 즉시, 터치는 220ms 길게 누르면 시작(짧게 밀면 리스트 스크롤) */
+let sdrag = null, sdragTimer = 0;
+function skillDragIdFrom(target) {
+  const row = target.closest && target.closest('.srow, .tnode');
+  if (!row) return null;
+  const bb = row.querySelector('[data-bind]');
+  if (!bb) return null;
+  return { id: bb.dataset.bind.split(':')[1], row };
+}
+function sdragStart(e, id) {
+  sdrag = { id, x: e.clientX, y: e.clientY, over: null };
+  document.body.classList.add('skilldrag');
+  let g = $('dragGhost');
+  if (!g) { g = document.createElement('div'); g.id = 'dragGhost'; document.body.appendChild(g); }
+  g.textContent = skillDef(id).icon || '✦';
+  g.style.display = 'flex';
+  sdragMove(e);
+}
+function sdragSlotAt(x, y) {
+  for (let sIdx = 1; sIdx <= 5; sIdx++) {
+    const el = $('hb' + sIdx); if (!el) continue;
+    const r = el.getBoundingClientRect();
+    if (x >= r.left - 6 && x <= r.right + 6 && y >= r.top - 6 && y <= r.bottom + 6) return sIdx;
+  }
+  return 0;
+}
+function sdragMove(e) {
+  if (!sdrag) return;
+  const g = $('dragGhost');
+  if (g) { g.style.left = e.clientX + 'px'; g.style.top = e.clientY + 'px'; }
+  const slot = sdragSlotAt(e.clientX, e.clientY);
+  if (slot !== sdrag.over) {
+    sdrag.over = slot;
+    for (let sIdx = 1; sIdx <= 5; sIdx++) $('hb' + sIdx)?.classList.toggle('dropok', sIdx === slot);
+  }
+}
+function sdragEnd(e, cancel) {
+  clearTimeout(sdragTimer); sdragTimer = 0;
+  if (!sdrag) return;
+  const { id, over } = sdrag;
+  sdrag = null;
+  document.body.classList.remove('skilldrag');
+  const g = $('dragGhost'); if (g) g.style.display = 'none';
+  for (let sIdx = 1; sIdx <= 5; sIdx++) $('hb' + sIdx)?.classList.remove('dropok');
+  if (cancel) return;
+  const slot = over || sdragSlotAt(e.clientX, e.clientY);
+  if (slot) {
+    bindSet(slot, id); sfx('click');
+    if ($('shopPanel')?.classList.contains('open')) renderShop();
+    if ($('treePanel')?.classList.contains('open')) renderTree();
+  }
+}
+document.addEventListener('pointerdown', e => {
+  if (e.button !== 0 && e.pointerType === 'mouse') return;
+  if (e.target.closest('button, input, a')) return; /* [1]~[5] 버튼·구매 버튼 클릭은 그대로 */
+  const hit = skillDragIdFrom(e.target);
+  if (!hit) return;
+  if (e.pointerType === 'touch') {
+    const sx = e.clientX, sy = e.clientY;
+    const cancelHold = ev => { if (Math.hypot(ev.clientX - sx, ev.clientY - sy) > 8) { clearTimeout(sdragTimer); sdragTimer = 0; document.removeEventListener('pointermove', cancelHold); } };
+    document.addEventListener('pointermove', cancelHold);
+    sdragTimer = setTimeout(() => { document.removeEventListener('pointermove', cancelHold); sdragStart(e, hit.id); try { navigator.vibrate && navigator.vibrate(10); } catch (err) {} }, 220);
+    document.addEventListener('pointerup', () => { clearTimeout(sdragTimer); sdragTimer = 0; document.removeEventListener('pointermove', cancelHold); }, { once: true });
+  } else {
+    e.preventDefault();
+    sdragStart(e, hit.id);
+  }
+}, { passive: false });
+document.addEventListener('pointermove', e => { if (sdrag) { e.preventDefault(); sdragMove(e); } }, { passive: false });
+document.addEventListener('pointerup', e => sdragEnd(e, false));
+document.addEventListener('pointercancel', e => sdragEnd(e, true));
+
 /* ================= 입력 ================= */
 const chatInput = $('chatInput');
 chatInput.addEventListener('keydown', e => {
@@ -5975,6 +6220,15 @@ function toggleDex() {
 }
 function renderDex() {
   const body = $('dexBody');
+  const dex = me.dex || {};
+  const card = (k, n, tag) => {
+    const seen = !!dex[k.name];
+    return `<div class="dexmon ${seen ? 'seen' : 'unseen'}" title="${esc(k.name)}${seen ? '' : ' — 미발견'}">
+      <img class="dexic" src="${mobThumb(k)}" alt="">
+      <div class="dexnm">${seen ? esc(k.name) : '???'}</div>
+      <div class="dexlv">${tag ? tag + ' ' : ''}Lv${n}</div>
+    </div>`;
+  };
   let html = '';
   for (let n = 1; n <= MAX_PAGE; n++) {
     const pd = pageDef(n);
@@ -5983,14 +6237,14 @@ function renderDex() {
     html += `<div class="dexrow ${conq ? 'dexconq' : ''} ${cur ? 'dexcur' : ''}">
       <div class="dexpage">${conq ? '✅' : cur ? '📍' : '🔒'} ${pd.name} ${conq ? '<span class="dexok">정복 완료</span>' : ''}</div>
       <div class="dexmons">
-        <span>Lv${n} ${pd.kinds[0].name}</span>
-        <span>Lv${n} ${pd.kinds[1].name}</span>
-        <span class="dexboss">BOSS Lv${n} ${pd.boss.name}</span>
-        <span class="dexuniq">★유니크 10%</span>
+        ${card(pd.kinds[0], n, '')}
+        ${card(pd.kinds[1], n, '')}
+        ${card(pd.boss, n, 'BOSS')}
       </div>
     </div>`;
   }
-  body.innerHTML = html;
+  const total = MAX_PAGE * 3, got = Object.keys(dex).length;
+  body.innerHTML = `<div class="dexsum">도감 ${got} 종 발견 · ★유니크는 각 종류 10% 확률로 등장</div>` + html;
 }
 
 let wmSelPage = 0, wmRefreshT = 0;
@@ -6009,7 +6263,7 @@ function wmDrawCanvas(n0) {
   const wctx = wc.getContext('2d');
   const kx = wc.width / WORLD.w, ky = wc.height / WORLD.h;
   {
-    wctx.drawImage(getTex(n0 === pageNum() ? myMap() : 'm1'), 0, 0, WORLD.w, WORLD.h, 0, 0, wc.width, wc.height);
+    { const t = getTex(n0 === pageNum() ? myMap() : 'm1'); wctx.drawImage(t, 0, 0, t.width, t.height, 0, 0, wc.width, wc.height); }
     if (n0 === pageNum()) {
       /* 현재 구역: 실시간 마커(몬스터/보스/아이템/내 위치) */
       for (const s of sims) {
@@ -6087,11 +6341,9 @@ function togglePanel(id) {
 }
 const rb2 = $('reviveBtn');
 if (rb2) rb2.onclick = reviveNow;
-$('mapBtn').onclick = () => { sfx('click'); toggleWorldMap(); };
 const rtl = $('rankTabLv'), rta = $('rankTabAtk');
 if (rtl) rtl.onclick = () => { rankMode = 'lv'; renderRank(); };
 if (rta) rta.onclick = () => { rankMode = 'atk'; renderRank(); };
-$('dexBtn').onclick = () => { sfx('click'); toggleDex(); };
 /* 직업별 스탯 버튼 8종 생성 (로그인 후 호출 — myCls 확정 필요) */
 function renderStatButtons() {
   const box = $('stBtns');
@@ -6117,19 +6369,15 @@ $('hudTop').onclick = () => {
 };
 try { if (localStorage.getItem('hudMini')) $('hud').classList.add('mini'); } catch (e) {}
 function toggleInv() { sfx('click'); $('invPanel').classList.toggle('open'); }
-$('invBtn').onclick = toggleInv;
-$('shopBtn').onclick = () => { sfx('click'); togglePanel('shopPanel'); };
 document.querySelector('#rankPanel h3').addEventListener('click', e => {
   if (e.target.tagName === 'BUTTON') return;
   sfx('click');
   $('rankPanel').classList.toggle('folded');
 });
-$('questBtn').onclick = () => { sfx('click'); togglePanel('questPanel'); };
 async function doLogout() {
   try { await signOut(auth); } catch (e) {}
   location.reload();
 }
-$('logoutBtn').onclick = doLogout;
 $('minimap').onclick = () => { sfx('click'); toggleWorldMap(); }; /* 미니맵 탭 → 세계지도 */
 $('hudLogout').onclick = e => { e.stopPropagation(); doLogout(); }; /* HUD 접기 클릭과 분리 */
 document.querySelectorAll('#mobileBar [data-mb]').forEach(b => b.onclick = () => {
@@ -6140,11 +6388,39 @@ document.querySelectorAll('#mobileBar [data-mb]').forEach(b => b.onclick = () =>
   else if (k === 'dex') toggleDex();
   else togglePanel(k);
 });
-$('hb1').onclick = () => useSkill(1);
-$('hb2').onclick = () => useSkill(2);
-$('hb3').onclick = () => useSkill(3);
-$('hb4').onclick = () => useSkill(4);
-$('hb5').onclick = () => useSkill(5);
+/* 퀵슬롯: 클릭 = 시전(배운 스킬) / 아직 못 배운·빈 슬롯 클릭, 우클릭, 길게 누르기 = 배운 스킬 중 선택해 등록 */
+function learnedActives() {
+  const ids = new Set();
+  for (const [id, d] of Object.entries(SKILLS)) if (d.type === 'active' && (d.cls === myCls || d.cls === 'all') && hasSkill(id)) ids.add(id);
+  try { for (const id of classActiveIds()) if (hasSkill(id)) ids.add(id); } catch (e) {}
+  if (hasSkill('heal')) ids.add('heal');
+  return [...ids];
+}
+function openSlotPick(slot) {
+  let el = $('slotPick');
+  if (!el) { el = document.createElement('div'); el.id = 'slotPick'; document.body.appendChild(el); }
+  const cur = boundId(slot);
+  const list = learnedActives();
+  el.innerHTML = `<div class="spt">[${slot}]번 슬롯에 등록</div>` +
+    (list.length ? list.map(id => { const d = skillDef(id); return `<button data-pick="${id}" class="${id === cur ? 'cur' : ''}"><span class="spi">${d.icon || '✦'}</span>${esc(d.name)}</button>`; }).join('')
+                 : `<div class="spn">배운 액티브 스킬이 없습니다 — 스킬샵[B]에서 습득</div>`);
+  el.querySelectorAll('[data-pick]').forEach(b => b.onclick = ev => { ev.stopPropagation(); bindSet(slot, b.dataset.pick); sfx('click'); closeSlotPick(); });
+  el.classList.add('open');
+  const r = $('hb' + slot).getBoundingClientRect(), w = el.offsetWidth || 200, h = el.offsetHeight || 120;
+  el.style.left = clampN(r.left + r.width / 2 - w / 2, 6, innerWidth - w - 6) + 'px';
+  el.style.top = Math.max(6, r.top - h - 10) + 'px';
+  setTimeout(() => document.addEventListener('pointerdown', slotPickAway), 0);
+}
+function closeSlotPick() { $('slotPick')?.classList.remove('open'); document.removeEventListener('pointerdown', slotPickAway); }
+function slotPickAway(e) { if (!e.target.closest('#slotPick')) closeSlotPick(); }
+for (let sIdx = 1; sIdx <= 5; sIdx++) {
+  const box = $('hb' + sIdx);
+  let holdT = 0, held = false;
+  box.onclick = () => { if (held) { held = false; return; } const id = boundId(sIdx); if (!id || !hasSkill(id)) openSlotPick(sIdx); else useSkill(sIdx); };
+  box.oncontextmenu = e => { e.preventDefault(); openSlotPick(sIdx); };
+  box.addEventListener('pointerdown', e => { if (e.pointerType === 'mouse') return; holdT = setTimeout(() => { held = true; openSlotPick(sIdx); }, 380); });
+  for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) box.addEventListener(ev, () => clearTimeout(holdT));
+}
 $('hbHp').onclick = () => usePotion('hp');
 $('hbMp').onclick = () => usePotion('mp');
 for (const [hbId, kind] of [['hbHp', 'hp'], ['hbMp', 'mp']]) {
@@ -6216,13 +6492,23 @@ addEventListener('keyup', e => keys[e.code] = false);
 addEventListener('blur', () => { keys = {}; mouseDown = false; });
 document.addEventListener('visibilitychange', () => { if (document.hidden) { keys = {}; mouseDown = false; } });
 
-function screenToWorld(mx, my) { return { x: mx + view.x, y: my + view.y }; }
+function screenToWorld(mx, my) { const z = view.z || 1; return { x: mx / z + view.x, y: my / z + view.y }; }
 cv.addEventListener('contextmenu', e => e.preventDefault());
 /* 클릭=발사 없이 이동만, 더블클릭=자동 공격 (260ms 안에 두 번 눌렀는지 판정) */
 let clickTimer = null, downX = 0, downY = 0, lastMX = 0, lastMY = 0;
+/* 몬스터 히트박스: 예전엔 발밑 반경 원(r+16)뿐이라 머리·몸통을 눌러도 빗나갔다.
+   스프라이트가 발 기준 위로 r*2.6 만큼 솟아 있으므로 세로로 긴 박스로 판정하고, 가까운 것을 우선 고른다 */
+const simHit = (v, wx, wy) => {
+  const d = sdef(v), r = (d.r || 16) * (v.uniq ? 1.15 : 1);
+  const halfW = r * 1.5 + 10;
+  const top = v.y - r * 2.9 - 8, bot = v.y + r * .7 + 8;
+  return Math.abs(wx - v.x) <= halfW && wy >= top && wy <= bot;
+};
 const simAt = (x, y) => {
   const w = pickWorld(x, y);
-  return { w, s: sims.find(v => v.alive && v.map === myMap() && Math.hypot(v.x - w.x, v.y - w.y) < v.def.r + 16) };
+  const cands = sims.filter(v => v.alive && v.map === myMap() && simHit(v, w.x, w.y));
+  cands.sort((a, b) => Math.hypot(a.x - w.x, a.y - w.y) - Math.hypot(b.x - w.x, b.y - w.y));
+  return { w, s: cands[0] };
 };
 cv.addEventListener('mousedown', e => {
   if (e.button !== 0 || !ready || me.dead || document.activeElement === chatInput) return;
@@ -6287,21 +6573,43 @@ function tapWorld(x, y) {
     dest = w;
   }
 }
+/* 두 손가락 핀치로 화면 확대/축소 (모바일). userZoom은 draw()에서 기본 배율에 곱해진다. */
+const pinchDist = ts => Math.hypot(ts[0].clientX - ts[1].clientX, ts[0].clientY - ts[1].clientY);
 cv.addEventListener('touchstart', e => {
   e.preventDefault();
+  if (e.touches.length >= 2) { /* 핀치 시작: 이동 입력은 취소 */
+    pinchD0 = pinchDist([...e.touches]); pinchZ0 = userZoom;
+    touchDownId = null; dest = null;
+    return;
+  }
+  if (pinchD0) return; /* 핀치 중 손가락 추가 */
   const t = e.changedTouches[0];
   touchDownId = t.identifier;
   tapWorld(t.clientX, t.clientY);
 }, { passive: false });
 cv.addEventListener('touchmove', e => {
   e.preventDefault();
+  if (e.touches.length >= 2 && pinchD0) {
+    const d = pinchDist([...e.touches]);
+    if (d > 8) setUserZoom(pinchZ0 * (d / pinchD0));
+    return;
+  }
+  if (pinchD0) return;
   if (attackTargetSimId != null) return;
   const t = [...e.changedTouches].find(c => c.identifier === touchDownId);
   if (t) dest = pickWorld(t.clientX, t.clientY);
 }, { passive: false });
 for (const ev of ['touchend', 'touchcancel']) cv.addEventListener(ev, e => {
   e.preventDefault();
+  if (e.touches.length < 2) pinchD0 = 0; /* 핀치 종료 */
   if ([...e.changedTouches].some(c => c.identifier === touchDownId)) touchDownId = null;
+}, { passive: false });
+/* 데스크톱: Ctrl/⌘ + 휠(= 트랙패드 핀치)로 확대/축소.
+   맨 휠은 무시 — 트랙패드 스크롤이 수십 개의 wheel 이벤트를 쏘아 배율이 최소/최대로 튀던 버그 */
+cv.addEventListener('wheel', e => {
+  e.preventDefault();
+  if (!e.ctrlKey && !e.metaKey) return;
+  setUserZoom(userZoom * Math.exp(-e.deltaY * .01));
 }, { passive: false });
 addEventListener('pointerdown', function unlockAudio() {
   try { if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); } catch (e) {}
@@ -6310,6 +6618,38 @@ addEventListener('pointerdown', function unlockAudio() {
 /* ================= 메인 루프 ================= */
 let lastT = 0;
 let lastLoopErr = '', loopErrMsg = '';
+/* 스테이지 배치: 고정 좌표 대신 매 프레임 뷰포트 기준(가로 100%)으로 재계산.
+   폭이 좁으면 줄바꿈해서 화면 밖으로 밀려나지 않고, 넓으면 균등하게 벌어진다. */
+function stageLayout() {
+  const W = cvW, H = cvH;
+  const pad = clampN(W * .045, 14, 96);
+  const inner = Math.max(120, W - pad * 2);
+  const head = clampN(H * .16, 78, 130);
+  const heroY = H - clampN(H * .16, 76, 150);
+  const band = (n, minW, top, hgt) => {
+    const cols = Math.max(1, Math.min(n, Math.floor(inner / minW) || 1));
+    const rows = Math.ceil(n / cols);
+    return { cols, rows, top, rowH: hgt / rows };
+  };
+  const body = Math.max(140, heroY - head - 30);
+  const mobRowsN = Math.ceil(6 / Math.max(1, Math.min(6, Math.floor(inner / 170) || 1)));
+  const lootRowsN = Math.ceil(6 / Math.max(1, Math.min(6, Math.floor(inner / 110) || 1)));
+  const unit = mobRowsN * 1.5 + lootRowsN;
+  const mobsH = body * (mobRowsN * 1.5 / unit);
+  const mobs = band(6, 170, head + 26, mobsH);
+  const loot = band(6, 110, head + 26 + mobsH + 16, body - mobsH - 16);
+  const heroes = band(4, 150, heroY, 0);
+  const place = (arr, b) => {
+    arr.forEach((o, i) => {
+      const r = Math.floor(i / b.cols), c = i % b.cols;
+      const inRow = Math.min(b.cols, arr.length - r * b.cols);
+      o.x = pad + (inner / inRow) * (c + .5);
+      o.y = b.top + b.rowH * (r + (b.rowH ? .5 : 0));
+    });
+  };
+  return { pad, head, mobs, loot, heroes, place,
+    f1: Math.round(clampN(W * .016, 14, 20)), f2: Math.round(clampN(W * .011, 10, 14)) };
+}
 /* 시각 검증용 스테이지 (?stage=1): Firebase 없이 실렌더러로 영웅·몬스터 전시 */
 let stageSims = null;
 function stageMode() {
@@ -6372,19 +6712,28 @@ function stageMode() {
       const sdt = Math.min(50, now - (slLast || now));
       slLast = now;
       if (SCENE3D) { tickStageGL(now, t, sdt); return; }
-      ctx.fillStyle = '#0d1420'; ctx.fillRect(0, 0, cv.width, cv.height);
-      ctx.drawImage(getTex('p1'), 0, 0, WORLD.w, WORLD.h, 0, 110, cv.width, cv.height - 110);
-      ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.fillRect(0, 0, cv.width, 150);
-      ctx.fillStyle = '#ffd700'; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'left';
-      ctx.fillText('STAGE — 실렌더러 검증 (?stage=1)', 20, 40);
-      ctx.fillStyle = '#8899aa'; ctx.font = '14px sans-serif';
-      ctx.fillText('걷기·공격·대기 20프레임 / kind 파츠 / 지팡이 연결 확인용', 20, 66);
-      ctx.fillText('t=' + t.toFixed(1) + 's · 3D:' + threeState + (freezeCast ? ' · cast=' + freezeCast : '') + ' · loot=' + Object.keys(lootItems || {}).length + '/' + myMap() + ' · me=' + Math.round(me.x) + ',' + Math.round(me.y) + ' chars=' + charNodes3D.size + ' cam=' + Math.round(camT3D.x) + ',' + Math.round(camT3D.y), 20, 92);
+      const LY = stageLayout();
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.fillStyle = '#0d1420'; ctx.fillRect(0, 0, cvW, cvH);
+      /* 배경: 늘리지 않고 커버 크롭 — 창을 가로로 늘려도 지형이 찌그러지지 않는다 */
+      { const bs = Math.max(cvW / WORLD.w, cvH / WORLD.h);
+        const sw = Math.min(WORLD.w, cvW / bs), sh = Math.min(WORLD.h, cvH / bs);
+        const t = getTex('p1'), k = t.width / WORLD.w;
+        ctx.drawImage(t, (WORLD.w - sw) / 2 * k, (WORLD.h - sh) / 2 * k, sw * k, sh * k, 0, 0, cvW, cvH); }
+      ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.fillRect(0, 0, cvW, LY.head);
+      ctx.fillStyle = '#ffd700'; ctx.font = 'bold ' + LY.f1 + 'px sans-serif'; ctx.textAlign = 'left';
+      ctx.fillText('STAGE — 실렌더러 검증 (?stage=1)', LY.pad, LY.head * .3);
+      ctx.fillStyle = '#8899aa'; ctx.font = LY.f2 + 'px sans-serif';
+      ctx.fillText('걷기·공격·대기 20프레임 / kind 파츠 / 지팡이 연결 확인용', LY.pad, LY.head * .52);
+      ctx.fillText('t=' + t.toFixed(1) + 's · 3D:' + threeState + (freezeCast ? ' · cast=' + freezeCast : '') + ' · loot=' + Object.keys(lootItems || {}).length + '/' + myMap() + ' · me=' + Math.round(me.x) + ',' + Math.round(me.y) + ' chars=' + charNodes3D.size + ' cam=' + Math.round(camT3D.x) + ',' + Math.round(camT3D.y), LY.pad, LY.head * .76);
+      LY.place(Object.values(lootItems), LY.loot);
       drawLootItems(now);
+      LY.place(stageSims, LY.mobs);
       for (const s of stageSims) {
         s.dirA = Math.PI / 2 + Math.sin(t * .7 + s.homeX) * .5;
         drawMob(s, now);
       }
+      LY.place(heroes, LY.heroes);
       heroes.forEach((h, i) => {
         h.stepPh += .075;
         const face = Math.PI / 2 + Math.sin(t * .55 + i * 1.6) * 1.1;
@@ -6400,7 +6749,7 @@ function stageMode() {
           if (cc < .55) castFx = { id: sid, t0: now - cc * 1000, dur: CAST_DUR[sid] };
         }
         drawChar({ cls: h.cls, equipped: h.eq, face, moving: true, stepPh: h.stepPh,
-          swing: cyc < .3 ? now - cyc * 1000 : 0, castFx, x: h.x, y: cv.height - 150, hp: 100, maxHp: 100,
+          swing: cyc < .3 ? now - cyc * 1000 : 0, castFx, x: h.x, y: h.y, hp: 100, maxHp: 100,
           name: CLASSES[h.cls].name, isSelf: i === 0 });
       });
     } catch (err) { console.error('[stage]', err); window.__stage = false; }
@@ -6446,15 +6795,16 @@ function loopBody(t) {
   const dt = Math.min(50, t - lastT);
   lastT = t;
   if (!ready) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = '#0d1420';
-    ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.fillRect(0, 0, cvW, cvH);
     ctx.fillStyle = '#8899aa';
     ctx.font = '16px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('⚔ 에테리아 ⚔', cv.width / 2, cv.height / 2 - 12);
+    ctx.fillText('⚔ 에테리아 ⚔', cvW / 2, cvH / 2 - 12);
     ctx.fillStyle = '#556';
     ctx.font = '12px sans-serif';
-    ctx.fillText('연결 중...', cv.width / 2, cv.height / 2 + 12);
+    ctx.fillText('연결 중...', cvW / 2, cvH / 2 + 12);
     return;
   }
 
@@ -6794,7 +7144,7 @@ async function init() {
       name: myName, cls: choice.cls, x: SPAWN.x, y: SPAWN.y,
       lv: 1, exp: 0, hp: c.hp, maxHp: c.hp, atk: c.atk,
       gold: 100, inv: {}, equipped: {}, skills: {}, q: {}, qc: {},
-      dead: false, color: colorOf(uid), map: 'p1', conq: {}, statPts: 0, lastSeen: Date.now(), mp: maxMpOf(),
+      dead: false, color: colorOf(uid), map: 'p1', conq: {}, dex: {}, statPts: 0, lastSeen: Date.now(), mp: maxMpOf(),
     });
     me = { ...me, cls: choice.cls, map: 'p1', gold: 100, hp: c.hp, maxHp: c.hp, atk: c.atk }; /* 스냅샷 도착 전 로컬 동기화 */
     await sysMsg(`${myName}(${c.name})님이 월드에 입장했습니다.`);
@@ -6838,7 +7188,10 @@ async function init() {
 
   ready = true;
   loginAt = Date.now();
-  window.__DBG = () => ({ page: myPage(), me: { x: Math.round(me.x), y: Math.round(me.y), lv: me.lv, map: me.map, bag: me.bagSize, conq: JSON.stringify(me.conq || {}) },
+  window.__HIT = (sx, sy) => { const r = simAt(sx, sy); return { world: r.w, hit: r.s ? { id: r.s.id, kind: r.s.kind, x: Math.round(r.s.x), y: Math.round(r.s.y) } : null }; };
+  window.__SIMS = () => sims.filter(v => v.alive && v.map === myMap()).slice(0, 8).map(v => ({ id: v.id, kind: v.kind, x: Math.round(v.x), y: Math.round(v.y), r: (sdef(v).r || 16), sx: Math.round((v.x - view.x) * (view.z || 1)), sy: Math.round((v.y - view.y) * (view.z || 1)) }));
+  window.__DBG = () => ({ page: myPage(), zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),
+    me: { x: Math.round(me.x), y: Math.round(me.y), lv: me.lv, map: me.map, bag: me.bagSize, conq: JSON.stringify(me.conq || {}) },
     sims: sims.filter(s => s.alive).slice(0, 20).map(s => ({ id: s.id, x: Math.round(s.x), y: Math.round(s.y), d: Math.round(Math.hypot(s.x - me.x, s.y - me.y)), boss: s.boss, lv: simLevel(s) })) });
   $('loading').style.display = 'none';
   renderStatButtons();

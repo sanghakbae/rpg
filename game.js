@@ -4284,7 +4284,7 @@ function skillIconHtml(id, def) {
   const col = SKILL_FX_COLOR[id] || (CLASSES[cls] && CLASSES[cls].color) || '#ffd700';
   const gi = SKILL_ICON[id] || TREE_ARCH_ICON[def.arch] || TREE_ARCH_ICON[def.stat] || null;
   const emoji = def.icon || '✦';
-  const img = gi ? `<img src="https://api.iconify.design/game-icons/${gi}.svg?color=${encodeURIComponent('#ffffff')}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display=''">` : '';
+  const img = gi ? `<img src="assets/icons/${gi}.svg?v=1" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display=''">` : ''; /* 로컬 SVG(game-icons, 흰색) — 외부 API 의존 제거 */
   return `<span class="skic" style="--c:${col}">${img}<em style="${gi ? 'display:none' : ''}">${emoji}</em></span>`;
 }
 const SKILL_FX_COLOR = { power_strike: '#ffb347', whirlwind: '#ffd166', multishot: '#e8d9a0', piercing: '#f6e58d',

@@ -191,13 +191,13 @@
   /* 팝업: 가로 90%, 세로는 하단 UI(독·핫바·푸터) 위까지만 — 예전 90vh는 가방 아랫줄이 독과 겹쳤다 */
   #invPanel.open, .sidepanel.open { left: 50% !important; transform: translateX(-50%); z-index: 58;
     top: 14px !important; bottom: 190px; height: auto; width: 90vw; max-height: none; overflow-y: auto; }
+  #dexPanel.open { width: min(90vw, 1000px); } /* 도감은 카드가 작아 꽉 채울 필요 없음 */
   #worldMap.open { z-index: 60; }
   #deadOv { z-index: 65 !important; }
   .tTier { color: #ffd700; font-size: 12px; font-weight: bold; margin: 10px 2px 6px; letter-spacing: 1px; }
   .tTier span { color: #889; font-weight: normal; font-size: 10.5px; }
   .tGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
-  #treeBody { column-count: 2; column-gap: 18px; } /* 티어 섹션을 좌우 2열로 — 아래로만 길어지지 않게 */
-  #treeBody > * { break-inside: avoid; }
+  #treeBody { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 18px; align-items: start; } /* 티어를 2열 그리드로 — 다단(column)은 높이 제한 시 옆으로 넘쳤다 */
   .tnode .ti { font-size: 26px; } .tnode .tn { font-size: 11px; min-height: 28px; } .tnode .tc { font-size: 10.5px; }
   .tnode { background: rgba(255,255,255,.05); border: 1px solid #445; border-radius: 6px; padding: 6px 2px; text-align: center; cursor: pointer; }
   .tnode .ti { font-size: 20px; }
@@ -294,19 +294,20 @@
   .wmcell.wmlock { background: #15181e; color: #445; cursor: not-allowed; }
   @keyframes wmpulse { 50% { box-shadow: 0 0 10px #fff; } }
 
-  #dexBody { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 8px; align-content: start; } /* 90vw를 채우게 구역 카드를 여러 열로 */
+  #dexBody { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 6px; align-content: start; } /* 90vw를 채우게 구역 카드를 여러 열로 — min()으로 좁은 화면 넘침 방지 */
   #dexBody .dexsum { grid-column: 1 / -1; }
-  .dexrow { padding: 8px 10px; border-radius: 7px; background: rgba(255,255,255,.04); border-left: 3px solid #445; }
+  .dexrow { padding: 6px 8px; border-radius: 7px; background: rgba(255,255,255,.04); border-left: 3px solid #445; }
   .dexrow.dexconq { border-left-color: #2ecc71; }
   .dexrow.dexcur { border-left-color: #ffd700; background: rgba(255,215,0,.07); }
   .dexpage { color: #fff; font-size: 12.5px; font-weight: bold; margin-bottom: 4px; }
   .dexok { color: #2ecc71; font-size: 10px; margin-left: 6px; }
-  .dexmons { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-  .dexmon { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 4px 6px;
+  .dexmons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+  .dexmon { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 5px 3px 4px;
     background: rgba(255,255,255,.04); border: 1px solid #334; border-radius: 8px; }
-  .dexmon .dexic { width: 72px; height: 72px; object-fit: contain; image-rendering: pixelated; }
-  .dexmon .dexnm { font-size: 12px; color: #dfe; font-weight: bold; }
-  .dexmon .dexlv { font-size: 10.5px; color: #9ab; }
+  .dexmon .dexic { width: 52px; height: 52px; object-fit: contain; image-rendering: pixelated; }
+  .dexmon .dexic.smooth { image-rendering: auto; } /* VARCO 시트 썸네일 */
+  .dexmon .dexnm { font-size: 11px; color: #dfe; font-weight: bold; }
+  .dexmon .dexlv { font-size: 10px; color: #9ab; }
   .dexmon.seen { border-color: #2ecc71; }
   .dexmon.unseen .dexic { filter: grayscale(1) brightness(.45); opacity: .7; } /* 미발견: 회색 실루엣 */
   .dexmon.unseen .dexnm { color: #667; }
@@ -376,7 +377,20 @@
     #chatLog { height: 64px; }
 
     /* 가방 = 하단 시트 (열림/닫힘 display 규칙은 기본 규칙 공용) */
-    #invPanel.open, .sidepanel.open { top: 78px !important; bottom: calc(148px + env(safe-area-inset-bottom)); width: calc(100vw - 12px); }
+    /* 모든 창: 화면 좌우 6px 안쪽에 고정 — transform/100vw 계산은 iOS Safari에서 어긋나 창이 화면 밖으로 밀려났다 */
+    #invPanel.open, .sidepanel.open { top: 78px !important; bottom: calc(148px + env(safe-area-inset-bottom));
+      left: 6px !important; right: 6px; width: auto; max-width: none; transform: none; overflow-x: hidden; }
+    #dexPanel.open { width: auto; } /* 데스크톱용 min(90vw,1000px) 폭 해제 → 좌우 6px 고정 */
+    #dexBody { grid-template-columns: 1fr; }
+    .dexmons { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .dexmon .dexic { width: 100%; max-width: 52px; height: auto; aspect-ratio: 1; }
+    #treeBody { grid-template-columns: 1fr; }
+    .tGrid { grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); }
+    #equipGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+    #invGrid { grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); }
+    .islot .ic { width: 70%; height: 70%; font-size: 26px; line-height: 1; }
+    #wmBox { width: auto; left: 6px; right: 6px; max-width: none; padding: 12px; }
+    #slotPick, #itemTip { max-width: calc(100vw - 12px); }
     #invPanel { left: 6px; width: calc(100vw - 12px); top: auto; bottom: calc(130px + env(safe-area-inset-bottom));
       max-height: 46vh; z-index: 45; background: rgba(10,14,22,.95); }
 
@@ -560,7 +574,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=81"
+<script type="module" src="game.js?v=87"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

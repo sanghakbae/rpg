@@ -19,7 +19,7 @@ if (location.search.includes('emu=1')) {
 const WORLD = { w: 1600, h: 1200 };
 const SPAWN = { x: 800, y: 600 };
 const OFFLINE_MS = 35000;
-const BASE_BAG = 18, MAX_BAG = 36;
+const BASE_BAG = 18, MAX_BAG = 72; /* 6칸씩 9회 확장(비용 500G부터 2배씩) */
 const bagSize = () => Math.min(MAX_BAG, me.bagSize || BASE_BAG);
 const bagUpCost = () => 500 * Math.pow(2, (bagSize() - BASE_BAG) / 6);
 const MAX_SKILL_LV = 5;
@@ -762,11 +762,13 @@ const view = { x: 0, y: 0, z: 1 };
 /* 사용자 확대/축소 배율 (핀치·휠). 실제 배율은 draw()에서 화면 채움 배율과 곱해 clamp된다. */
 let userZoom = 1, pinchD0 = 0, pinchZ0 = 1;
 const USER_ZOOM_MIN = .5, USER_ZOOM_MAX = 3;
+const MOBILE_VIEW_W = 820; /* 모바일에서 화면 가로에 담을 월드 px */
 function setUserZoom(v) {
+  if (innerWidth <= 640) { userZoom = 1; return; } /* 모바일: 인앱 뷰포트 해상도 고정 — 핀치/휠 확대·축소 없음 */
   userZoom = clampN(v, USER_ZOOM_MIN, USER_ZOOM_MAX);
-  try { localStorage.setItem('zoom', String(userZoom)); } catch (e) {}
+  try { localStorage.setItem('zoom2', String(userZoom)); } catch (e) {} /* 'zoom' 키는 휠 폭주 버그 값이 남아 있어 폐기 */
 }
-try { const z0 = parseFloat(localStorage.getItem('zoom')); if (z0 > 0) userZoom = clampN(z0, USER_ZOOM_MIN, USER_ZOOM_MAX); } catch (e) {}
+try { const z0 = parseFloat(localStorage.getItem('zoom2')); if (z0 > 0) userZoom = clampN(z0, USER_ZOOM_MIN, USER_ZOOM_MAX); localStorage.removeItem('zoom'); } catch (e) {}
 let lastAttackAt = 0, lastPosWrite = 0, hurtUntil = 0, picking = false;
 let sentX = -1, sentY = -1, sentHp = -1, sentMp = null;
 let ready = false;
@@ -900,8 +902,24 @@ function kindSprId(k) {
   return sprId;
 }
 const mobThumbCache = {};
+/* 도감 썸네일: VARCO 시트가 있으면 정면(d=2) 셀 + 변종 색조 회전, 없으면 픽셀 스프라이트 */
 function mobThumb(k) {
   try {
+    const sh = heroSheet('mob_' + k.base);
+    if (sh) {
+      const ck = 'S:' + k.name;
+      if (mobThumbCache[ck]) return mobThumbCache[ck];
+      const m = sh.meta, F = m.fr, S = 128;
+      const c = document.createElement('canvas'); c.width = S; c.height = S;
+      const g = c.getContext('2d');
+      const bk = Object.values(KINDS).find(x => x.base === k.base);
+      let dh = 0;
+      if (bk && bk !== k) { dh = hueOf(k.main) - hueOf(bk.main); if (dh > 180) dh -= 360; if (dh < -180) dh += 360; if (Math.abs(dh) < 8) dh = 0; }
+      if (dh && 'filter' in g) g.filter = `hue-rotate(${Math.round(dh)}deg)`;
+      const kk = (S * .86) / Math.max(1, m.feet - m.top);
+      g.drawImage(sh.img, 2 * F, 0, F, F, S / 2 - F * kk / 2, S * .94 - m.feet * kk, F * kk, F * kk);
+      return (mobThumbCache[ck] = c.toDataURL());
+    }
     const key = kindSprId(k);
     if (!mobThumbCache[key]) mobThumbCache[key] = buildSprite(key).cv.toDataURL();
     return mobThumbCache[key];
@@ -1253,9 +1271,11 @@ async function handleKill(sim) {
   sysMsg(`${myName}님이 ${d2.name}을(를) 처치했습니다!${sim.type === 'boss' || sim.type === 'lich' ? ' 👑👑👑' : ''}`);
 }
 
+const DEX_DMG_BONUS = .05; /* 도감 효과: 처치 기록이 있는 종에게 주는 피해 +5% */
 async function attackResult(sim, dmg, crit) {
   const sb = setBonus().b;
   if (sim.boss && sb.bossMul) dmg = Math.round(dmg * (1 + sb.bossMul)); /* 세트: 보스 특효 증폭 */
+  { const dk = (sim.kind || (sdef(sim).name || '')).replace(/^★/, ''); if (dk && (me.dex || {})[dk]) dmg = Math.round(dmg * (1 + DEX_DMG_BONUS)); }
   const r = await dealDamage(sim, dmg);
   if (r === null || r === undefined) return;
   if (me.stLife && !me.dead && me.hp < maxHpOf()) { /* 흡혈: 가한 피해의 1%/pt 회복 */
@@ -2220,7 +2240,7 @@ function renderTree() {
     + `</div></div>`;
   for (let tier = 1; tier <= 10; tier++) {
     const req = treeTierReq(tier), cost = treeCost(tier);
-    html += `<div class="tTier">T${tier} <span>Lv${req.lv} · ${req.pts}pts · ${cost.toLocaleString()}G</span></div><div class="tGrid">`;
+    html += `<div class="tier"><div class="tTier">T${tier} <span>Lv${req.lv} · ${req.pts}pts · ${cost.toLocaleString()}G</span></div><div class="tGrid">`;
     for (const [id, d] of Object.entries(TREES[cls])) {
       if (d.tier !== tier) continue;
       const has = (me.tree || {})[id];
@@ -2230,7 +2250,7 @@ function renderTree() {
         + `<div class="tc">${has ? '✔' : cost.toLocaleString() + 'G'}</div>`
         + (has && d.kind === 'active' ? bindBtns(id) : '') + `</div>`;
     }
-    html += `</div>`;
+    html += `</div></div>`;
   }
   body.innerHTML = html;
   body.querySelectorAll('[data-tree]').forEach(el => el.onclick = () => buyTreeNode(el.dataset.tree));
@@ -2993,7 +3013,7 @@ const mm = $('minimap'), mctx = mm.getContext('2d');
 /* 백버퍼를 기기 픽셀비만큼 키워 렌더 — cvW/cvH는 CSS 픽셀 기준(기존 코드 의미 유지) */
 let dpr = 1, cvW = 0, cvH = 0;
 function resize() {
-  dpr = Math.min(devicePixelRatio || 1, innerWidth <= 640 ? 2 : 3); /* 모바일은 2배까지만 — 채움 비용 억제 */
+  dpr = Math.min(devicePixelRatio || 1, 3); /* 기기 픽셀비 그대로(최대 3) — 기본 렌더 해상도 최대화 */
   cvW = innerWidth; cvH = innerHeight;
   cv.width = Math.round(cvW * dpr); cv.height = Math.round(cvH * dpr);
   cv.style.width = cvW + 'px'; cv.style.height = cvH + 'px';
@@ -4000,6 +4020,7 @@ function loadSheet(key, e) {
     const img = new Image();
     img.onload = () => {
       e.img = img; e.meta = meta;
+      if (key.startsWith('mob_') && $('dexPanel')?.classList.contains('open')) { try { renderDex(); } catch (err) {} } /* 열려 있는 도감 썸네일 교체 */
       if (!key.startsWith('mob_')) { /* 로그인 초상화가 벡터로 먼저 그려졌으면 시트로 교체 */
         delete portraitCache[key];
         const pel = document.querySelector(`#loginScreen .lp[data-cls="${key}"] img`);
@@ -6032,7 +6053,8 @@ function draw(now) {
      균등 배율이라 찌그러지지 않고, 좌우 검은 여백도 생기지 않는다. */
   /* 화면을 최소한 꽉 채우는 배율(zFill) 아래로는 못 줄인다 — 줄이면 월드 밖 검은 여백이 생기므로 */
   const zFill = Math.max(vw / WORLD.w, (vh - T - B) / WORLD.h);
-  const z = clampN(Math.max(1, zFill) * userZoom, zFill, USER_ZOOM_MAX);
+  /* 모바일: 인앱 뷰포트 고정 배율 — 가로로 월드 약 820px가 보이도록 축소(1:1은 캐릭터가 화면을 압도했다). 렌더는 DPR 최대라 선명 */
+  const z = vw <= 640 ? clampN(vw / MOBILE_VIEW_W, zFill, 1) : clampN(Math.max(1, zFill) * userZoom, zFill, USER_ZOOM_MAX);
   const vwW = vw / z, vhW = vh / z, TW = T / z, BW = B / z;
   const availH = vhW - TW - BW;
   const cx = WORLD.w >= vwW ? clampN(cam.x - vwW / 2, 0, WORLD.w - vwW) : (WORLD.w - vwW) / 2;
@@ -6386,7 +6408,7 @@ function renderDex() {
   const card = (k, n, tag) => {
     const seen = !!dex[k.name];
     return `<div class="dexmon ${seen ? 'seen' : 'unseen'}" title="${esc(k.name)}${seen ? '' : ' — 미발견'}">
-      <img class="dexic" src="${mobThumb(k)}" alt="">
+      <img class="dexic ${heroSheet('mob_' + k.base) ? 'smooth' : ''}" src="${mobThumb(k)}" alt="">
       <div class="dexnm">${seen ? esc(k.name) : '???'}</div>
       <div class="dexlv">${tag ? tag + ' ' : ''}Lv${n}</div>
     </div>`;
@@ -6406,7 +6428,7 @@ function renderDex() {
     </div>`;
   }
   const total = MAX_PAGE * 3, got = Object.keys(dex).length;
-  body.innerHTML = `<div class="dexsum">도감 ${got} 종 발견 · ★유니크는 각 종류 10% 확률로 등장</div>` + html;
+  body.innerHTML = `<div class="dexsum">도감 ${got} 종 발견 · 발견한 종에게 주는 피해 <b style="color:#7fe3a0">+${Math.round(DEX_DMG_BONUS * 100)}%</b> · ★유니크는 각 종류 10% 확률로 등장</div>` + html;
 }
 
 let wmSelPage = 0, wmRefreshT = 0;
@@ -6735,9 +6757,10 @@ function tapWorld(x, y) {
 const pinchDist = ts => Math.hypot(ts[0].clientX - ts[1].clientX, ts[0].clientY - ts[1].clientY);
 cv.addEventListener('touchstart', e => {
   e.preventDefault();
-  if (e.touches.length >= 2) { /* 핀치 시작: 이동 입력은 취소 */
-    pinchD0 = pinchDist([...e.touches]); pinchZ0 = userZoom;
+  if (e.touches.length >= 2) { /* 두 손가락: 모바일은 배율 고정이라 아무것도 안 함(이동 입력만 취소) */
     touchDownId = null; dest = null;
+    if (innerWidth <= 640) return;
+    pinchD0 = pinchDist([...e.touches]); pinchZ0 = userZoom;
     return;
   }
   if (pinchD0) return; /* 핀치 중 손가락 추가 */

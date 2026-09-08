@@ -3023,15 +3023,22 @@ function drawSprite(name, x, y, scale = 4, opts = {}) {
 const cv = $('game'), ctx = cv.getContext('2d');
 const mm = $('minimap'), mctx = mm.getContext('2d');
 /* 백버퍼를 기기 픽셀비만큼 키워 렌더 — cvW/cvH는 CSS 픽셀 기준(기존 코드 의미 유지) */
-let dpr = 1, cvW = 0, cvH = 0;
+let dpr = 1, cvW = 0, cvH = 0, resizeT = 0;
 function resize() {
-  dpr = Math.min(devicePixelRatio || 1, innerWidth <= 640 ? 2 : 3); /* 모바일은 2배 상한 — 3배 백버퍼(≈3M px)는 인앱 브라우저에서 멈춤 유발 */
-  cvW = innerWidth; cvH = innerHeight;
-  cv.width = Math.round(cvW * dpr); cv.height = Math.round(cvH * dpr);
+  const mob = innerWidth <= 640;
+  let d = Math.min(devicePixelRatio || 1, mob ? 2 : 3);
+  /* 백버퍼 픽셀 예산: 모바일 2.4M / 데스크톱 9M — 초과하면 배율을 낮춰 인앱 브라우저 메모리 멈춤 방지 */
+  const budget = mob ? 2.4e6 : 9e6;
+  while (d > 1 && innerWidth * innerHeight * d * d > budget) d = Math.max(1, d - .25);
+  const W = Math.round(innerWidth * d), H = Math.round(innerHeight * d);
+  if (W === cv.width && H === cv.height && d === dpr) { cvW = innerWidth; cvH = innerHeight; return; } /* 치수 동일 → 재할당 생략 */
+  dpr = d; cvW = innerWidth; cvH = innerHeight;
+  cv.width = W; cv.height = H;
   cv.style.width = cvW + 'px'; cv.style.height = cvH + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
-addEventListener('resize', resize);
+/* 핀치/회전 중 resize가 연속으로 터지면 매번 백버퍼를 재할당해 멈춤 → 120ms 디바운스 */
+addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(resize, 120); });
 resize();
 
 /* ================= 월드 텍스처 (프리렌더) ================= */
@@ -4066,7 +4073,11 @@ const HERO_SHEET_H = 118; /* 시트 알파 박스(치켜든 무기 끝 포함)�
    매니페스트가 없으면(구버전 배포) 예전처럼 직접 시도 */
 let sheetManifest = null; /* null=로딩 전, Set=목록, false=없음 */
 const sheetManifestP = fetch(`assets/sprites/manifest.json?v=${SHEET_VER}`).then(r => r.ok ? r.json() : Promise.reject())
-  .then(list => { sheetManifest = new Set(list); }).catch(() => { sheetManifest = false; });
+  .then(list => { sheetManifest = new Set(list); }).catch(() => { sheetManifest = false; })
+  .finally(() => { try {
+    for (const k of ['warrior', 'archer', 'rogue', 'mage']) { if (sheetManifest && sheetManifest.has(k)) heroSheet(k); /* 시트 로드 → 로드 완료 시 초상화 교체 */
+      else { const el = document.querySelector(`#loginScreen .lp[data-cls="${k}"] img`); if (el) el.src = heroPortrait(k); } }
+  } catch (e) {} });
 function loadSheet(key, e) {
   fetch(`assets/sprites/${key}.json?v=${SHEET_VER}`).then(r => r.ok ? r.json() : Promise.reject(r.status)).then(meta => {
     const img = new Image();
@@ -4147,7 +4158,7 @@ function heroFrames(cls, eq, faceBake = Math.PI / 2) {
   if (set) { frameCache.delete(key); frameCache.set(key, set); return set; } /* LRU */
   set = bakeHeroFrames(cls, eq || {}, faceBake);
   frameCache.set(key, set);
-  while (frameCache.size > 6) frameCache.delete(frameCache.keys().next().value);
+  while (frameCache.size > (innerWidth <= 640 ? 2 : 6)) frameCache.delete(frameCache.keys().next().value); /* 세트당 ≈12MB */
   return set;
 }
 /* 베이크 후처리: 실루엣 외곽선 + 상하 라이팅 + 좌상단 림라이트.
@@ -4238,7 +4249,11 @@ const portraitCache = {};
 function heroPortrait(cls) {
   if (portraitCache[cls]) return portraitCache[cls];
   const eq = PORTRAIT_GEAR[cls] || {};
-  const set = heroSheet(cls) ? null : heroFrames(cls, eq, -1.1); /* 시트가 있으면 벡터 베이크 생략 */
+  const sh0 = heroSheet(cls);
+  /* 벡터 20프레임 베이크는 세트당 ≈12MB — 시트가 있거나(또는 매니페스트 확인 전이면) 굽지 않는다.
+     매니페스트가 '시트 없음'으로 확정된 직업만 벡터로 그린다 */
+  const needVector = !sh0 && sheetManifest !== null && !(sheetManifest && sheetManifest.has(cls));
+  const set = needVector ? heroFrames(cls, eq, -1.1) : null;
   const W = 150, H = 150;
   const cv2 = document.createElement('canvas');
   cv2.width = W; cv2.height = H;
@@ -4254,11 +4269,14 @@ function heroPortrait(cls) {
   if (sh) {
     const m = sh.meta, F = m.fr, k = 118 / Math.max(1, m.feet - m.top); /* 발 y=108, 시트 박스 높이 118 */
     c.drawImage(sh.img, 2 * F, 0, F, F, W / 2 - F * k / 2, 108 - m.feet * k, F * k, F * k);
-  } else {
+  } else if (set) {
     c.drawImage(set.walk[2], 11, 11, 128, 128);
+  } else { /* 시트 로딩 중 플레이스홀더: 직업 아이콘 — loadSheet가 완료되면 초상화를 다시 만든다 */
+    c.font = '54px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText((CLASSES[cls] && CLASSES[cls].icon) || '✦', W / 2, 74);
   }
   const url = cv2.toDataURL();
-  portraitCache[cls] = url;
+  if (sh || set) portraitCache[cls] = url; /* 플레이스홀더는 캐시하지 않음 */
   return url;
 }
 

@@ -131,6 +131,8 @@
   .hslot .key { position: absolute; top: 3px; left: 6px; font-size: 10px; color: #888; }
   .hslot .ic2 { font-size: 19px; }
   .hslot .nm { font-size: 9.5px; color: #aab; margin-top: 2px; }
+  #quotaBar { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 70; display: none; max-width: calc(100vw - 24px);
+    background: rgba(140,24,24,.94); color: #fff; padding: 9px 16px; border-radius: 9px; font-size: 13px; font-weight: bold; box-shadow: 0 4px 18px rgba(0,0,0,.6); text-align: center; }
   /* 스킬 아이콘 배지 (game-icons + 스킬 색) */
   .skic { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 10px; vertical-align: middle;
     background: var(--c); background: radial-gradient(circle at 35% 28%, color-mix(in srgb, var(--c) 45%, #fff) 0%, var(--c) 42%, color-mix(in srgb, var(--c) 45%, #000) 100%);
@@ -405,6 +407,7 @@
     .islot .ic { width: 70%; height: 70%; font-size: 26px; line-height: 1; }
     #wmBox { width: auto; left: 6px; right: 6px; max-width: none; padding: 12px; }
     #slotPick, #itemTip { max-width: calc(100vw - 12px); }
+    #quotaBar { top: 82px; font-size: 11.5px; padding: 7px 10px; }
     #attrib { display: none; } /* 푸터가 두 줄로 늘어나 핫바를 덮던 것 — 출처는 데스크톱/privacy.html */
     #footer { white-space: nowrap; overflow: hidden; }
     #invPanel { left: 6px; width: calc(100vw - 12px); top: auto; bottom: calc(130px + env(safe-area-inset-bottom));
@@ -591,7 +594,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=97"
+<script type="module" src="game.js?v=104"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

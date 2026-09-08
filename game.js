@@ -18,7 +18,7 @@ if (location.search.includes('emu=1')) {
 /* ================= 상수 ================= */
 const WORLD = { w: 1600, h: 1200 };
 const SPAWN = { x: 800, y: 600 };
-const OFFLINE_MS = 35000;
+const OFFLINE_MS = 45000; /* 심박 20s 기준 여유 */
 const BASE_BAG = 18, MAX_BAG = 72; /* 6칸씩 9회 확장(비용 500G부터 2배씩) */
 const bagSize = () => Math.min(MAX_BAG, me.bagSize || BASE_BAG);
 const bagUpCost = () => 500 * Math.pow(2, (bagSize() - BASE_BAG) / 6);
@@ -779,6 +779,14 @@ let loginAt = Date.now();
 let shakeT = 0, shakePow = 0, lastRegenWrite = 0, dustT = 0, hpDirty = false;
 let goldHintShown = false;
 let hitStopUntil = 0, mapFading = false, portalHintT = 0;
+let quotaHitAt = 0; /* Firestore resource-exhausted 감지 시각 */
+function onQuotaExceeded() {
+  quotaHitAt = Date.now();
+  let el = document.getElementById('quotaBar');
+  if (!el) { el = document.createElement('div'); el.id = 'quotaBar'; document.body.appendChild(el); }
+  el.textContent = '⚠️ 서버 일일 저장 한도 초과(Firestore 무료 할당량) — 전투 결과·진행이 저장되지 않습니다. 매일 16~17시(KST)경 초기화';
+  el.style.display = 'block';
+}
 const skillCdUntil = {};
 
 const PALETTE = ['#e74c3c', '#3498db', '#9b59b6', '#1abc9c', '#f39c12', '#e91e63', '#00bcd4'];
@@ -1022,6 +1030,7 @@ function watchMonsters() {
   othersPrev = {};
   unsubMon = onSnapshot(query(collection(db, 'monsters'), where('page', '==', myPage())), snap => {
     monErr = '';
+    window.__snapN = (window.__snapN || 0) + 1; window.__snapT = Date.now(); /* 진단: 스냅샷 도착 횟수/시각 */
     const EXPECT = 13;
     if (snap.size < EXPECT && Date.now() - pageRetryT > 8000) {
       pageRetryT = Date.now();
@@ -1222,7 +1231,13 @@ function dealDamage(sim, dmg) {
     }
     tx.update(ref, { hp: nhp });
     return false;
-  }).catch(() => null);
+  }).catch(err => {
+    /* 쓰기 실패가 조용히 묻히면 '공격은 되는데 피가 안 단다'로 보인다 — 화면에 1회 알리고 진단 훅에 남긴다 */
+    window.__lastErr = { at: Date.now(), where: 'dealDamage', code: err && err.code, msg: String(err && err.message || err) };
+    if (err && err.code === 'resource-exhausted') onQuotaExceeded();
+    else if (!dealDamage._warned) { dealDamage._warned = true; try { toast('⚠️ 서버 쓰기 실패: ' + esc((err && err.code) || (err && err.message) || err) + ' — 피해가 반영되지 않습니다'); } catch (e) {} }
+    return null;
+  });
 }
 
 async function handleKill(sim) {
@@ -1275,12 +1290,18 @@ async function handleKill(sim) {
 }
 
 const DEX_DMG_BONUS = .05; /* 도감 효과: 처치 기록이 있는 종에게 주는 피해 +5% */
+/* 피해 쓰기 묶음: 예전엔 타격마다 트랜잭션 1회(= 읽기 1 + 쓰기 1)라 전투 1시간에 4천 쓰기 — Firestore 무료 한도(하루 2만)를 두 시간이면 소진했다.
+   이제 타격은 로컬에서 즉시 반영(HP바·숫자·넉백)하고, 서버 반영은 몬스터별로 1.1초마다 합산 1회. 처치가 예상되면 즉시 flush. 서버가 권위(스냅샷이 로컬 값을 덮어씀) */
+const dmgQueue = new Map();
+const DMG_FLUSH_MS = 1800; /* 로컬 예측이 즉시 보이므로 서버 확정은 1.8초 합산으로 충분 */
 async function attackResult(sim, dmg, crit) {
   const sb = setBonus().b;
   if (sim.boss && sb.bossMul) dmg = Math.round(dmg * (1 + sb.bossMul)); /* 세트: 보스 특효 증폭 */
   { const dk = (sim.kind || (sdef(sim).name || '')).replace(/^★/, ''); if (dk && (me.dex || {})[dk]) dmg = Math.round(dmg * (1 + DEX_DMG_BONUS)); }
-  const r = await dealDamage(sim, dmg);
-  if (r === null || r === undefined) return;
+  if (!sim.alive) return;
+  /* 즉시 시각 피드백 (로컬 예측) */
+  sim.hp = Math.max(0, (typeof sim.hp === 'number' ? sim.hp : sim.maxHp) - dmg);
+  sim.hitFlash = Date.now();
   if (me.stLife && !me.dead && me.hp < maxHpOf()) { /* 흡혈: 가한 피해의 1%/pt 회복 */
     me.hp = Math.min(maxHpOf(), me.hp + dmg * me.stLife * .01);
     hpDirty = true;
@@ -1294,7 +1315,21 @@ async function attackResult(sim, dmg, crit) {
   fxSparks(sim.x, sim.y - sdef(sim).r * .3, crit ? 12 : 6, crit ? '#ffd700' : '#ffecb3', crit ? 160 : 100);
   if (crit) { doShake(7); hitStopUntil = Math.max(hitStopUntil, Date.now() + 42); }
   sfx(crit ? 'crit' : 'hit');
-  if (r) { hitStopUntil = Math.max(hitStopUntil, Date.now() + 72); doShake(9); await handleKill(sim); }
+  /* 서버 반영은 묶어서 */
+  let q = dmgQueue.get(sim.id);
+  if (!q) { q = { sim, total: 0, timer: 0 }; dmgQueue.set(sim.id, q); }
+  q.total += dmg;
+  if (sim.hp <= 0) flushDamage(sim.id); /* 처치 예상 → 즉시 확정 */
+  else if (!q.timer) q.timer = setTimeout(() => flushDamage(sim.id), DMG_FLUSH_MS);
+}
+async function flushDamage(id) {
+  const q = dmgQueue.get(id);
+  if (!q) return;
+  dmgQueue.delete(id); clearTimeout(q.timer);
+  const r = await dealDamage(q.sim, q.total);
+  window.__lastDmg = { id, dmg: q.total, r, at: Date.now() }; /* 진단: null=문서없음/죽음/쓰기실패, false=피해, true=처치 */
+  if (r === true) { hitStopUntil = Math.max(hitStopUntil, Date.now() + 72); doShake(9); await handleKill(q.sim); }
+  /* r===null(이미 죽음/쓰기 실패)이면 스냅샷이 서버 값으로 되돌린다 */
 }
 
 function nearestSim(maxD) {
@@ -1509,10 +1544,7 @@ function useSkill(slot) {
       attackResult(v, dmg, false);
     }
   } else if (TREES_ALL[id]) castTreeSkill(id);
-  if (mpc) {
-    me.mp = (me.mp ?? maxMpOf()) - mpc;
-    updateDoc(meRef, { mp: Math.round(me.mp) }).catch(() => {});
-  }
+  if (mpc) me.mp = (me.mp ?? maxMpOf()) - mpc; /* 서버 반영은 위치 심박(mp 변화 ≥5)에 묶임 */
   heroCast = { id, t0: now, dur: CAST_DUR[id] || 450 }; /* 스킬 시전 모션 트리거 */
   skillCdUntil[id] = now + def.cd;
 }
@@ -7144,9 +7176,10 @@ function loopBody(t) {
   if (!Number.isFinite(me.x) || !Number.isFinite(me.y)) { me.x = SPAWN.x; me.y = SPAWN.y; cam.x = me.x; cam.y = me.y; }
   if (!Number.isFinite(me.hp)) me.hp = maxHpOf(); /* 비정상 HP가 Firestore로 퍼지는 것 차단 */
   if (me.mp != null && !Number.isFinite(me.mp)) me.mp = maxMpOf();
-  const movedFar = Math.abs(me.x - sentX) + Math.abs(me.y - sentY) > 2;
+  const movedFar = Math.abs(me.x - sentX) + Math.abs(me.y - sentY) > 16; /* 2px→16px: 미세 이동은 보내지 않음 */
   const mpChanged = me.mp != null && (Math.abs(Math.round(me.mp) - (sentMp ?? 0)) >= 5 || (Math.round(me.mp) !== sentMp && me.mp >= maxMpOf()));
-  if ((now - lastPosWrite > 600 && (movedFar || hpDirty || mpChanged)) || now - lastPosWrite > 8000) {
+  const quotaBackoff = now - quotaHitAt < 60000; /* 한도 초과 직후 1분은 쓰기 중단 */
+  if (!quotaBackoff && ((now - lastPosWrite > 1500 && (movedFar || hpDirty || mpChanged)) || now - lastPosWrite > 20000)) { /* 600ms→1.5s, 심박 8s→20s: 쓰기 1/3 */
     lastPosWrite = now;
     hpDirty = false;
     sentX = me.x; sentY = me.y; sentHp = Math.round(me.hp || 0); sentMp = me.mp != null ? Math.round(me.mp) : null;
@@ -7374,7 +7407,7 @@ function waitForLoginClick() {
 }
 
 /* ================= 시작 ================= */
-setInterval(() => { if (uid && meRef) updateDoc(meRef, { lastSeen: Date.now() }).catch(() => {}); }, 15000);
+/* (제거) 15초 lastSeen 별도 쓰기 — 위치 심박(20s)에 lastSeen이 포함돼 중복이었다 */
 setInterval(() => {
   let n = 1;
   for (const [, o] of Object.entries(others)) if (Date.now() - (o.lastSeen || 0) < OFFLINE_MS) n++;
@@ -7382,6 +7415,7 @@ setInterval(() => {
   if (el) el.textContent = n;
 }, 1000);
 
+window.addEventListener('unhandledrejection', ev => { try { const r = ev.reason; window.__lastErr = { at: Date.now(), where: 'unhandledrejection', code: r && r.code, msg: String(r && (r.stack || r.message) || r).slice(0, 400) }; } catch (e) {} });
 window.addEventListener('error', ev => {
   const el = $('loading');
   if (el && el.style.display !== 'none' && !String(ev.message).includes('favicon')) {
@@ -7478,8 +7512,12 @@ async function init() {
   ready = true;
   loginAt = Date.now();
   window.__HIT = (sx, sy) => { const r = simAt(sx, sy); return { world: r.w, hit: r.s ? { id: r.s.id, kind: r.s.kind, x: Math.round(r.s.x), y: Math.round(r.s.y) } : null }; };
-  window.__SIMS = () => sims.filter(v => v.alive && v.map === myMap()).slice(0, 8).map(v => ({ id: v.id, kind: v.kind, x: Math.round(v.x), y: Math.round(v.y), r: (sdef(v).r || 16), sx: Math.round((v.x - view.x) * (view.z || 1)), sy: Math.round((v.y - view.y) * (view.z || 1)) }));
-  window.__DBG = () => ({ page: myPage(), sheets: Object.fromEntries(Object.entries(HERO_SHEETS).map(([k, v]) => [k, v.img ? 'ok' : v.failed ? 'failed' : 'loading'])), target: attackTargetSimId, hover: hoverSimId, dest: dest && { x: Math.round(dest.x), y: Math.round(dest.y) }, zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),
+  window.__SIMS = () => sims.filter(v => v.alive && v.map === myMap()).slice(0, 8).map(v => ({ id: v.id, kind: v.kind, hp: v.hp, maxHp: v.maxHp, x: Math.round(v.x), y: Math.round(v.y), r: (sdef(v).r || 16), sx: Math.round((v.x - view.x) * (view.z || 1)), sy: Math.round((v.y - view.y) * (view.z || 1)) }));
+  window.__TX = () => Promise.race([runTransaction(db, async tx => { const g = await tx.get(meRef); tx.update(meRef, { lastSeen: Date.now() }); return 'tx-ok:' + g.exists(); }), new Promise(r => setTimeout(() => r('tx-timeout'), 8000))]).catch(e => 'tx-error:' + (e.code || e.message)); /* 진단: 트랜잭션 경로 */
+  window.__DD = async id => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; const t0 = performance.now(); const r = await Promise.race([dealDamage(sm, 1), new Promise(rs => setTimeout(() => rs('dd-timeout'), 8000))]); return { r, ms: Math.round(performance.now() - t0) }; };
+  window.__PING = () => Promise.race([updateDoc(meRef, { lastSeen: Date.now() }).then(() => 'write-ok'), new Promise(r => setTimeout(() => r('write-timeout'), 8000))]).catch(e => 'write-error:' + (e.code || e.message)); /* 진단: 쓰기 채널 상태 */
+  window.__MOB = async id => { const g = await getDoc(doc(db, 'monsters', id)); return g.exists() ? g.data() : null; };
+  window.__DBG = () => ({ page: myPage(), frozenMs: hitStopUntil - Date.now(), activeIsChat: document.activeElement === chatInput, activeTag: document.activeElement && document.activeElement.tagName + '#' + document.activeElement.id, wmUp: worldMapOpen(), mouseDown, moveSpd: moveSpd(), atkRange: atkRange(), atkCdMs: atkCdOf(), sinceAtk: Date.now() - lastAttackAt, mapFading, snapN: window.__snapN || 0, snapAgoMs: window.__snapT ? Date.now() - window.__snapT : null, lastDmg: window.__lastDmg || null, lastErr: window.__lastErr || null, dead: !!me.dead, paused, ready, sheets: Object.fromEntries(Object.entries(HERO_SHEETS).map(([k, v]) => [k, v.img ? 'ok' : v.failed ? 'failed' : 'loading'])), target: attackTargetSimId, hover: hoverSimId, dest: dest && { x: Math.round(dest.x), y: Math.round(dest.y) }, zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),
     me: { x: Math.round(me.x), y: Math.round(me.y), lv: me.lv, map: me.map, bag: me.bagSize, conq: JSON.stringify(me.conq || {}) },
     sims: sims.filter(s => s.alive).slice(0, 20).map(s => ({ id: s.id, x: Math.round(s.x), y: Math.round(s.y), d: Math.round(Math.hypot(s.x - me.x, s.y - me.y)), boss: s.boss, lv: simLevel(s) })) });
   $('loading').style.display = 'none';

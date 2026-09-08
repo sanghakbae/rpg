@@ -3013,7 +3013,7 @@ const mm = $('minimap'), mctx = mm.getContext('2d');
 /* 백버퍼를 기기 픽셀비만큼 키워 렌더 — cvW/cvH는 CSS 픽셀 기준(기존 코드 의미 유지) */
 let dpr = 1, cvW = 0, cvH = 0;
 function resize() {
-  dpr = Math.min(devicePixelRatio || 1, 3); /* 기기 픽셀비 그대로(최대 3) — 기본 렌더 해상도 최대화 */
+  dpr = Math.min(devicePixelRatio || 1, innerWidth <= 640 ? 2 : 3); /* 모바일은 2배 상한 — 3배 백버퍼(≈3M px)는 인앱 브라우저에서 멈춤 유발 */
   cvW = innerWidth; cvH = innerHeight;
   cv.width = Math.round(cvW * dpr); cv.height = Math.round(cvH * dpr);
   cv.style.width = cvW + 'px'; cv.style.height = cvH + 'px';
@@ -3285,9 +3285,49 @@ function resolveCollide() {
 }
 
 const mapTexs = {};
+/* 바이옴별 지형 색보정 — 이전엔 100구역 전부 초원 텍스처 하나를 써서 '사막·설원·화산'이 이름뿐이었다.
+   filter(색조·채도·밝기) + 색 오버레이로 같은 지형을 구역 분위기에 맞게 물들인다(Safari는 filter 미지원 → 오버레이만) */
+const BIOME_GRADE = [
+  null,                                                                                   /* 초원: 원본 */
+  { f: 'hue-rotate(-8deg) saturate(1.1) brightness(.72)', o: 'rgba(15,45,30,.30)' },      /* 어두운 숲 */
+  { f: 'hue-rotate(-70deg) saturate(.75) brightness(1.18)', o: 'rgba(214,176,96,.32)' },   /* 사막 */
+  { f: 'saturate(.18) brightness(1.55)', o: 'rgba(222,236,255,.40)' },                     /* 설원 */
+  { f: 'hue-rotate(22deg) saturate(.85) brightness(.72)', o: 'rgba(40,72,44,.34)' },       /* 못가 */
+  { f: 'hue-rotate(-118deg) saturate(1.05) brightness(.62)', o: 'rgba(130,28,12,.36)' },   /* 화산 */
+  { f: 'saturate(.3) brightness(.42)', o: 'rgba(28,34,60,.50)' },                          /* 동굴 */
+  { f: 'saturate(.55) brightness(.78)', o: 'rgba(96,94,84,.30)' },                         /* 폐허 */
+  { f: 'hue-rotate(150deg) saturate(1.1) brightness(.55)', o: 'rgba(64,18,96,.42)' },      /* 마계 */
+  { f: 'saturate(.9) brightness(1.18)', o: 'rgba(150,196,255,.30)' },                      /* 천공 */
+];
+const bioTexCache = new Map(); /* 바이옴 텍스처는 크므로(데스크톱 3200x2400) 최근 2개만 보관 */
+function gradeWorld(src, gr) {
+  const c = document.createElement('canvas');
+  c.width = src.width; c.height = src.height;
+  const g = c.getContext('2d');
+  if ('filter' in g) g.filter = gr.f;
+  g.drawImage(src, 0, 0);
+  g.filter = 'none';
+  g.globalCompositeOperation = 'source-atop';
+  g.fillStyle = gr.o;
+  g.fillRect(0, 0, c.width, c.height);
+  g.globalCompositeOperation = 'source-over';
+  return c;
+}
+function biomeIndexOf(mp) {
+  const m = /^p(\d+)$/.exec(mp || '');
+  return m ? Math.min(BIOMES.length - 1, Math.floor((+m[1] - 1) / 10)) : 0;
+}
 function getTex(mp) {
-  if (!mapTexs[mp]) mapTexs[mp] = mp === 'm2' ? buildWorldM2() : worldTex;
-  return mapTexs[mp];
+  if (mp === 'm2') { if (!mapTexs.m2) mapTexs.m2 = buildWorldM2(); return mapTexs.m2; }
+  const bi = biomeIndexOf(mp), gr = BIOME_GRADE[bi];
+  if (!gr) return worldTex;
+  let t = bioTexCache.get(bi);
+  if (!t) {
+    t = gradeWorld(worldTex, gr);
+    bioTexCache.set(bi, t);
+    if (bioTexCache.size > 2) bioTexCache.delete(bioTexCache.keys().next().value);
+  }
+  return t;
 }
 
 function buildWorldM2() {
@@ -4019,7 +4059,15 @@ function loadSheet(key, e) {
   fetch(`assets/sprites/${key}.json?v=${SHEET_VER}`).then(r => r.ok ? r.json() : Promise.reject(r.status)).then(meta => {
     const img = new Image();
     img.onload = () => {
-      e.img = img; e.meta = meta;
+      if (innerWidth <= 640 && meta.fr > 256) { /* 모바일: 시트 절반 해상도 — 9장 72MB가 인앱 브라우저 메모리를 압박했다 */
+        try {
+          const k = .5, c = document.createElement('canvas');
+          c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+          const g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(img, 0, 0, c.width, c.height);
+          meta = { ...meta, fr: meta.fr * k, top: meta.top * k, feet: meta.feet * k };
+          e.img = c; e.meta = meta;
+        } catch (err) { e.img = img; e.meta = meta; }
+      } else { e.img = img; e.meta = meta; }
       if (key.startsWith('mob_') && $('dexPanel')?.classList.contains('open')) { try { renderDex(); } catch (err) {} } /* 열려 있는 도감 썸네일 교체 */
       if (!key.startsWith('mob_')) { /* 로그인 초상화가 벡터로 먼저 그려졌으면 시트로 교체 */
         delete portraitCache[key];
@@ -6899,7 +6947,7 @@ function stageMode() {
       /* 배경: 늘리지 않고 커버 크롭 — 창을 가로로 늘려도 지형이 찌그러지지 않는다 */
       { const bs = Math.max(cvW / WORLD.w, cvH / WORLD.h);
         const sw = Math.min(WORLD.w, cvW / bs), sh = Math.min(WORLD.h, cvH / bs);
-        const t = getTex('p1'), k = t.width / WORLD.w;
+        const t = getTex('p' + (new URLSearchParams(location.search).get('page') || 1)), k = t.width / WORLD.w; /* ?page=N: 바이옴 텍스처 확인 */
         ctx.drawImage(t, (WORLD.w - sw) / 2 * k, (WORLD.h - sh) / 2 * k, sw * k, sh * k, 0, 0, cvW, cvH); }
       ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.fillRect(0, 0, cvW, LY.head);
       ctx.fillStyle = '#ffd700'; ctx.font = 'bold ' + LY.f1 + 'px sans-serif'; ctx.textAlign = 'left';

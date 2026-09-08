@@ -4005,6 +4005,42 @@ function heroSheet(key) {
 }
 /* face 각도(0=오른쪽, π/2=아래) → 시트 방향 인덱스 0..7 */
 const sheetDir = face => ((Math.round(face / (Math.PI / 4)) % 8) + 8) % 8;
+window.__SHEETS = () => Object.fromEntries(Object.entries(HERO_SHEETS).map(([k, v]) => [k, v.img ? 'ok' : v.failed ? 'failed' : 'loading'])); /* 스테이지 모드에서도 쓰는 진단 훅 */
+/* ===== VARCO 몬스터 시트 =====
+   키 'mob_<base>'. 시트가 없으면 false → 호출부가 기존 픽셀 스프라이트로 폴백.
+   팔레트 변종(레드 슬라임·서리늑대 등)은 베이스 kind 색과의 색조(hue) 차이만큼 hue-rotate 필터로 재현 */
+const MOB_SHEET_H = { slime: 3.4, goblin: 4.4, wolf: 3.8, skeleton: 4.6, orc: 4.4, lich: 4.4 }; /* 반경 r 대비 화면 높이 배수 */
+function hueOf(hex) {
+  const [r, g, b] = hexToRgb3(hex).map(v => v / 255);
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+  if (d < 1e-4) return 0;
+  let h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return ((h * 60) + 360) % 360;
+}
+const _mobHueCache = {};
+function mobHueShift(s, base) {
+  if (!s.kind) return 0;
+  if (_mobHueCache[s.kind] !== undefined) return _mobHueCache[s.kind];
+  const kk = mobKindByName(s.kind), bk = Object.values(KINDS).find(k => k.base === base);
+  let dh = 0;
+  if (kk && bk && kk !== bk) { dh = hueOf(kk.main) - hueOf(bk.main); if (dh > 180) dh -= 360; if (dh < -180) dh += 360; if (Math.abs(dh) < 8) dh = 0; }
+  return (_mobHueCache[s.kind] = Math.round(dh));
+}
+function drawMobSheet(s, base, x, y, opts = {}) {
+  const sh = heroSheet('mob_' + base);
+  if (!sh) return false;
+  const m = sh.meta, F = m.fr, d = sheetDir(s.dirA ?? Math.PI / 2);
+  const H = r0(s) * (MOB_SHEET_H[base] || 4.2), k = H / Math.max(1, m.feet - m.top);
+  ctx.save();
+  ctx.translate(x, y - (opts.bob || 0));
+  if (opts.squashX || opts.squashY) ctx.scale(opts.squashX || 1, opts.squashY || 1);
+  const dh = mobHueShift(s, base);
+  if (dh && 'filter' in ctx) ctx.filter = `hue-rotate(${dh}deg)`; /* Safari 캔버스는 filter 미지원 → 무채색 유지 */
+  if (opts.flash) ctx.globalAlpha = 1 - opts.flash * .6;
+  ctx.drawImage(sh.img, d * F, 0, F, F, -F * k / 2, -m.feet * k, F * k, F * k);
+  ctx.restore();
+  return true;
+}
 const FR_WALK = 8, FR_IDLE = 4, FR_ATK = 6;
 const frameCache = new Map();
 function heroFrames(cls, eq, faceBake = Math.PI / 2) {
@@ -4569,6 +4605,11 @@ function drawChar(o) {
   ctx.shadowBlur = 0;
 }
 
+/* 몬스터 머리 꼭대기 y — VARCO 시트가 그려지는 중이면 시트 높이(r×MOB_SHEET_H), 아니면 예전 픽셀 기준 r×2.1 */
+function mobTopY(s) {
+  const base = s.type, r = sdef(s).r;
+  return (MOB_SHEET_H[base] && heroSheet('mob_' + base)) ? s.y - r * MOB_SHEET_H[base] : s.y - r * 2.1;
+}
 function mobUI(s, wide) {
   const d2 = sdef(s);
   const r = d2.r;
@@ -4587,7 +4628,7 @@ function mobUI(s, wide) {
   /* 어그로 느낌표: 플레이어를 노리기 시작한 순간 0.7초 */
   if (s.alertT && Date.now() - s.alertT < 700) {
     const p = 1 - (Date.now() - s.alertT) / 700;
-    const ay = s.y - r * 2.1 - 14 - (1 - p) * 6;
+    const ay = mobTopY(s) - 14 - (1 - p) * 6;
     ctx.globalAlpha = Math.min(1, p * 2);
     ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
     ctx.fillStyle = '#ffd700';
@@ -4597,7 +4638,7 @@ function mobUI(s, wide) {
   }
   if (s.hp < d2.hp || isBoss || isU) {
     const w = wide ? r * 2.7 : r * 2;
-    const y = s.y - r - (wide ? 38 : 18);
+    const y = Math.min(s.y - r - (wide ? 38 : 18), mobTopY(s) - (wide ? 30 : 12)); /* 시트가 더 크면 그 위로 */
     ctx.fillStyle = 'rgba(0,0,0,.6)';
     roundRect(ctx, s.x - w / 2 - 1.5, y - 1.5, w + 3, (wide ? 9 : 7) + 3, 3.5); ctx.fill();
     ctx.fillStyle = isU ? '#ff4d4d' : isBoss ? '#ff4040' : '#e74c3c';
@@ -5051,7 +5092,8 @@ function drawSlime(s, now) {
   ctx.beginPath(); ctx.ellipse(s.x, s.y + 10, r0(s) * .95, r0(s) * .36, 0, 0, 7); ctx.fill();
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  drawSprite(s.sprId || 'slime', s.x, s.y + 9, s.uniq ? 5.6 : 4.5, { squashX: 1 + wob * .07, squashY: 1 - wob * .07, flash, bob: s.movingF ? Math.abs(Math.sin(now / 140 + s.blink)) * 3 : 0 });
+  if (!drawMobSheet(s, 'slime', s.x, s.y + 9, { squashX: 1 + wob * .07, squashY: 1 - wob * .07, flash, bob: s.movingF ? Math.abs(Math.sin(now / 140 + s.blink)) * 3 : 0 }))
+    drawSprite(s.sprId || 'slime', s.x, s.y + 9, s.uniq ? 5.6 : 4.5, { squashX: 1 + wob * .07, squashY: 1 - wob * .07, flash, bob: s.movingF ? Math.abs(Math.sin(now / 140 + s.blink)) * 3 : 0 });
   drawKindExtras(s, now);
   mobUI(s, false);
 }
@@ -5062,7 +5104,8 @@ function drawGoblin(s, now) {
   ctx.beginPath(); ctx.ellipse(s.x, s.y + 12, r0(s) * .95, r0(s) * .36, 0, 0, 7); ctx.fill();
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  drawSprite(s.sprId || 'goblin', s.x, s.y + 11, s.uniq ? 5.6 : 4.5, { flash, bob: s.movingF ? Math.abs(Math.sin(now / 110)) * 3 : 0 });
+  if (!drawMobSheet(s, 'goblin', s.x, s.y + 11, { flash, bob: s.movingF ? Math.abs(Math.sin(now / 110)) * 3 : 0 }))
+    drawSprite(s.sprId || 'goblin', s.x, s.y + 11, s.uniq ? 5.6 : 4.5, { flash, bob: s.movingF ? Math.abs(Math.sin(now / 110)) * 3 : 0 });
   drawKindExtras(s, now);
   mobUI(s, false);
 }
@@ -5073,7 +5116,8 @@ function drawWolf(s, now) {
   ctx.beginPath(); ctx.ellipse(s.x, s.y + 13, r0(s) * 1.2, r0(s) * .32, 0, 0, 7); ctx.fill();
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  drawSprite(s.sprId || 'wolf', s.x, s.y + 12, s.uniq ? 5.6 : 4.5, { flip: flip < 0, flash, bob: s.movingF ? Math.abs(Math.sin(now / 75)) * 2 : 0 });
+  if (!drawMobSheet(s, 'wolf', s.x, s.y + 12, { flash, bob: s.movingF ? Math.abs(Math.sin(now / 75)) * 2 : 0 }))
+    drawSprite(s.sprId || 'wolf', s.x, s.y + 12, s.uniq ? 5.6 : 4.5, { flip: flip < 0, flash, bob: s.movingF ? Math.abs(Math.sin(now / 75)) * 2 : 0 });
   drawKindExtras(s, now);
   mobUI(s, false);
 }
@@ -5083,7 +5127,8 @@ function drawSkeleton(s, now) {
   ctx.beginPath(); ctx.ellipse(s.x, s.y + 12, r0(s) * .9, r0(s) * .34, 0, 0, 7); ctx.fill();
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  drawSprite(s.sprId || 'skeleton', s.x, s.y + 11, s.uniq ? 6.2 : 5, { flash, bob: s.movingF ? Math.abs(Math.sin(now / 120)) * 3 : 0 });
+  if (!drawMobSheet(s, 'skeleton', s.x, s.y + 11, { flash, bob: s.movingF ? Math.abs(Math.sin(now / 120)) * 3 : 0 }))
+    drawSprite(s.sprId || 'skeleton', s.x, s.y + 11, s.uniq ? 6.2 : 5, { flash, bob: s.movingF ? Math.abs(Math.sin(now / 120)) * 3 : 0 });
   drawKindExtras(s, now);
   mobUI(s, false);
 }
@@ -5108,19 +5153,8 @@ function drawLich(s, now) {
   ctx.beginPath(); ctx.ellipse(s.x, s.y + 14, r0(s) * .8, r0(s) * .3, 0, 0, 7); ctx.fill();
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  const lichSheet = heroSheet('mob_lich');
-  if (lichSheet) {
-    /* VARCO 리치 시트: 8방향은 dirA로, 크기는 반경 기준(유니크는 1.15배 r 반영됨) */
-    const m = lichSheet.meta, F = m.fr, d = sheetDir(s.dirA ?? Math.PI / 2);
-    const H = r0(s) * 4.4, k = H / Math.max(1, m.feet - m.top);
-    ctx.save();
-    ctx.translate(s.x, s.y + 16 - fl);
-    if (flash) ctx.globalAlpha = 1 - flash * .6; /* 피격: 반투명 깜빡임 */
-    ctx.drawImage(lichSheet.img, d * F, 0, F, F, -F * k / 2, -m.feet * k, F * k, F * k);
-    ctx.restore();
-  } else {
+  if (!drawMobSheet(s, 'lich', s.x, s.y + 16 - fl, { flash }))
     drawSprite(s.sprId || 'lich', s.x, s.y + 16 - fl, s.uniq ? 6.6 : 5.5, { flash });
-  }
   drawKindExtras(s, now);
   for (let i = 0; i < 2; i++) {
     const a = now / 400 + i * Math.PI;
@@ -5160,7 +5194,8 @@ function drawBoss(s, now) {
   const swing = s.swingT && now - s.swingT < 320 ? (now - s.swingT) / 320 : -1;
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  drawSprite(s.sprId || 'orc', s.x, s.y + 16, s.uniq ? 6.6 : 5.5, { flash, bob: Math.sin(now / 300) * 2 });
+  if (!drawMobSheet(s, 'orc', s.x, s.y + 16, { flash, bob: Math.sin(now / 300) * 2 }))
+    drawSprite(s.sprId || 'orc', s.x, s.y + 16, s.uniq ? 6.6 : 5.5, { flash, bob: Math.sin(now / 300) * 2 });
   drawKindExtras(s, now);
 
   ctx.save();
@@ -7290,7 +7325,7 @@ async function init() {
   loginAt = Date.now();
   window.__HIT = (sx, sy) => { const r = simAt(sx, sy); return { world: r.w, hit: r.s ? { id: r.s.id, kind: r.s.kind, x: Math.round(r.s.x), y: Math.round(r.s.y) } : null }; };
   window.__SIMS = () => sims.filter(v => v.alive && v.map === myMap()).slice(0, 8).map(v => ({ id: v.id, kind: v.kind, x: Math.round(v.x), y: Math.round(v.y), r: (sdef(v).r || 16), sx: Math.round((v.x - view.x) * (view.z || 1)), sy: Math.round((v.y - view.y) * (view.z || 1)) }));
-  window.__DBG = () => ({ page: myPage(), target: attackTargetSimId, hover: hoverSimId, dest: dest && { x: Math.round(dest.x), y: Math.round(dest.y) }, zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),
+  window.__DBG = () => ({ page: myPage(), sheets: Object.fromEntries(Object.entries(HERO_SHEETS).map(([k, v]) => [k, v.img ? 'ok' : v.failed ? 'failed' : 'loading'])), target: attackTargetSimId, hover: hoverSimId, dest: dest && { x: Math.round(dest.x), y: Math.round(dest.y) }, zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),
     me: { x: Math.round(me.x), y: Math.round(me.y), lv: me.lv, map: me.map, bag: me.bagSize, conq: JSON.stringify(me.conq || {}) },
     sims: sims.filter(s => s.alive).slice(0, 20).map(s => ({ id: s.id, x: Math.round(s.x), y: Math.round(s.y), d: Math.round(Math.hypot(s.x - me.x, s.y - me.y)), boss: s.boss, lv: simLevel(s) })) });
   $('loading').style.display = 'none';

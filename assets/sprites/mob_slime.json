@@ -1,0 +1,10 @@
+{
+ "fr": 512,
+ "dirs": 8,
+ "top": 107,
+ "feet": 511,
+ "elev": 26,
+ "yawFix": 180,
+ "name": "mob_slime",
+ "src": "Green Crystal Slime.glb"
+}

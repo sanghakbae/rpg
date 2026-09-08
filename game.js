@@ -4490,6 +4490,16 @@ function drawChar(o) {
 function mobUI(s, wide) {
   const d2 = sdef(s);
   const r = d2.r;
+  if (s.id === hoverSimId || s.id === attackTargetSimId) { /* 조준 표시 */
+    const on = s.id === attackTargetSimId;
+    ctx.save();
+    ctx.strokeStyle = on ? 'rgba(255,80,80,.9)' : 'rgba(255,255,255,.5)';
+    ctx.lineWidth = on ? 2.2 : 1.6;
+    ctx.setLineDash([7, 6]); ctx.lineDashOffset = -Date.now() / (on ? 40 : 90);
+    ctx.beginPath(); ctx.ellipse(s.x, s.y + r * .55, r * 1.35, r * .55, 0, 0, 7); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
   const isU = !!s.uniq;
   const isBoss = s.type === 'boss' || s.type === 'lich';
   /* 어그로 느낌표: 플레이어를 노리기 시작한 순간 0.7초 */
@@ -6495,7 +6505,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) { key
 function screenToWorld(mx, my) { const z = view.z || 1; return { x: mx / z + view.x, y: my / z + view.y }; }
 cv.addEventListener('contextmenu', e => e.preventDefault());
 /* 클릭=발사 없이 이동만, 더블클릭=자동 공격 (260ms 안에 두 번 눌렀는지 판정) */
-let clickTimer = null, downX = 0, downY = 0, lastMX = 0, lastMY = 0;
+let clickTimer = null, downX = 0, downY = 0, lastMX = 0, lastMY = 0, hoverSimId = null;
 /* 몬스터 히트박스: 예전엔 발밑 반경 원(r+16)뿐이라 머리·몸통을 눌러도 빗나갔다.
    스프라이트가 발 기준 위로 r*2.6 만큼 솟아 있으므로 세로로 긴 박스로 판정하고, 가까운 것을 우선 고른다 */
 const simHit = (v, wx, wy) => {
@@ -6517,15 +6527,11 @@ cv.addEventListener('mousedown', e => {
   downX = lastMX = e.clientX; downY = lastMY = e.clientY;
   mouseDown = true;
   if (s) {
-    /* 몬스터 위: 더블클릭인지 260ms 대기 (빈 땅은 즉시 이동) */
-    const sid = s.id;
+    /* 몬스터 클릭 = 즉시 타깃 지정 (사거리 밖이면 자동 접근). 더블클릭도 같은 동작이라 대기 없음 */
     clearTimeout(clickTimer);
-    clickTimer = setTimeout(() => {
-      if (Math.hypot(lastMX - downX, lastMY - downY) > 8) return; /* 드래그였음 */
-      const t = sims.find(v => v.id === sid && v.alive && v.map === myMap());
-      attackTargetSimId = null;
-      dest = t ? { x: t.x, y: t.y } : w;
-    }, 260);
+    dest = null;
+    attackTargetSimId = s.id;
+    if (Math.hypot(s.x - me.x, s.y - me.y) <= atkRange() * 1.05) tryAttack(Date.now(), s);
   } else {
     clearTimeout(clickTimer);
     attackTargetSimId = null;
@@ -6550,6 +6556,7 @@ cv.addEventListener('dblclick', e => {
 });
 addEventListener('mousemove', e => {
   lastMX = e.clientX; lastMY = e.clientY;
+  try { hoverSimId = (ready && !me.dead) ? (simAt(e.clientX, e.clientY).s?.id || null) : null; } catch (err) { hoverSimId = null; }
   if (mouseDown && !(e.buttons & 1)) { mouseDown = false; return; } /* 창 밖에서 버튼을 뗀 경우 */
   if (!mouseDown || attackTargetSimId) return;
   dest = pickWorld(e.clientX, e.clientY);
@@ -6562,8 +6569,7 @@ function tapWorld(x, y) {
   if (!ready || me.dead) return;
   /* 채팅 입력 중 월드 탭 = 키보드 내리기 (preventDefault 때문에 네이티브 블러가 안 됨) */
   if (document.activeElement === chatInput) { chatInput.blur(); return; }
-  const w = pickWorld(x, y);
-  const s = sims.find(v => v.alive && v.map === myMap() && Math.hypot(v.x - w.x, v.y - w.y) < v.def.r + 22);
+  const { w, s } = simAt(x, y);
   if (s) {
     dest = null;
     attackTargetSimId = s.id;
@@ -7190,7 +7196,7 @@ async function init() {
   loginAt = Date.now();
   window.__HIT = (sx, sy) => { const r = simAt(sx, sy); return { world: r.w, hit: r.s ? { id: r.s.id, kind: r.s.kind, x: Math.round(r.s.x), y: Math.round(r.s.y) } : null }; };
   window.__SIMS = () => sims.filter(v => v.alive && v.map === myMap()).slice(0, 8).map(v => ({ id: v.id, kind: v.kind, x: Math.round(v.x), y: Math.round(v.y), r: (sdef(v).r || 16), sx: Math.round((v.x - view.x) * (view.z || 1)), sy: Math.round((v.y - view.y) * (view.z || 1)) }));
-  window.__DBG = () => ({ page: myPage(), zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),
+  window.__DBG = () => ({ page: myPage(), target: attackTargetSimId, hover: hoverSimId, dest: dest && { x: Math.round(dest.x), y: Math.round(dest.y) }, zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),
     me: { x: Math.round(me.x), y: Math.round(me.y), lv: me.lv, map: me.map, bag: me.bagSize, conq: JSON.stringify(me.conq || {}) },
     sims: sims.filter(s => s.alive).slice(0, 20).map(s => ({ id: s.id, x: Math.round(s.x), y: Math.round(s.y), d: Math.round(Math.hypot(s.x - me.x, s.y - me.y)), boss: s.boss, lv: simLevel(s) })) });
   $('loading').style.display = 'none';
@@ -7205,7 +7211,7 @@ buildWorld();
 
 document.querySelectorAll('#invPanel h3.tog').forEach(h => {
   const g = $(h.dataset.tog);
-  if (innerWidth <= 640) { g.classList.add('collapsed'); h.classList.add('closed'); }
+  /* 예전엔 모바일에서 장비/가방을 접은 채로 열어 팝업이 빈 화면처럼 보였다 — 팝업이 커진 지금은 펼쳐서 시작 */
   h.onclick = () => { g.classList.toggle('collapsed'); h.classList.toggle('closed'); sfx('click'); };
 });
 

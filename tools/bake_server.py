@@ -17,6 +17,20 @@ class H(BaseHTTPRequestHandler):
         self.send_response(204); self._cors(); self.end_headers()
     def do_POST(self):
         n = int(self.headers.get('Content-Length', 0))
+        if self.path.startswith('/upload'):
+            # 브라우저(로그인 세션)가 받은 GLB 바이너리를 그대로 저장: /upload?name=<파일명>
+            from urllib.parse import urlparse, parse_qs, unquote
+            q = parse_qs(urlparse(self.path).query)
+            fn = os.path.basename(unquote(q.get('name', ['model.glb'])[0]))
+            dst = os.path.join(ROOT, 'assets', 'glb', fn)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            with open(dst, 'wb') as f:
+                remain = n
+                while remain > 0:
+                    chunk = self.rfile.read(min(1 << 20, remain)); remain -= len(chunk); f.write(chunk)
+            print('uploaded', fn, n // 1024, 'KB', flush=True)
+            self.send_response(200); self._cors(); self.send_header('Content-Type', 'application/json'); self.end_headers()
+            self.wfile.write(b'{"ok":true}'); return
         body = json.loads(self.rfile.read(n))
         name = re.sub(r'[^a-z0-9_]', '', str(body.get('name', '')).lower())
         if not name:

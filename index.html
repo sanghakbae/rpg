@@ -131,6 +131,16 @@
   .hslot .key { position: absolute; top: 3px; left: 6px; font-size: 10px; color: #888; }
   .hslot .ic2 { font-size: 19px; }
   .hslot .nm { font-size: 9.5px; color: #aab; margin-top: 2px; }
+  /* 스킬 아이콘 배지 (game-icons + 스킬 색) */
+  .skic { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 10px; vertical-align: middle;
+    background: var(--c); background: radial-gradient(circle at 35% 28%, color-mix(in srgb, var(--c) 45%, #fff) 0%, var(--c) 42%, color-mix(in srgb, var(--c) 45%, #000) 100%);
+    border: 1px solid rgba(255,255,255,.3); box-shadow: 0 0 10px color-mix(in srgb, var(--c) 55%, transparent), inset 0 -3px 6px rgba(0,0,0,.35); }
+  .skic img { width: 66%; height: 66%; filter: drop-shadow(0 1px 1px rgba(0,0,0,.7)); pointer-events: none; }
+  .skic em { font-style: normal; font-size: 55%; line-height: 1; }
+  .srow .si .skic { width: 46px; height: 46px; }
+  .hslot .ic2 .skic { width: 34px; height: 34px; border-radius: 8px; }
+  #slotPick .spi .skic { width: 24px; height: 24px; border-radius: 6px; }
+  .tnode .ti .skic { width: 30px; height: 30px; border-radius: 8px; }
   .hslot .cd { position: absolute; inset: 0; background: rgba(0,0,0,.65); border-radius: 9px;
     display: flex; align-items: center; justify-content: center; color: #fff; font-size: 16px; font-weight: bold; }
   .hslot.locked { opacity: .45; }
@@ -360,6 +370,7 @@
     #hotbar { left: 50%; right: auto; transform: translateX(-50%); bottom: calc(26px + env(safe-area-inset-bottom)); gap: 6px; z-index: 35; }
     .hslot { width: 44px; height: 44px; overflow: hidden; }
     .hslot .ic2 { font-size: 17px; }
+    .hslot .ic2 .skic { width: 26px; height: 26px; border-radius: 6px; }
     .hslot .key { font-size: 8px; top: 2px; left: 4px; }
     .hslot .nm { font-size: 7.5px; margin-top: 0; max-width: 100%; padding: 0 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* 스킬 이름이 슬롯 밖으로 넘치던 것 */
     .hslot.pot { width: 34px; height: 34px; }
@@ -546,6 +557,7 @@
 <footer id="footer">
   <span>© 2026 에테리아</span>
   <span id="verTag"></span>
+  <span>아이콘: <a href="https://game-icons.net" target="_blank" rel="noopener">game-icons.net</a> (CC BY 3.0)</span>
   <a id="privacyLink">개인정보처리방침</a>
   <a href="privacy.html" target="_blank">전체 보기</a>
 </footer>
@@ -577,7 +589,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=92"
+<script type="module" src="game.js?v=93"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

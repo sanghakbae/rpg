@@ -529,7 +529,7 @@ const TREES_ALL = {};
           const v = st === 'crit' ? +(tier * .008).toFixed(3) : st === 'spd' ? 2 + ((tier / 2) | 0) : 1 + ((tier / 3) | 0);
           const lbl = st === 'atk' ? '공격' : st === 'def' ? '방어' : st === 'crit' ? '치명타' : '속도';
           const val = st === 'crit' ? `+${Math.round(v * 100)}%p` : `+${v}`;
-          d = { cls, tier, kind: 'passive', icon: '📈',
+          d = { cls, tier, kind: 'passive', icon: '📈', stat: st,
             name: uniq(`${adj[(tier * 7 + i * 2) % adj.length]} ${TREE_NOUN_P[st][(tier + i) % 2]}${suf(tier)}`),
             desc: `${lbl} 영구 증가 (${val})`, [st]: v };
         } else {
@@ -756,6 +756,9 @@ let sims = [], bossWasAlive = true;
 let keys = {};
 let cam = { x: SPAWN.x, y: SPAWN.y };
 let floats = [], slashes = [], shots = [], rings = [], poofs = [];
+/* 스킬 화면 플래시: 시전 위치 중심의 방사형 섬광 (가산 블렌딩) */
+let flashes = [];
+function fxFlash(rgb, ms, str = .35) { flashes.push({ rgb, t: 0, max: ms, str, x: me.x, y: me.y }); }
 let othersPrev = {}, mePrev = { x: SPAWN.x, y: SPAWN.y }, meMovingNow = false;
 let mouseDown = false, dest = null, attackTargetSimId = null;
 const view = { x: 0, y: 0, z: 1 };
@@ -1389,6 +1392,7 @@ function useSkill(slot) {
   if ((me.mp ?? maxMpOf()) < mpc) { float(me.x, me.y - 34, '마나 부족!', '#5dade2'); return; }
 
   if (id === 'heal') {
+    fxFlash('120,255,170', 380, .24);
     const amt = Math.round(maxHpOf() * .4 * sLv('heal') * skillPow()); /* me.maxHp는 생성 시점 값이라 낡음 */
     me.hp = Math.min(maxHpOf(), (me.hp || 0) + amt);
     updateDoc(meRef, { hp: me.hp }).catch(() => {});
@@ -1397,6 +1401,7 @@ function useSkill(slot) {
     fxSparks(me.x, me.y - 10, 12, '#7fe3a0', 110);
     sfx('heal');
   } else if (id === 'power_strike') {
+    fxFlash('255,210,130', 180, .28);
     const t = nearestSim(atkRange() * 1.35);
     if (!t) { float(me.x, me.y - 34, '대상 없음', '#aaa'); return; }
     slashes.push({ x: me.x, y: me.y, a: Math.atan2(t.y - me.y, t.x - me.x), t: 0, w: 8, len: 52, color: '#ffb347' });
@@ -1405,6 +1410,7 @@ function useSkill(slot) {
     doShake(6); sfx('crit');
     attackResult(t, Math.max(1, Math.round(totalAtk() * 4 * sLv('power_strike') * skillPow() * rand(.9, 1.1))), true);
   } else if (id === 'multishot') {
+    fxFlash('240,230,180', 180, .18);
     const targets = sims.filter(s => s.alive && Math.hypot(s.x - me.x, s.y - me.y) < 240);
     if (!targets.length) { float(me.x, me.y - 34, '대상 없음', '#aaa'); return; }
     for (const t of targets) {
@@ -1414,6 +1420,7 @@ function useSkill(slot) {
     }
     sfx('swing');
   } else if (id === 'shadow_strike') {
+    fxFlash('140,70,220', 220, .32);
     const t = nearestSim(190);
     if (!t) { float(me.x, me.y - 34, '대상 없음', '#aaa'); return; }
     poofs.push({ x: me.x, y: me.y, vx: 0, vy: 0, r: 16, t: 0, color: '#34495e', g: -60 });
@@ -1425,6 +1432,7 @@ function useSkill(slot) {
     doShake(6); sfx('boom');
     attackResult(t, Math.max(1, Math.round(totalAtk() * 6 * sLv('shadow_strike') * skillPow())), true);
   } else if (id === 'fireball') {
+    fxFlash('255,140,40', 320, .40);
     const t = nearestSim(340);
     if (!t) { float(me.x, me.y - 34, '대상 없음', '#aaa'); return; }
     fireShot(t.x, t.y, '#ff7f27', Math.hypot(t.x - me.x, t.y - me.y) / 520 * 1000, 10);
@@ -1441,6 +1449,7 @@ function useSkill(slot) {
       }
     }, 240);
   } else if (id === 'whirlwind') {
+    fxFlash('255,220,120', 260, .28);
     const victims = sims.filter(s => s.alive && Math.hypot(s.x - me.x, s.y - me.y) < 135);
     if (!victims.length) { float(me.x, me.y - 34, '대상 없음', '#aaa'); return; }
     rings.push({ x: me.x, y: me.y, r: 130, t: 0, max: 400, color: '255,180,80' });
@@ -1453,6 +1462,7 @@ function useSkill(slot) {
       attackResult(v, dmg, Math.random() < totalCrit());
     }
   } else if (id === 'piercing') {
+    fxFlash('255,245,180', 180, .2);
     const range = 330, half = 34;
     const dx = Math.cos(me.face), dy = Math.sin(me.face);
     const victims = sims.filter(s => {
@@ -1472,6 +1482,7 @@ function useSkill(slot) {
       setTimeout(() => { if (myPage() === castPage) attackResult(v, dmg, Math.random() < totalCrit()); }, i * 90);
     });
   } else if (id === 'phantom') {
+    fxFlash('180,120,255', 220, .28);
     const t = nearestSim(210);
     if (!t) { float(me.x, me.y - 34, '대상 없음', '#aaa'); return; }
     slashes.push({ x: me.x, y: me.y, a: Math.atan2(t.y - me.y, t.x - me.x), t: 0, w: 7, len: 50, color: '#b388ff' });
@@ -1485,6 +1496,7 @@ function useSkill(slot) {
       }, i * 130);
     }
   } else if (id === 'frost_nova') {
+    fxFlash('150,220,255', 320, .36);
     const victims = sims.filter(s => s.alive && Math.hypot(s.x - me.x, s.y - me.y) < 165);
     if (!victims.length) { float(me.x, me.y - 34, '대상 없음', '#aaa'); return; }
     rings.push({ x: me.x, y: me.y, r: 170, t: 0, max: 500, color: '140,220,255' });
@@ -1520,7 +1532,7 @@ function renderShop() {
     const stat = d.atk ? `공격 +${d.atk}` : d.def ? `방어 +${d.def}` : d.spd ? `속도 +${d.spd}` : d.crit ? `치명타 +${Math.round(d.crit * 100)}%p` : '';
     const enhCost = Math.round(d.cost * 2 * (1 + enhLv));
     return `<div class="srow">
-      <div class="si">${d.icon}</div>
+      <div class="si">${skillIconHtml(id, d)}</div>
       <div class="sm">
         <div><span class="st">${esc(d.name)}</span>${d.type === 'passive' ? `<span class="slv">${stat}</span>` : ''}<span class="slv">Lv ${baseLv}${enhLv ? `+${enhLv}` : ''}/${MAX_SKILL_LV}</span></div>
         <div class="sd">${esc(d.desc)}${d.mp ? ` · 마나 ${d.mp}` : ''}${d.cd ? ` · 재사용 ${d.cd / 1000}s` : ''}</div>
@@ -2246,7 +2258,7 @@ function renderTree() {
       const has = (me.tree || {})[id];
       const can = has || (owned >= req.pts && (me.lv || 1) >= req.lv && (me.gold || 0) >= cost);
       html += `<div class="tnode ${has ? 'owned' : can ? 'can' : 'lock'}" data-tree="${id}" title="${esc(d.name)} — ${esc(d.desc)}">`
-        + `<div class="ti">${d.icon}</div><div class="tn">${esc(d.name)}</div>`
+        + `<div class="ti">${skillIconHtml(id, d)}</div><div class="tn">${esc(d.name)}</div>`
         + `<div class="tc">${has ? '✔' : cost.toLocaleString() + 'G'}</div>`
         + (has && d.kind === 'active' ? bindBtns(id) : '') + `</div>`;
     }
@@ -4259,6 +4271,22 @@ const WANT_3D = location.search.includes('3d=1');
 let THREE_NS = null, threeRenderer = null, threeCanvas = null;
 /* 스킬 시전·피격 모션 상태 */
 let heroCast = null, heroHurtT = 0, heroPickT = 0;
+/* 스킬 아이콘: game-icons.net(CC BY 3.0) SVG를 Iconify API로 색 입혀 배지 안에. 매핑 없거나 로드 실패 시 이모지 */
+const SKILL_ICON = { power_strike: 'sword-brandish', whirlwind: 'whirlwind', warcry: 'muscle-up', iron_body: 'shield',
+  multishot: 'arrow-cluster', piercing: 'high-shot', sharpshooter: 'eye-target', swift_feet: 'boots',
+  shadow_strike: 'ninja-mask', phantom: 'daggers', assassination: 'crescent-blade', swift_feet2: 'sprint',
+  fireball: 'fireball', frost_nova: 'ice-bolt', magic_power: 'magic-swirl', mana_shield: 'shield-reflect', heal: 'healing' };
+const TREE_ARCH_ICON = { nuke: 'fireball', cleave: 'crossed-swords', storm: 'whirlwind', chain: 'lightning-branches', dash: 'sprint', volley: 'arrow-cluster', heal: 'heart-plus',
+  atk: 'punch-blast', def: 'shield', crit: 'bullseye', spd: 'boots' };
+function skillIconHtml(id, def) {
+  def = def || skillDef(id) || {};
+  const cls = def.cls && CLASSES[def.cls] ? def.cls : myCls;
+  const col = SKILL_FX_COLOR[id] || (CLASSES[cls] && CLASSES[cls].color) || '#ffd700';
+  const gi = SKILL_ICON[id] || TREE_ARCH_ICON[def.arch] || TREE_ARCH_ICON[def.stat] || null;
+  const emoji = def.icon || '✦';
+  const img = gi ? `<img src="https://api.iconify.design/game-icons/${gi}.svg?color=${encodeURIComponent('#ffffff')}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display=''">` : '';
+  return `<span class="skic" style="--c:${col}">${img}<em style="${gi ? 'display:none' : ''}">${emoji}</em></span>`;
+}
 const SKILL_FX_COLOR = { power_strike: '#ffb347', whirlwind: '#ffd166', multishot: '#e8d9a0', piercing: '#f6e58d',
   shadow_strike: '#b388ff', phantom: '#9b59b6', fireball: '#ff7f27', frost_nova: '#7fd8ff', heal: '#7fe3a0', mana_shield: '#5dade2' };
 const CAST_DUR = { power_strike: 450, whirlwind: 500, multishot: 500, piercing: 500, shadow_strike: 450, phantom: 550, fireball: 550, frost_nova: 550, heal: 600 };
@@ -4604,6 +4632,7 @@ function drawChar(o) {
     if (cf) {
       const pr = clampN((now - cf.t0) / cf.dur, 0, 1);
       const col = SKILL_FX_COLOR[cf.id] || '#ffd700';
+      if (Math.random() < .6) poofs.push({ x: o.x + rand(-16, 16), y: o.y + 6, vx: rand(-12, 12), vy: rand(-90, -40), r: rand(1.3, 2.6), t: 0, color: col, g: -30 }); /* 상승 마나 입자 */
       ctx.save();
       ctx.globalAlpha = .85 * (1 - pr * .35);
       ctx.strokeStyle = col; ctx.lineWidth = 2.5;
@@ -6197,58 +6226,59 @@ function draw(now) {
   }
   if (ready) drawChar({ x: me.x, y: me.y, color: '#fff', name: myName, hp: me.hp, maxHp: me.maxHp, dead: me.dead, equipped: me.equipped, cls: myCls, isSelf: true, face: me.face ?? Math.PI / 2, moving: meMovingNow, swing: lastAttackAt });
 
+  /* ===== 스킬/투사체 FX — 가산 블렌딩으로 발광 ===== */
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
   for (const sh of shots) {
-    const p = sh.t / sh.max;
-    ctx.globalAlpha = 1 - p * .4;
-    if (sh.size <= 4) {
-      ctx.strokeStyle = sh.color;
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.moveTo(sh.x, sh.y);
-      ctx.lineTo(sh.x - sh.vx * .045, sh.y - sh.vy * .045);
-      ctx.stroke();
-      ctx.fillStyle = '#fff';
-      ctx.beginPath(); ctx.arc(sh.x, sh.y, 1.6, 0, 7); ctx.fill();
-    } else {
+    const p = sh.t / sh.max, r = Math.max(2.2, sh.size || 5);
+    for (let i = 1; i <= 6; i++) { /* 잔상 꼬리 */
+      const q = i / 6;
+      ctx.globalAlpha = (1 - p * .4) * (1 - q) * .5;
       ctx.fillStyle = sh.color;
-      ctx.shadowColor = sh.color; ctx.shadowBlur = 14;
-      ctx.beginPath(); ctx.arc(sh.x, sh.y, sh.size, 0, 7); ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,.8)';
-      ctx.beginPath(); ctx.arc(sh.x - sh.vx * .008, sh.y - sh.vy * .008, sh.size * .45, 0, 7); ctx.fill();
-      ctx.shadowBlur = 0;
+      ctx.beginPath(); ctx.arc(sh.x - sh.vx * .016 * i, sh.y - sh.vy * .016 * i, r * (1.1 - q * .7), 0, 7); ctx.fill();
     }
-    ctx.globalAlpha = 1;
+    ctx.globalAlpha = 1 - p * .3;
+    const gg = ctx.createRadialGradient(sh.x, sh.y, 0, sh.x, sh.y, r * 3.4);
+    gg.addColorStop(0, '#ffffff'); gg.addColorStop(.22, sh.color); gg.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = gg; ctx.beginPath(); ctx.arc(sh.x, sh.y, r * 3.4, 0, 7); ctx.fill();
   }
-
   for (const rg of rings) {
-    const p = rg.t / rg.max;
-    ctx.strokeStyle = `rgba(${rg.color},${(1 - p) * .9})`;
-    ctx.lineWidth = 5 * (1 - p) + 1.5;
-    ctx.beginPath(); ctx.arc(rg.x, rg.y, rg.r * (.25 + p * .75), 0, 7); ctx.stroke();
+    const p = rg.t / rg.max, R = Math.max(2, rg.r * (.2 + p * .8));
+    const g2 = ctx.createRadialGradient(rg.x, rg.y, R * .5, rg.x, rg.y, R); /* 충격파: 안쪽 투명 → 색 → 흰 테두리 */
+    g2.addColorStop(0, `rgba(${rg.color},0)`); g2.addColorStop(.72, `rgba(${rg.color},${(1 - p) * .5})`); g2.addColorStop(1, `rgba(255,255,255,${(1 - p) * .85})`);
+    ctx.globalAlpha = 1; ctx.fillStyle = g2; ctx.beginPath(); ctx.arc(rg.x, rg.y, R, 0, 7); ctx.fill();
+    ctx.strokeStyle = `rgba(${rg.color},${1 - p})`; ctx.lineWidth = 4 * (1 - p) + 1;
+    ctx.beginPath(); ctx.arc(rg.x, rg.y, R, 0, 7); ctx.stroke();
+    ctx.setLineDash([6, 10]); ctx.lineDashOffset = -rg.t / 5; ctx.lineWidth = 1.4; ctx.strokeStyle = `rgba(255,255,255,${(1 - p) * .7})`;
+    ctx.beginPath(); ctx.arc(rg.x, rg.y, R * 1.2, 0, 7); ctx.stroke(); ctx.setLineDash([]);
   }
-
   for (const sl of slashes) {
-    const p = sl.t / 180;
-    ctx.strokeStyle = sl.color || `rgba(255,255,255,${.9 * (1 - p)})`;
+    const p = sl.t / 180, L = (sl.len || 38) * (0.8 + p * .5);
     ctx.globalAlpha = 1 - p;
-    ctx.lineWidth = (sl.w || 3.6) * (1 - p) + 1;
-    ctx.beginPath();
-    ctx.arc(sl.x, sl.y, (sl.len || 38) * (0.8 + p * .5), sl.a - .85, sl.a + .85);
-    ctx.stroke();
-    ctx.strokeStyle = `rgba(255,255,255,${.5 * (1 - p)})`;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(sl.x, sl.y, (sl.len || 38) * (0.8 + p * .5) - 5, sl.a - .7, sl.a + .7);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
+    ctx.strokeStyle = sl.color || '#ffffff'; ctx.lineWidth = (sl.w || 3.6) * (1 - p) + 1.5; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.arc(sl.x, sl.y, L, sl.a - .85, sl.a + .85); ctx.stroke();
+    ctx.strokeStyle = `rgba(255,255,255,${.8 * (1 - p)})`; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.arc(sl.x, sl.y, L - 6, sl.a - .7, sl.a + .7); ctx.stroke();
+    const tipA = sl.a + .85, tx = sl.x + Math.cos(tipA) * L, ty = sl.y + Math.sin(tipA) * L; /* 검끝 섬광 */
+    const tg = ctx.createRadialGradient(tx, ty, 0, tx, ty, 14); tg.addColorStop(0, `rgba(255,255,255,${(1 - p)})`); tg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = tg; ctx.beginPath(); ctx.arc(tx, ty, 14, 0, 7); ctx.fill();
   }
+  ctx.restore();
+  ctx.globalAlpha = 1;
 
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
   for (const p of poofs) {
     ctx.globalAlpha = clampN(1 - p.t / 600, 0, 1);
     ctx.fillStyle = p.color;
-    ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(.5, p.r * (1 - p.t / 900)), 0, 7); ctx.fill();
+    const rr = Math.max(.5, p.r * (1 - p.t / 900));
+    ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, 7); ctx.fill();
+    if (Math.abs(p.vx) + Math.abs(p.vy) > 40) { /* 빠른 입자는 스트릭 */
+      ctx.strokeStyle = p.color; ctx.lineWidth = rr * 1.2; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x - p.vx * .03, p.y - p.vy * .03); ctx.stroke();
+    }
     ctx.globalAlpha = 1;
   }
+  ctx.restore();
 
   for (const f of floats) {
     ctx.globalAlpha = clampN(1 - f.t / 1000, 0, 1);
@@ -6284,6 +6314,17 @@ function draw(now) {
     vg.addColorStop(1, `rgba(180,0,0,${vp})`);
     ctx.fillStyle = vg;
     ctx.fillRect(0, 0, cvW, cvH);
+  }
+  if (flashes.length) { /* 스킬 섬광: 시전 위치 중심, 가산 */
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    for (const f of flashes) {
+      const p = f.t / f.max, z = view.z || 1, fx = (f.x - view.x) * z, fy = (f.y - view.y) * z;
+      const R = Math.max(cvW, cvH) * (.35 + p * .5);
+      const g = ctx.createRadialGradient(fx, fy, 0, fx, fy, R);
+      g.addColorStop(0, `rgba(${f.rgb},${(1 - p) * f.str})`); g.addColorStop(.5, `rgba(${f.rgb},${(1 - p) * f.str * .35})`); g.addColorStop(1, `rgba(${f.rgb},0)`);
+      ctx.fillStyle = g; ctx.fillRect(0, 0, cvW, cvH);
+    }
+    ctx.restore();
   }
 }
 
@@ -6346,7 +6387,7 @@ function updateHotbar(now) {
     const sig = `${id}|${locked}|${cdSec}`;
     if (domCache[k] === sig) return; /* 변화 없으면 DOM 접근 생략 (매 프레임 호출) */
     domCache[k] = sig;
-    ic.textContent = def.icon;
+    ic.innerHTML = skillIconHtml(id, def);
     nm.textContent = def.name;
     box.classList.toggle('locked', locked);
     if (cdSec > 0) {
@@ -6634,7 +6675,7 @@ function openSlotPick(slot) {
   const cur = boundId(slot);
   const list = learnedActives();
   el.innerHTML = `<div class="spt">[${slot}]번 슬롯에 등록</div>` +
-    (list.length ? list.map(id => { const d = skillDef(id); return `<button data-pick="${id}" class="${id === cur ? 'cur' : ''}"><span class="spi">${d.icon || '✦'}</span>${esc(d.name)}</button>`; }).join('')
+    (list.length ? list.map(id => { const d = skillDef(id); return `<button data-pick="${id}" class="${id === cur ? 'cur' : ''}"><span class="spi">${skillIconHtml(id, d)}</span>${esc(d.name)}</button>`; }).join('')
                  : `<div class="spn">배운 액티브 스킬이 없습니다 — 스킬샵[B]에서 습득</div>`);
   el.querySelectorAll('[data-pick]').forEach(b => b.onclick = ev => { ev.stopPropagation(); bindSet(slot, b.dataset.pick); sfx('click'); closeSlotPick(); });
   el.classList.add('open');
@@ -7155,6 +7196,7 @@ if (meRef) updateDoc(meRef, { x: me.x, y: me.y, hp: me.hp, ...(me.mp != null ? {
   slashes = slashes.filter(s => (s.t += dt) < 180);
   shots = shots.filter(s => { s.t += dt; s.x += s.vx * dt / 1000; s.y += s.vy * dt / 1000; return s.t < s.max; });
   rings = rings.filter(r => (r.t += dt) < r.max);
+  flashes = flashes.filter(f => (f.t += dt) < f.max);
   poofs = poofs.filter(p => { p.t += dt; p.x += (p.vx || 0) * dt / 1000; p.y += (p.vy || 0) * dt / 1000; p.vy = (p.vy || 0) + (p.g ?? 240) * dt / 1000; return p.t < 600; });
 
   updateHUD();

@@ -204,15 +204,20 @@ function placeTip(x, y, anchor) {
   const panel = anchor && anchor.closest ? anchor.closest('#invPanel') : null;
   let lx, ly;
   if (panel) {
-    /* 등록창 왼쪽에 상세 표시 */
+    /* 가방 팝업이 화면의 90%를 차지하면서 좌/우 바깥에 둘 자리가 없어 툴팁이 화면 밖으로 잘렸다.
+       바깥 → 안 되면 커서 옆(공간 넓은 쪽) 순으로 배치하고 마지막에 화면 안으로 클램프 */
     const pr = panel.getBoundingClientRect();
-    lx = pr.left - r.width - 10;
-    if (lx < 8) lx = pr.right + 10;
+    const outL = pr.left - r.width - 10, outR = pr.right + 10;
+    if (outL >= 8) lx = outL;
+    else if (outR + r.width <= innerWidth - 8) lx = outR;
+    else lx = (x > innerWidth / 2) ? x - r.width - 18 : x + 18; /* 커서 반대쪽 */
     ly = Math.min(Math.max(y - 40, 8), innerHeight - r.height - 8);
   } else {
-    lx = Math.min(x + 14, innerWidth - r.width - 8);
+    lx = (x + 14 + r.width <= innerWidth - 8) ? x + 14 : x - r.width - 14;
     ly = Math.min(y + 16, innerHeight - r.height - 8);
   }
+  lx = Math.max(8, Math.min(lx, innerWidth - r.width - 8));
+  ly = Math.max(8, Math.min(ly, innerHeight - r.height - 8));
   tipEl.style.left = lx + 'px';
   tipEl.style.top = ly + 'px';
 }
@@ -3991,6 +3996,51 @@ function heroFrames(cls, eq, faceBake = Math.PI / 2) {
   while (frameCache.size > 6) frameCache.delete(frameCache.keys().next().value);
   return set;
 }
+/* 베이크 후처리: 실루엣 외곽선 + 상하 라이팅 + 좌상단 림라이트.
+   프레임을 굽는 시점에 한 번만 도는 패스라 런타임 비용 없이 입체감을 올린다 */
+const _silCv = document.createElement('canvas'), _outCv = document.createElement('canvas');
+function heroPostFx(src) {
+  const W = src.width, H = src.height, k = W / 192; /* 논리 192 기준 배율 */
+  _silCv.width = W; _silCv.height = H;
+  _outCv.width = W; _outCv.height = H;
+  const sc = _silCv.getContext('2d'), oc = _outCv.getContext('2d');
+  /* 1) 실루엣을 8방향으로 번져 외곽선 */
+  sc.clearRect(0, 0, W, H);
+  sc.drawImage(src, 0, 0);
+  sc.globalCompositeOperation = 'source-in';
+  sc.fillStyle = '#0b0e14';
+  sc.fillRect(0, 0, W, H);
+  sc.globalCompositeOperation = 'source-over';
+  const t = Math.max(1, Math.round(1.6 * k));
+  oc.clearRect(0, 0, W, H);
+  oc.globalAlpha = .85;
+  for (let i = 0; i < 8; i++) {
+    const a2 = i * Math.PI / 4;
+    oc.drawImage(_silCv, Math.round(Math.cos(a2) * t), Math.round(Math.sin(a2) * t));
+  }
+  oc.globalAlpha = 1;
+  oc.drawImage(src, 0, 0);
+  /* 2) 상하 라이팅 (머리쪽 밝게, 발쪽 어둡게) — 몸 픽셀에만 */
+  oc.globalCompositeOperation = 'source-atop';
+  const g = oc.createLinearGradient(0, 40 * k, 0, 132 * k);
+  g.addColorStop(0, 'rgba(255,246,225,.26)');
+  g.addColorStop(.45, 'rgba(255,255,255,.04)');
+  g.addColorStop(1, 'rgba(0,0,0,.30)');
+  oc.fillStyle = g;
+  oc.fillRect(0, 0, W, H);
+  /* 3) 좌상단 림라이트 */
+  const rg = oc.createRadialGradient(66 * k, 52 * k, 4 * k, 66 * k, 52 * k, 62 * k);
+  rg.addColorStop(0, 'rgba(190,220,255,.22)');
+  rg.addColorStop(1, 'rgba(190,220,255,0)');
+  oc.fillStyle = rg;
+  oc.fillRect(0, 0, W, H);
+  oc.globalCompositeOperation = 'source-over';
+  /* 결과를 새 캔버스로 복사 (재사용 버퍼라 그대로 돌려주면 다음 프레임이 덮어쓴다) */
+  const out = document.createElement('canvas');
+  out.width = W; out.height = H;
+  out.getContext('2d').drawImage(_outCv, 0, 0);
+  return out;
+}
 function bakeFrame(cls, eq, face, oExtra, tBake, squash, rot) {
   const S = 192, OX = 96, OY = 129; /* 논리 192 박스 — 화면에는 200px로 블릿 */
   const BK = Math.min(3, Math.max(2, Math.round(dpr || 1))); /* 백버퍼 픽셀비만큼 슈퍼샘플 (최소 2배) */
@@ -4006,7 +4056,7 @@ function bakeFrame(cls, eq, face, oExtra, tBake, squash, rot) {
   if (fx < -.05) c.scale(-1, 1);
   drawHero20(oBake, tBake, !!oBake.moving, fx, fy, 0, c);
   drawHeroGear(oBake, eq, tBake, face, c);
-  return cv2;
+  return heroPostFx(cv2);
 }
 function bakeHeroFrames(cls, eq, face) {
   const walk = [], idle = [], atk = [];

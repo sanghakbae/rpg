@@ -36,6 +36,7 @@ const JOBS = [
   ['../assets/glb/Stylized Purple Wizard.glb', 'mage'],
   ['../assets/glb/Green Crystal Slime.glb', 'mob_slime'],
   ['../assets/glb/Green Orc Character.glb', 'mob_goblin'], /* VARCO 자동 이름은 orc지만 고블린 프롬프트 결과물 */
+  ['../assets/glb/Low Poly Dire Wolf.glb', 'mob_wolf', 0], /* 3번째: 모델별 추가 yaw 보정(°) — 측면 이미지로 만든 모델은 정면이 ±90° 틀어질 수 있음 */
 ];
 const SAVE_URL = 'http://localhost:8124/save';
 const log = m => { const el = document.getElementById('log'); el.textContent += m + '\n'; el.scrollTop = 1e9; };
@@ -101,14 +102,14 @@ async function loadGlb(url) {
 async function run(onlyFirst) {
   const FR = +$('fr').value || 512, elev = +$('elev').value || 26, yawFix = +$('yawFix').value || 0, hs = +$('hscale').value || 1;
   $('out').innerHTML = '';
-  for (const [url, name] of (onlyFirst ? JOBS.slice(0, 1) : JOBS)) {
+  for (const [url, name, yawExtra = 0] of (onlyFirst ? JOBS.slice(0, 1) : JOBS)) {
     $('st').textContent = `로딩: ${name}`;
     const t0 = performance.now();
     let root;
     try { root = await loadGlb(url); } catch (e) { log(`✗ ${name} 로드 실패: ${e.message || e}`); continue; }
     normalize(root, hs);
     scene.add(root);
-    const { sheet, meta } = bakeOne(root, FR, elev, yawFix);
+    const { sheet, meta } = bakeOne(root, FR, elev, yawFix + yawExtra);
     scene.remove(root);
     root.traverse(o => { if (o.geometry) o.geometry.dispose(); });
     meta.name = name; meta.src = url.split('/').pop();

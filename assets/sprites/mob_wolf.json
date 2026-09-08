@@ -1,0 +1,10 @@
+{
+ "fr": 512,
+ "dirs": 8,
+ "top": 69,
+ "feet": 493,
+ "elev": 26,
+ "yawFix": 180,
+ "name": "mob_wolf",
+ "src": "Low Poly Dire Wolf.glb"
+}

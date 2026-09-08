@@ -1,0 +1,10 @@
+{
+ "fr": 512,
+ "dirs": 8,
+ "top": 91,
+ "feet": 472,
+ "elev": 26,
+ "yawFix": 180,
+ "name": "warrior",
+ "src": "Cartoon Red Knight.glb"
+}

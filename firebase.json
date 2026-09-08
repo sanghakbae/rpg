@@ -4,6 +4,6 @@
   },
   "hosting": {
     "public": ".",
-    "ignore": ["firebase.json", "**/.*", "**/node_modules/**", "**/*.md", "**/*.log"]
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**", "**/*.md", "**/*.log", "assets/glb/**", "tools/**"]
   }
 }

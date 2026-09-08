@@ -1,0 +1,10 @@
+{
+ "fr": 512,
+ "dirs": 8,
+ "top": 85,
+ "feet": 471,
+ "elev": 26,
+ "yawFix": 180,
+ "name": "archer",
+ "src": "Green Hooded Archer.glb"
+}

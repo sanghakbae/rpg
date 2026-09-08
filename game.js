@@ -3985,6 +3985,26 @@ const PORTRAIT_GEAR = {
 };
 /* 캐릭터별 20프레임: 걷기8 + 휴식4 + 공격6 + 피격1 + 쓰러짐1
    벡터로 미리 굽고 매 프레임 drawImage로 재생 — 부드럽고 빠름 */
+/* ===== VARCO 베이크 시트 (tools/bake.html → assets/sprites/<key>.png/.json) =====
+   8방향 × 1프레임 정적 시트. 걷기/공격/피격/사망 연출은 drawChar의 캔버스 변환(바운스·스웨이·런지·회전)으로 처리.
+   시트가 없거나 아직 로드 전이면 null → 기존 벡터 20프레임으로 폴백 */
+const HERO_SHEETS = {}, SHEET_VER = 1;
+const HERO_SHEET_H = 118; /* 시트 알파 박스(치켜든 무기 끝 포함)의 화면 높이(px). 몸통만 치면 ≈ 75~95px — 벡터 영웅(≈58px)보다 큼 */
+function heroSheet(key) {
+  let e = HERO_SHEETS[key];
+  if (e === undefined) {
+    e = HERO_SHEETS[key] = { img: null, meta: null, failed: false };
+    fetch(`assets/sprites/${key}.json?v=${SHEET_VER}`).then(r => r.ok ? r.json() : Promise.reject(r.status)).then(meta => {
+      const img = new Image();
+      img.onload = () => { e.img = img; e.meta = meta; };
+      img.onerror = () => { e.failed = true; };
+      img.src = `assets/sprites/${key}.png?v=${SHEET_VER}`;
+    }).catch(() => { e.failed = true; });
+  }
+  return e.img ? e : null;
+}
+/* face 각도(0=오른쪽, π/2=아래) → 시트 방향 인덱스 0..7 */
+const sheetDir = face => ((Math.round(face / (Math.PI / 4)) % 8) + 8) % 8;
 const FR_WALK = 8, FR_IDLE = 4, FR_ATK = 6;
 const frameCache = new Map();
 function heroFrames(cls, eq, faceBake = Math.PI / 2) {
@@ -4487,7 +4507,12 @@ function drawChar(o) {
     : ((!o.dead && o.isSelf && heroCast && now - heroCast.t0 < heroCast.dur) ? heroCast : null);
   let fr = null;
   let frTop = 0;
+  const sheet = heroSheet(o.cls || 'warrior');
   try {
+    if (sheet) {
+      fr = 'sheet';
+      frTop = HERO_SHEET_H / (128 * 1.56 / 192); /* headY 계산식이 논리 192 기준이라 역산 */
+    } else {
     const fs = heroFrames(o.cls || 'warrior', eq);
     frTop = fs.top;
     if (castNow) fr = 'live';
@@ -4497,6 +4522,7 @@ function drawChar(o) {
     else if (!o.dead && o.isSelf && now < hurtUntil) fr = fs.hurt;
     else if (moving) fr = fs.walk[((Math.floor(stepPh / (2 * Math.PI) * FR_WALK) % FR_WALK) + FR_WALK) % FR_WALK];
     else fr = fs.idle[Math.floor(now / 300) % FR_IDLE];
+    }
   } catch (e) { fr = null; }
   ctx.save();
   ctx.translate(o.x, o.y - bobY);
@@ -4506,8 +4532,14 @@ function drawChar(o) {
   }
   if (o.dead) ctx.globalAlpha = .45;
   else if (moving) ctx.rotate(Math.sin(stepPh) * .055); /* 걸음 스웨이 */
-  if (!o.dead && flip) ctx.scale(-1, 1);
-  if (fr === 'live') {
+  if (!o.dead && flip && fr !== 'sheet') ctx.scale(-1, 1);
+  if (fr === 'sheet') {
+    const m = sheet.meta, F = m.fr, d = sheetDir(face);
+    const k = HERO_SHEET_H / Math.max(1, m.feet - m.top); /* 시트 px → 화면 px */
+    if (o.dead) ctx.rotate(Math.PI / 2);
+    /* 발끝(m.feet)이 캐릭터 원점에 오도록 */
+    ctx.drawImage(sheet.img, d * F, 0, F, F, -F * k / 2, -m.feet * k, F * k, F * k);
+  } else if (fr === 'live') {
     const HB = 1.56 * 128 / 192; /* 베이크(192 논리박스 → 128*1.56 블릿)와 같은 화면 크기 */
     ctx.save();
     ctx.scale(HB, HB);
@@ -5076,7 +5108,19 @@ function drawLich(s, now) {
   ctx.beginPath(); ctx.ellipse(s.x, s.y + 14, r0(s) * .8, r0(s) * .3, 0, 0, 7); ctx.fill();
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  drawSprite(s.sprId || 'lich', s.x, s.y + 16 - fl, s.uniq ? 6.6 : 5.5, { flash });
+  const lichSheet = heroSheet('mob_lich');
+  if (lichSheet) {
+    /* VARCO 리치 시트: 8방향은 dirA로, 크기는 반경 기준(유니크는 1.15배 r 반영됨) */
+    const m = lichSheet.meta, F = m.fr, d = sheetDir(s.dirA ?? Math.PI / 2);
+    const H = r0(s) * 4.4, k = H / Math.max(1, m.feet - m.top);
+    ctx.save();
+    ctx.translate(s.x, s.y + 16 - fl);
+    if (flash) ctx.globalAlpha = 1 - flash * .6; /* 피격: 반투명 깜빡임 */
+    ctx.drawImage(lichSheet.img, d * F, 0, F, F, -F * k / 2, -m.feet * k, F * k, F * k);
+    ctx.restore();
+  } else {
+    drawSprite(s.sprId || 'lich', s.x, s.y + 16 - fl, s.uniq ? 6.6 : 5.5, { flash });
+  }
   drawKindExtras(s, now);
   for (let i = 0; i < 2; i++) {
     const a = now / 400 + i * Math.PI;

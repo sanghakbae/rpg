@@ -783,7 +783,8 @@ let quotaHitAt = 0; /* Firestore resource-exhausted 감지 시각 */
 function onQuotaExceeded() {
   quotaHitAt = Date.now();
   let el = document.getElementById('quotaBar');
-  if (!el) { el = document.createElement('div'); el.id = 'quotaBar'; document.body.appendChild(el); }
+  if (!el) { el = document.createElement('div'); el.id = 'quotaBar'; el.title = '탭하면 닫힘'; el.onclick = () => { el.style.display = 'none'; }; document.body.appendChild(el); }
+  if (el.style.display === 'none' && Date.now() - quotaHitAt < 300000) { quotaHitAt = Date.now(); return; } /* 닫은 뒤 5분간은 다시 띄우지 않음 */
   el.textContent = '⚠️ 서버 일일 저장 한도 초과(Firestore 무료 할당량) — 전투 결과·진행이 저장되지 않습니다. 매일 16~17시(KST)경 초기화';
   el.style.display = 'block';
 }

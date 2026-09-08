@@ -8,6 +8,11 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 OUT = os.path.join(ROOT, 'assets', 'sprites')
 os.makedirs(OUT, exist_ok=True)
 
+def write_manifest():
+    """png+json 둘 다 있는 시트 키 목록 → manifest.json. 게임은 이 목록에 없는 키는 요청조차 하지 않는다(404 소음 제거)"""
+    names = sorted(f[:-4] for f in os.listdir(OUT) if f.endswith('.png') and os.path.exists(os.path.join(OUT, f[:-4] + '.json')))
+    with open(os.path.join(OUT, 'manifest.json'), 'w') as f: json.dump(names, f)
+
 class H(BaseHTTPRequestHandler):
     def _cors(self):
         self.send_header('Access-Control-Allow-Origin', '*')
@@ -38,6 +43,7 @@ class H(BaseHTTPRequestHandler):
         png = body['png'].split(',', 1)[1]
         with open(os.path.join(OUT, name + '.png'), 'wb') as f: f.write(base64.b64decode(png))
         with open(os.path.join(OUT, name + '.json'), 'w') as f: json.dump(body.get('meta', {}), f, ensure_ascii=False, indent=1)
+        write_manifest()
         print('saved', name, len(png) // 1024, 'KB', flush=True)
         self.send_response(200); self._cors(); self.send_header('Content-Type', 'application/json'); self.end_headers()
         self.wfile.write(b'{"ok":true}')

@@ -3988,18 +3988,35 @@ const PORTRAIT_GEAR = {
 /* ===== VARCO 베이크 시트 (tools/bake.html → assets/sprites/<key>.png/.json) =====
    8방향 × 1프레임 정적 시트. 걷기/공격/피격/사망 연출은 drawChar의 캔버스 변환(바운스·스웨이·런지·회전)으로 처리.
    시트가 없거나 아직 로드 전이면 null → 기존 벡터 20프레임으로 폴백 */
-const HERO_SHEETS = {}, SHEET_VER = 1;
+const HERO_SHEETS = {}, SHEET_VER = 2;
 const HERO_SHEET_H = 118; /* 시트 알파 박스(치켜든 무기 끝 포함)의 화면 높이(px). 몸통만 치면 ≈ 75~95px — 벡터 영웅(≈58px)보다 큼 */
+/* 매니페스트(있는 시트 키 목록)를 먼저 읽어, 없는 키(스켈레톤·오크 등)는 요청하지 않는다 — 404 소음·모바일 요청 낭비 제거.
+   매니페스트가 없으면(구버전 배포) 예전처럼 직접 시도 */
+let sheetManifest = null; /* null=로딩 전, Set=목록, false=없음 */
+const sheetManifestP = fetch(`assets/sprites/manifest.json?v=${SHEET_VER}`).then(r => r.ok ? r.json() : Promise.reject())
+  .then(list => { sheetManifest = new Set(list); }).catch(() => { sheetManifest = false; });
+function loadSheet(key, e) {
+  fetch(`assets/sprites/${key}.json?v=${SHEET_VER}`).then(r => r.ok ? r.json() : Promise.reject(r.status)).then(meta => {
+    const img = new Image();
+    img.onload = () => {
+      e.img = img; e.meta = meta;
+      if (!key.startsWith('mob_')) { /* 로그인 초상화가 벡터로 먼저 그려졌으면 시트로 교체 */
+        delete portraitCache[key];
+        const pel = document.querySelector(`#loginScreen .lp[data-cls="${key}"] img`);
+        if (pel) { try { pel.src = heroPortrait(key); } catch (err) {} }
+      }
+    };
+    img.onerror = () => { e.failed = true; };
+    img.src = `assets/sprites/${key}.png?v=${SHEET_VER}`;
+  }).catch(() => { e.failed = true; });
+}
 function heroSheet(key) {
   let e = HERO_SHEETS[key];
   if (e === undefined) {
     e = HERO_SHEETS[key] = { img: null, meta: null, failed: false };
-    fetch(`assets/sprites/${key}.json?v=${SHEET_VER}`).then(r => r.ok ? r.json() : Promise.reject(r.status)).then(meta => {
-      const img = new Image();
-      img.onload = () => { e.img = img; e.meta = meta; };
-      img.onerror = () => { e.failed = true; };
-      img.src = `assets/sprites/${key}.png?v=${SHEET_VER}`;
-    }).catch(() => { e.failed = true; });
+    if (sheetManifest === null) sheetManifestP.then(() => { if (sheetManifest && !sheetManifest.has(key)) e.failed = true; else loadSheet(key, e); });
+    else if (sheetManifest && !sheetManifest.has(key)) e.failed = true;
+    else loadSheet(key, e);
   }
   return e.img ? e : null;
 }
@@ -4140,7 +4157,7 @@ const portraitCache = {};
 function heroPortrait(cls) {
   if (portraitCache[cls]) return portraitCache[cls];
   const eq = PORTRAIT_GEAR[cls] || {};
-  const set = heroFrames(cls, eq, -1.1);
+  const set = heroSheet(cls) ? null : heroFrames(cls, eq, -1.1); /* 시트가 있으면 벡터 베이크 생략 */
   const W = 150, H = 150;
   const cv2 = document.createElement('canvas');
   cv2.width = W; cv2.height = H;
@@ -4152,7 +4169,13 @@ function heroPortrait(cls) {
   c.fillRect(0, 0, W, H);
   c.fillStyle = 'rgba(0,0,0,.4)';
   c.beginPath(); c.ellipse(W / 2, 104, 30, 9, 0, 0, 7); c.fill();
-  c.drawImage(set.walk[2], 11, 11, 128, 128);
+  const sh = heroSheet(cls); /* 아직 로드 전이면 벡터로 그리고, 로드되면 loadSheet가 초상화를 다시 만든다 */
+  if (sh) {
+    const m = sh.meta, F = m.fr, k = 118 / Math.max(1, m.feet - m.top); /* 발 y=108, 시트 박스 높이 118 */
+    c.drawImage(sh.img, 2 * F, 0, F, F, W / 2 - F * k / 2, 108 - m.feet * k, F * k, F * k);
+  } else {
+    c.drawImage(set.walk[2], 11, 11, 128, 128);
+  }
   const url = cv2.toDataURL();
   portraitCache[cls] = url;
   return url;

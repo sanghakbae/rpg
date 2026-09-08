@@ -1,5 +1,4 @@
 node_modules/
-.DS_Store
 
 # VARCO 원본 3D (수십 MB) — 굽고 나온 assets/sprites 만 커밋
 assets/glb/

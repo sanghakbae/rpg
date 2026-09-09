@@ -1165,6 +1165,11 @@ let flashes = [];
 function fxFlash(rgb, ms, str = .35) { flashes.push({ rgb, t: 0, max: ms, str, x: me.x, y: me.y }); }
 let othersPrev = {}, mePrev = { x: SPAWN.x, y: SPAWN.y }, meMovingNow = false;
 let mouseDown = false, dest = null, attackTargetSimId = null;
+/* 설정(로컬 저장) + 자동 사냥 */
+let autoHunt = false, autoSkillT = 0, autoPotT = 0;
+const settings = { autoPotHp: 45, autoPotMp: 20, dmgText: true, screenShake: true };
+try { const sv = JSON.parse(localStorage.getItem('settings') || '{}'); Object.assign(settings, sv); } catch (e) {}
+const saveSettings = () => { try { localStorage.setItem('settings', JSON.stringify(settings)); } catch (e) {} };
 const view = { x: 0, y: 0, z: 1 };
 /* 사용자 확대/축소 배율 (핀치·휠). 실제 배율은 draw()에서 화면 채움 배율과 곱해 clamp된다. */
 let userZoom = 1, pinchD0 = 0, pinchZ0 = 1;
@@ -1428,7 +1433,7 @@ function flashInv() {
     p.classList.add('flash');
   }
 }
-function doShake(pow) { shakePow = Math.max(shakePow, pow); shakeT = Date.now(); }
+function doShake(pow) { if (!settings.screenShake) return; shakePow = Math.max(shakePow, pow); shakeT = Date.now(); }
 
 /* ================= 월드 초기화 ================= */
 async function ensureWorld() {
@@ -1945,7 +1950,7 @@ async function attackResult(sim, dmg, crit) {
   sim.kbx = kdx / kd * (crit ? 7 : 4.2);
   sim.kby = kdy / kd * (crit ? 7 : 4.2);
   sim.punchT = Date.now();
-  float(sim.x + rand(-8, 8), sim.y - sdef(sim).r - 10, String(dmg) + (crit ? '!' : ''), crit ? '#ffd700' : '#fff', crit);
+  if (settings.dmgText) float(sim.x + rand(-8, 8), sim.y - sdef(sim).r - 10, String(dmg) + (crit ? '!' : ''), crit ? '#ffd700' : '#fff', crit);
   fxSparks(sim.x, sim.y - sdef(sim).r * .3, crit ? 12 : 6, crit ? '#ffd700' : '#ffecb3', crit ? 160 : 100);
   if (crit) { doShake(7); hitStopUntil = Math.max(hitStopUntil, Date.now() + 42); }
   sfx(crit ? 'crit' : 'hit');
@@ -2028,6 +2033,29 @@ function fireShot(tx, ty, color, dur, size = 5) {
   shots.push({ x: me.x, y: me.y, vx: (tx - me.x) / d * 520, vy: (ty - me.y) / d * 520, t: 0, max: dur, color, size });
 }
 
+/* 자동 사냥 중 스킬·물약 자동 사용 */
+function autoCombat(now) {
+  if (me.dead) return;
+  /* 자동 물약 */
+  if (now - autoPotT > 900) {
+    autoPotT = now;
+    if ((me.hp || 0) < maxHpOf() * (settings.autoPotHp / 100) && potCount('hp') > 0) usePotion('hp');
+    else if ((me.mp ?? maxMpOf()) < maxMpOf() * (settings.autoPotMp / 100) && potCount('mp') > 0) usePotion('mp');
+  }
+  /* 자동 스킬: 타깃이 사거리 근처면 배운 액티브를 순환 시전 */
+  const t = sims.find(v => v.id === attackTargetSimId && v.alive);
+  if (t && Math.hypot(t.x - me.x, t.y - me.y) < atkRange() * 2.2 && now - autoSkillT > 700) {
+    for (let s2 = 1; s2 <= 5; s2++) {
+      const id = boundId(s2);
+      if (id && id !== 'heal' && hasSkill(id) && now >= (skillCdUntil[id] || 0)) {
+        const def = skillDef(id); const mpc = def && def.mp ? mpCostOf(skillMp(id, def)) : 0;
+        if ((me.mp ?? maxMpOf()) >= mpc) { useSkill(s2); autoSkillT = now; break; }
+      }
+    }
+  }
+}
+function toggleAuto() { autoHunt = !autoHunt; if (autoHunt) { dest = null; } updateAutoBtn(); toast(autoHunt ? '⚔️ 자동 사냥 켜짐 — 이동 키를 누르면 해제' : '자동 사냥 꺼짐', 'sysq'); sfx('click'); }
+function updateAutoBtn() { const b = $('autoBtn'); if (b) b.classList.toggle('on', autoHunt); }
 function tryAttack(now, forced = null) {
   if (!ready || me.dead || worldMapOpen() || paused) return; /* 지도 오버레이 뒤에서 눈먼 전투 방지 */
   const cd = atkCdOf();
@@ -8296,6 +8324,26 @@ for (const [hbId, kind] of [['hbHp', 'hp'], ['hbMp', 'mp']]) {
   };
 }
 $('bulkSellBtn').onclick = e => { e.stopPropagation(); sfx('click'); toggleBulkMenu(); };
+{ const ab = $('autoBtn'); if (ab) ab.onclick = toggleAuto; updateAutoBtn(); }
+function openSettings() {
+  const m = $('settingsModal'); if (!m) return;
+  $('setSound').checked = !muted;
+  $('setAuto').checked = autoHunt;
+  $('setDmg').checked = settings.dmgText;
+  $('setShake').checked = settings.screenShake;
+  $('setHp').value = settings.autoPotHp; $('setHpVal').textContent = settings.autoPotHp;
+  $('setMp').value = settings.autoPotMp; $('setMpVal').textContent = settings.autoPotMp;
+  m.hidden = false;
+}
+{ const hs = $('hudSettings'); if (hs) hs.onclick = e => { e.stopPropagation(); openSettings(); }; }
+{ const sc = $('setClose'); if (sc) sc.onclick = () => { $('settingsModal').hidden = true; }; }
+{ const sm = $('settingsModal'); if (sm) sm.onclick = e => { if (e.target === sm) sm.hidden = true; }; }
+{ const el = $('setSound'); if (el) el.onchange = () => { if (el.checked === muted) toggleMute(); }; }
+{ const el = $('setAuto'); if (el) el.onchange = () => { if (el.checked !== autoHunt) toggleAuto(); }; }
+{ const el = $('setDmg'); if (el) el.onchange = () => { settings.dmgText = el.checked; saveSettings(); }; }
+{ const el = $('setShake'); if (el) el.onchange = () => { settings.screenShake = el.checked; saveSettings(); }; }
+{ const el = $('setHp'); if (el) el.oninput = () => { settings.autoPotHp = +el.value; $('setHpVal').textContent = el.value; saveSettings(); }; }
+{ const el = $('setMp'); if (el) el.oninput = () => { settings.autoPotMp = +el.value; $('setMpVal').textContent = el.value; saveSettings(); }; }
 { const sb = $('salvageBtn'); if (sb) sb.onclick = e => { e.stopPropagation(); sfx('click'); toggleSalvageMenu(); }; }
 document.querySelectorAll('#dockL [data-p]').forEach(b => b.onclick = () => {
   sfx('click');
@@ -8343,6 +8391,7 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyM') toggleMute();
   if (e.code === 'KeyV') { sfx('click'); toggleWorldMap(); }
   if (e.code === 'KeyG') { sfx('click'); togglePanel('achvPanel'); }
+  if (e.code === 'KeyP') toggleAuto();
   if (e.code === 'KeyC') { sfx('click'); toggleDex(); }
 });
 addEventListener('keyup', e => keys[e.code] = false);
@@ -8683,9 +8732,18 @@ function loopBody(t) {
     const maxSpd = moveSpd() * (Date.now() < (me.atkSlowUntil || 0) ? .45 : 1); /* 타격 직후 감속 */
     if (dx || dy) {
       dest = null; attackTargetSimId = null;
+      if (autoHunt) { autoHunt = false; updateAutoBtn(); } /* 수동 이동 시 자동 사냥 해제 */
       const len = Math.hypot(dx, dy);
       glideToward(me.x + dx / len * 120, me.y + dy / len * 120, maxSpd, dt, 0);
-    } else if (attackTargetSimId) {
+    } else {
+      if (autoHunt && !attackTargetSimId && !dest) { /* 자동 사냥: 가장 가까운 몬스터를 타깃으로 */
+        const t = nearestSim(9999);
+        if (t) attackTargetSimId = t.id;
+      }
+      if (autoHunt) autoCombat(now);
+    }
+    if (dx || dy) { /* (위 분기에서 처리됨) */ }
+    else if (attackTargetSimId) {
       const s = sims.find(v => v.id === attackTargetSimId && v.map === myMap());
       if (!s || !s.alive) { attackTargetSimId = null; brake(dt); }
       else if (Math.hypot(s.x - me.x, s.y - me.y) > atkRange()) glideToward(s.x, s.y, maxSpd, dt, 1);
@@ -9066,7 +9124,7 @@ async function init() {
   window.__PING = () => Promise.race([updateDoc(meRef, { lastSeen: Date.now() }).then(() => 'write-ok'), new Promise(r => setTimeout(() => r('write-timeout'), 8000))]).catch(e => 'write-error:' + (e.code || e.message)); /* 진단: 쓰기 채널 상태 */
   window.__MOB = async id => { const g = await getDoc(doc(db, 'monsters', id)); return g.exists() ? g.data() : null; };
   window.__give = async (id, slot = 17) => { await updX(meRef, { ['inv.' + slot]: id }); return 'ok'; }; /* 진단: 가방 슬롯에 아이템 넣기 */
-  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__pageDef = pageDef; window.__view = () => ({ x: view.x, y: view.y, z: view.z, dpr }); window.__mkUniqAt = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; cam.x=s0.x; cam.y=s0.y; return {id:s0.id, kind:s0.kind, x:s0.x, y:s0.y}; }; window.__mkUniq = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; const me2=window.__me?me:me; me.x=s0.x; me.y=s0.y-80; cam.x=s0.x; cam.y=s0.y-40; return {id:s0.id, kind:s0.kind}; }; window.__useSkill = useSkill; window.__salvage = salvageBulk; window.__invRar = () => Object.entries(me.inv||{}).map(([k,v])=>({k, id:String(v).split(/[*~+]/)[0], rar:getItem(v).rarity, rank:RARITY_RANK[getItem(v).rarity]??0, slot:getItem(v).slot||'-'})); window.__claimAchv = claimAchv; window.__ownedTitles = ownedTitles; window.__paused = () => ({ paused, ready, dead: me.dead, wm: worldMapOpen() }); window.__unpause = () => { paused = false; }; window.__cdUntil = id => skillCdUntil[id]||0; window.__bound = boundId; window.__skillDef = skillDef; window.__mpc = id => { const d=skillDef(id); return d&&d.mp?mpCostOf(skillMp(id,d)):0; }; window.__castTree = castTreeSkill; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
+  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__pageDef = pageDef; window.__view = () => ({ x: view.x, y: view.y, z: view.z, dpr }); window.__mkUniqAt = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; cam.x=s0.x; cam.y=s0.y; return {id:s0.id, kind:s0.kind, x:s0.x, y:s0.y}; }; window.__mkUniq = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; const me2=window.__me?me:me; me.x=s0.x; me.y=s0.y-80; cam.x=s0.x; cam.y=s0.y-40; return {id:s0.id, kind:s0.kind}; }; window.__useSkill = useSkill; window.__toggleAuto = toggleAuto; window.__auto = () => autoHunt; window.__settings = () => settings; window.__salvage = salvageBulk; window.__invRar = () => Object.entries(me.inv||{}).map(([k,v])=>({k, id:String(v).split(/[*~+]/)[0], rar:getItem(v).rarity, rank:RARITY_RANK[getItem(v).rarity]??0, slot:getItem(v).slot||'-'})); window.__claimAchv = claimAchv; window.__ownedTitles = ownedTitles; window.__paused = () => ({ paused, ready, dead: me.dead, wm: worldMapOpen() }); window.__unpause = () => { paused = false; }; window.__cdUntil = id => skillCdUntil[id]||0; window.__bound = boundId; window.__skillDef = skillDef; window.__mpc = id => { const d=skillDef(id); return d&&d.mp?mpCostOf(skillMp(id,d)):0; }; window.__castTree = castTreeSkill; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
   window.__ITEMS = () => ({ items: Object.keys(ITEMS).length, sets: Object.keys(SETS).length, sample: Object.entries(ITEMS).filter(([k]) => /_b[0-9]$/.test(k)).slice(0, 3).map(([k, v]) => k + ':' + v.name) });
   window.__ZONETEX = n => { try { const t = getTex('p' + n); return { w: t.width, h: t.height, cols: (worldColliders['p' + n] || []).length }; } catch (e) { return { err: String(e && e.stack || e).slice(0, 300) }; } };
   window.__DBG = () => ({ page: myPage(), colliders: (worldColliders[myMap()] || []).length, frozenMs: hitStopUntil - Date.now(), activeIsChat: document.activeElement === chatInput, activeTag: document.activeElement && document.activeElement.tagName + '#' + document.activeElement.id, wmUp: worldMapOpen(), mouseDown, moveSpd: moveSpd(), atkRange: atkRange(), atkCdMs: atkCdOf(), sinceAtk: Date.now() - lastAttackAt, mapFading, snapN: window.__snapN || 0, snapAgoMs: window.__snapT ? Date.now() - window.__snapT : null, lastDmg: window.__lastDmg || null, lastErr: window.__lastErr || null, dead: !!me.dead, paused, ready, sheets: Object.fromEntries(Object.entries(HERO_SHEETS).map(([k, v]) => [k, v.img ? 'ok' : v.failed ? 'failed' : 'loading'])), target: attackTargetSimId, hover: hoverSimId, dest: dest && { x: Math.round(dest.x), y: Math.round(dest.y) }, zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),

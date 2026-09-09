@@ -219,11 +219,161 @@ const SLOTS = [
 const SLOT_ICONS = { weapon: '⚔', armor: '🛡', helmet: '🪖', pants: '👖', gloves: '🧤', boots: '🥾', bracelet: '📿', necklace: '🧿', ring: '💍' };
 const ITEM_ICONS = { potion: '🧪', potion_mp: '💧', potion_hi: '⚗️', potion_mm: '🔵', scroll_normal: '📜', scroll_adv: '📜', scroll_top: '📜' };
 const itemIcon = raw => ITEM_ICONS[splitStack(raw)[0]] || SLOT_ICONS[getItem(raw).slot] || '📦';
-/* 가방용 큰 썸네일 (픽셀아트 캔버스 → dataURL 캐시) */
+/* ================= 아이템 아이콘 (고해상도 2D) =================
+   game-icons(CC BY 3.0) 실루엣 SVG를 128px 캔버스에 아이템 색으로 채색 + 베벨·스펙큘러·외곽선·등급 후광을 얹어
+   가방/장비/툴팁/퀵슬롯/바닥 루팅 전부에 같은 이미지를 쓴다. 예전 ASCII 픽셀아트는 SVG 로드 전 폴백으로만 남김 */
+const ITEM_ICON_PX = 128;
+const ITEM_ICON_IMG = {};
+let itemIconGen = 0;
+function itemIconImg(name) {
+  let im = ITEM_ICON_IMG[name];
+  if (im) return im;
+  im = new Image();
+  im.onload = () => { im._ok = true; itemIconsChanged(); };
+  im.onerror = () => { im._bad = true; };
+  im.src = `assets/icons/items/${name}.svg?v=1`;
+  ITEM_ICON_IMG[name] = im;
+  return im;
+}
+/* 아이콘이 새로 로드되면 캐시를 비우고 열려 있는 UI를 다시 그림 */
+let iconRefreshT = 0;
+function itemIconsChanged() {
+  itemIconGen++;
+  for (const k in thumbCache) delete thumbCache[k];
+  for (const k in iconCvCache) delete iconCvCache[k];
+  for (const k in domCache) if (k.startsWith('pothb')) delete domCache[k];
+  clearTimeout(iconRefreshT);
+  iconRefreshT = setTimeout(() => { try { if ($('invPanel') && $('invPanel').classList.contains('open')) renderInvUI(); } catch (e) {} }, 60);
+}
+/* 아이템 → 아이콘 이름 */
+function itemIconName(id, it) {
+  const base = it._base || id;
+  if (it.scroll) return 'scroll-unfurled';
+  if (it.heal) return it.heal > 100 ? 'heart-bottle' : 'health-potion';
+  if (it.mana) return it.mana > 60 ? 'bubbling-flask' : 'potion-ball'; /* 체력=하트 플라스크(빨강) / 마나=둥근 플라스크(파랑)로 실루엣부터 다르게 */
+  const hi = /flame|storm|shadow|crystal|chief|knight/.test(base) || (it.band || 0) >= 4;
+  const top = /chief|knight|lich/.test(base) || (it.band || 0) >= 7;
+  const cls = it.cls || '';
+  switch (it.slot) {
+    case 'weapon':
+      if (cls === 'archer') return hi ? 'crossbow' : 'bow-arrow';
+      if (cls === 'rogue') return hi ? 'curvy-knife' : 'plain-dagger';
+      if (cls === 'mage') return hi ? 'crystal-wand' : 'wizard-staff';
+      return top ? 'two-handed-sword' : hi ? 'dripping-sword' : 'broadsword';
+    case 'armor':
+      if (cls === 'warrior' && hi) return 'breastplate';
+      if (/plate/.test(base)) return 'breastplate';
+      if (cls === 'archer' && hi) return 'chain-mail';
+      if (cls === 'mage' || /cloth/.test(base)) return 'leather-vest';
+      return 'leather-armor';
+    case 'helmet':
+      if (/crown|slime/.test(base)) return 'crown';
+      if (cls === 'mage') return 'pointy-hat';
+      if (cls === 'rogue' || /cloth/.test(base)) return 'hood';
+      if (cls === 'warrior' && hi) return 'visored-helm';
+      return 'barbute';
+    case 'pants': return 'trousers';
+    case 'gloves': return (hi || /steel/.test(base)) ? 'gauntlet' : 'gloves';
+    case 'boots': return (hi || /wind/.test(base)) ? 'steeltoe-boots' : 'boots';
+    case 'bracelet': return 'bracers';
+    case 'necklace': return (hi || /ruby|fang/.test(base)) ? 'gem-pendant' : 'pearl-necklace';
+    case 'ring': return /lich/.test(base) ? 'emerald' : (hi || /shadow|gem/.test(base)) ? 'diamond-ring' : 'ring';
+  }
+  return 'ring-box';
+}
+const iconCvCache = {};
+/* 실루엣을 (dx,dy)만큼 밀어 뺀 '테두리 띠'를 만든다 — 베벨용 */
+function iconRim(mask, dx, dy, S) {
+  const c2 = document.createElement('canvas'); c2.width = S; c2.height = S;
+  const g = c2.getContext('2d');
+  g.drawImage(mask, 0, 0);
+  g.globalCompositeOperation = 'destination-out';
+  g.drawImage(mask, dx, dy);
+  return c2;
+}
+/* 아이콘 캔버스(128px). 로드 전이면 null */
+function itemIconCanvas(rawId) {
+  const [bid] = splitStack(rawId);
+  const it = getItem(bid);
+  const name = itemIconName(bid, it);
+  const im = itemIconImg(name);
+  if (!im._ok) return null;
+  const col = it.color || '#ccc';
+  const rar = it.rarity || 'common';
+  const key = `${name}|${col}|${rar}`;
+  if (iconCvCache[key]) return iconCvCache[key];
+  const S = ITEM_ICON_PX, pad = 7, gs = S - pad * 2; /* 글리프가 셀을 거의 채우게 — 슬롯에서 작아 보이던 것 보정 */
+  /* 1) 실루엣 마스크(흰색) */
+  const mask = document.createElement('canvas'); mask.width = S; mask.height = S;
+  const mg = mask.getContext('2d');
+  mg.imageSmoothingEnabled = true; mg.imageSmoothingQuality = 'high';
+  mg.drawImage(im, pad, pad, gs, gs);
+  /* 2) 채색 본체: 위 밝음 → 아래 어둠 그라데이션 + 스펙큘러 */
+  const body = document.createElement('canvas'); body.width = S; body.height = S;
+  const bg = body.getContext('2d');
+  bg.drawImage(mask, 0, 0);
+  bg.globalCompositeOperation = 'source-in';
+  const lg = bg.createLinearGradient(0, pad, S * .35, S - pad);
+  lg.addColorStop(0, shade(col, 1.55));
+  lg.addColorStop(.45, col);
+  lg.addColorStop(1, shade(col, .5));
+  bg.fillStyle = lg; bg.fillRect(0, 0, S, S);
+  bg.globalCompositeOperation = 'source-atop';
+  /* 재질 결: 대각선 미세 줄무늬로 평면감 제거 */
+  bg.globalAlpha = .06;
+  for (let i = -S; i < S * 2; i += 6) { bg.fillStyle = (i / 6 | 0) % 2 ? '#fff' : '#000'; bg.beginPath(); bg.moveTo(i, 0); bg.lineTo(i + 3, 0); bg.lineTo(i + 3 - S, S); bg.lineTo(i - S, S); bg.closePath(); bg.fill(); }
+  bg.globalAlpha = 1;
+  const sp = bg.createRadialGradient(S * .36, S * .3, 2, S * .36, S * .3, S * .5);
+  sp.addColorStop(0, 'rgba(255,255,255,.55)'); sp.addColorStop(.35, 'rgba(255,255,255,.18)'); sp.addColorStop(1, 'rgba(255,255,255,0)');
+  bg.fillStyle = sp; bg.fillRect(0, 0, S, S);
+  /* 3) 베벨: 좌상 하이라이트 띠 / 우하 그림자 띠 */
+  const rimL = iconRim(mask, 3, 3, S), rimD = iconRim(mask, -3, -3, S);
+  bg.globalCompositeOperation = 'source-atop';
+  bg.globalAlpha = .75; bg.drawImage(rimL, 0, 0);
+  const tmpD = document.createElement('canvas'); tmpD.width = S; tmpD.height = S;
+  const tg = tmpD.getContext('2d'); tg.drawImage(rimD, 0, 0); tg.globalCompositeOperation = 'source-in'; tg.fillStyle = '#000'; tg.fillRect(0, 0, S, S);
+  bg.globalAlpha = .55; bg.drawImage(tmpD, 0, 0);
+  bg.globalAlpha = 1;
+  /* 4) 최종 합성: 등급 후광 → 외곽선(8방향) → 그림자 → 본체 */
+  const out = document.createElement('canvas'); out.width = S; out.height = S;
+  const c = out.getContext('2d');
+  const rank = RARITY_RANK[rar] || 0;
+  if (rank >= 1) {
+    const rc = RARITY_COLOR[rar] || '#aaa';
+    c.save(); c.filter = `blur(${6 + rank * 2}px)`; c.globalAlpha = .28 + rank * .09;
+    const glow = document.createElement('canvas'); glow.width = S; glow.height = S;
+    const gg = glow.getContext('2d'); gg.drawImage(mask, 0, 0); gg.globalCompositeOperation = 'source-in'; gg.fillStyle = rc; gg.fillRect(0, 0, S, S);
+    for (let i = 0; i < 2; i++) c.drawImage(glow, 0, 0);
+    c.restore();
+  }
+  const ol = document.createElement('canvas'); ol.width = S; ol.height = S;
+  const og = ol.getContext('2d'); og.drawImage(mask, 0, 0); og.globalCompositeOperation = 'source-in'; og.fillStyle = '#0c0e14'; og.fillRect(0, 0, S, S);
+  c.save(); c.globalAlpha = .5; c.filter = 'blur(3px)'; c.drawImage(ol, 3, 5); c.restore();
+  for (let a = 0; a < 8; a++) c.drawImage(ol, Math.round(Math.cos(a * Math.PI / 4) * 2.6), Math.round(Math.sin(a * Math.PI / 4) * 2.6));
+  c.drawImage(body, 0, 0);
+  /* 전설·유니크: 반짝이 점 */
+  if (rank >= 4) {
+    c.fillStyle = '#fff';
+    for (const [x, y, r] of [[S * .28, S * .22, 3.5], [S * .7, S * .3, 2.4], [S * .62, S * .72, 2.8]]) {
+      c.globalAlpha = .9; c.beginPath(); c.moveTo(x, y - r * 2.2); c.lineTo(x + r * .5, y - r * .5); c.lineTo(x + r * 2.2, y); c.lineTo(x + r * .5, y + r * .5); c.lineTo(x, y + r * 2.2); c.lineTo(x - r * .5, y + r * .5); c.lineTo(x - r * 2.2, y); c.lineTo(x - r * .5, y - r * .5); c.closePath(); c.fill();
+    }
+    c.globalAlpha = 1;
+  }
+  iconCvCache[key] = out;
+  return out;
+}
+/* 가방용 썸네일 dataURL (고해상도 아이콘 → 로드 전엔 예전 픽셀아트 폴백) */
 const thumbCache = {};
 function itemThumb(rawId) {
   try {
     const [bid] = splitStack(rawId);
+    const cvI = itemIconCanvas(rawId);
+    if (cvI) {
+      const it = getItem(bid);
+      const key = 'hi|' + itemIconName(bid, it) + '|' + (it.color || '') + '|' + (it.rarity || '');
+      if (!thumbCache[key]) thumbCache[key] = cvI.toDataURL();
+      return thumbCache[key];
+    }
     const key = itemSprite(bid);
     if (thumbCache[key]) return thumbCache[key];
     const url = buildSprite(key).cv.toDataURL();
@@ -231,6 +381,26 @@ function itemThumb(rawId) {
     return url;
   } catch (e) { return ''; }
 }
+/* 인라인 <img> (토스트·퀵슬롯). 아이콘 미로드 시 이모지 폴백 */
+function itemIconHtml(rawId, px = 20, cls = '') {
+  const th = itemThumb(rawId);
+  return th ? `<img class="${cls}" src="${th}" alt="" style="width:${px}px;height:${px}px;vertical-align:middle;object-fit:contain;">` : itemIcon(rawId);
+}
+/* 월드 캔버스에 아이템 아이콘 — (x, y)는 발밑 기준, size는 월드 px(정사각) */
+function drawItemIcon(rawId, x, y, size, opts = {}) {
+  const cvI = itemIconCanvas(rawId);
+  if (!cvI) { drawSprite(itemSprite(splitStack(rawId)[0]), x, y, size / 10, opts); return; }
+  ctx.save();
+  ctx.translate(x, y - size / 2);
+  if (opts.rot) ctx.rotate(opts.rot);
+  ctx.scale(opts.squashX || 1, opts.squashY || 1);
+  if (opts.alpha != null) ctx.globalAlpha = opts.alpha;
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(cvI, -size / 2, -size / 2, size, size);
+  ctx.restore();
+}
+/* 시작 시 전부 프리로드 (39개, 총 160KB) — 가방을 열 때쯤엔 전부 준비되어 폴백이 안 보인다 */
+setTimeout(() => { for (const n of ['broadsword','bow-arrow','plain-dagger','wizard-staff','breastplate','leather-armor','leather-vest','visored-helm','barbute','pointy-hat','trousers','gloves','boots','ring','health-potion','heart-bottle','magic-potion','round-potion','square-bottle','scroll-unfurled','crown','gem-pendant','emerald','ring-box','dripping-sword','water-drop','crystal-wand','two-handed-sword','crossbow','curvy-knife','hood','chain-mail','steeltoe-boots','gauntlet','bracers','diamond-ring','pearl-necklace','potion-ball','bubbling-flask']) itemIconImg(n); }, 0);
 /* 리치 호버 툴팁 */
 let tipEl = null, tipLastRaw = '', tipLastT = 0;
 function itemTipHtml(rawId) {
@@ -239,7 +409,7 @@ function itemTipHtml(rawId) {
   const col = RARITY_COLOR[it.rarity] || '#aaa';
   const th = itemThumb(rawId);
   let h = `<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">`
-    + (th ? `<img src="${th}" style="width:44px;height:44px;image-rendering:pixelated;">` : `<span style="font-size:30px;">${itemIcon(rawId)}</span>`)
+    + (th ? `<img src="${th}" style="width:48px;height:48px;object-fit:contain;">` : `<span style="font-size:30px;">${itemIcon(rawId)}</span>`)
     + `<div><b style="color:${col};font-size:14px;">${esc(it.name)}</b>${cnt > 1 ? ` <span style="color:#ffd700">x${cnt}</span>` : ''}`
     + `<div style="color:${col};font-size:11px;">${RARITY_KR[it.rarity] || '일반'} · 점수 <b style="color:#fff">${itemScore(rawId).toLocaleString()}</b></div></div></div>`;
   const st = itemStat(it);
@@ -1890,10 +2060,10 @@ async function pickup(lid, l) {
       flashInv();
       heroPickT = Date.now(); /* 줍기 숙이기 모션 */
       fxSparks(me.x, me.y - 22, 8, it.color || '#ffd700', 90);
-      if (res === 'equipped') toast(`${itemIcon(item.itemId)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 → <b>자동 장착!</b> <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span>`, 'sysq');
-      else if (res === 'swapped') toast(`${itemIcon(item.itemId)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 → <b>자동 장착!</b> 기존 장비 자동판매 <b style="color:#ffd700">+${soldG.toLocaleString()} G</b>`, 'sysq');
-      else if (res === 'stacked') toast(`${itemIcon(item.itemId)} <b style="color:${it.color}">${esc(it.name)}</b> 보유 수량 +1 <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span>`);
-      else toast(`${itemIcon(item.itemId)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span> → 가방 <b>${Object.keys(me.inv || {}).length}/${bagSize()}</b>`);
+      if (res === 'equipped') toast(`${itemIconHtml(item.itemId, 22)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 → <b>자동 장착!</b> <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span>`, 'sysq');
+      else if (res === 'swapped') toast(`${itemIconHtml(item.itemId, 22)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 → <b>자동 장착!</b> 기존 장비 자동판매 <b style="color:#ffd700">+${soldG.toLocaleString()} G</b>`, 'sysq');
+      else if (res === 'stacked') toast(`${itemIconHtml(item.itemId, 22)} <b style="color:${it.color}">${esc(it.name)}</b> 보유 수량 +1 <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span>`);
+      else toast(`${itemIconHtml(item.itemId, 22)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span> → 가방 <b>${Object.keys(me.inv || {}).length}/${bagSize()}</b>`);
       float(me.x, me.y - 30, `+ ${it.name}`, it.color);
     }, PICK_MS);
   } finally { picking = false; }
@@ -5784,7 +5954,7 @@ function drawPickFlights(now) {
     ctx.fillStyle = col; ctx.globalAlpha = .35 * (1 - k * .5);
     ctx.beginPath(); ctx.arc(x, y, 10 * (1 - k * .5), 0, 7); ctx.fill();
     ctx.globalAlpha = 1;
-    drawSprite(itemSprite(f.itemId), x, y, 2.4 * (1 - k * .55), {});
+    drawItemIcon(f.itemId, x, y + 12, 30 * (1 - k * .55), {});
     if ((k * 7 | 0) !== ((k - .04) * 7 | 0)) poofs.push({ x, y, vx: rand(-20, 20), vy: rand(-20, 20), r: 1.6, t: 0, color: col, g: 0 });
   }
 }
@@ -5863,7 +6033,7 @@ function drawLootItems(now) {
     }
     ctx.fillStyle = 'rgba(0,0,0,.30)';
     ctx.beginPath(); ctx.ellipse(l.x, l.y + 2, 8, 3.2, 0, 0, 7); ctx.fill();
-    drawSprite(itemSprite(l.itemId), l.x, l.y - 4 + bob, 2.4 * (1 + landing * .55), { rot: Math.sin(now / 500 + l.y) * .07, squashX: 1 + landing * .25, squashY: 1 - landing * .2 });
+    drawItemIcon(l.itemId, l.x, l.y + 8 + bob, 30 * (1 + landing * .55), { rot: Math.sin(now / 500 + l.y) * .07, squashX: 1 + landing * .25, squashY: 1 - landing * .2 });
     ctx.font = '10px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillStyle = `rgba(${ncol3},.95)`;
@@ -6746,14 +6916,15 @@ function setPot(el, n, kind) {
   if (!box) return;
   const pref = kind ? ((me.potPref || {})[kind] || '') : '';
   const k = 'pot' + el;
-  const sig = 'n' + n + '|' + pref;
+  const sig = 'n' + n + '|' + pref + '|' + itemIconGen;
   if (domCache[k] === sig) return;
   domCache[k] = sig;
   box.querySelector('.cnt').textContent = n;
   box.classList.toggle('locked', n <= 0);
-  if (kind && pref) {
+  if (kind) {
     const ic = box.querySelector('.ic2');
-    if (ic) ic.textContent = itemIcon(pref);
+    const shown = pref || (kind === 'hp' ? 'potion' : 'potion_mp');
+    if (ic) ic.innerHTML = itemIconHtml(shown, 34, 'potic');
   }
 }
 function updateHotbar(now) {
@@ -7850,6 +8021,7 @@ async function init() {
   loginAt = Date.now();
   window.__HIT = (sx, sy) => { const r = simAt(sx, sy); return { world: r.w, hit: r.s ? { id: r.s.id, kind: r.s.kind, x: Math.round(r.s.x), y: Math.round(r.s.y) } : null }; };
   window.__SIMS = () => sims.filter(v => v.alive && v.map === myMap()).slice(0, 8).map(v => ({ id: v.id, kind: v.kind, hp: v.hp, maxHp: v.maxHp, x: Math.round(v.x), y: Math.round(v.y), r: (sdef(v).r || 16), sx: Math.round((v.x - view.x) * (view.z || 1)), sy: Math.round((v.y - view.y) * (view.z || 1)) }));
+  window.__itemThumb = itemThumb; window.__itemIconCanvas = itemIconCanvas; /* 진단: 아이콘 미리보기 */
   window.__TX = () => Promise.race([runTransaction(db, async tx => { const g = await tx.get(meRef); tx.update(meRef, { lastSeen: Date.now() }); return 'tx-ok:' + g.exists(); }), new Promise(r => setTimeout(() => r('tx-timeout'), 8000))]).catch(e => 'tx-error:' + (e.code || e.message)); /* 진단: 트랜잭션 경로 */
   window.__DD = async id => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; const t0 = performance.now(); const r = await Promise.race([dealDamage(sm, 1), new Promise(rs => setTimeout(() => rs('dd-timeout'), 8000))]); return { r, ms: Math.round(performance.now() - t0) }; };
   window.__PING = () => Promise.race([updateDoc(meRef, { lastSeen: Date.now() }).then(() => 'write-ok'), new Promise(r => setTimeout(() => r('write-timeout'), 8000))]).catch(e => 'write-error:' + (e.code || e.message)); /* 진단: 쓰기 채널 상태 */

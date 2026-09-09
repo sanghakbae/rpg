@@ -37,7 +37,14 @@ const JOBS = [
   ['../assets/glb/Green Crystal Slime.glb', 'mob_slime'],
   ['../assets/glb/Green Orc Character.glb', 'mob_goblin'], /* VARCO 자동 이름은 orc지만 고블린 프롬프트 결과물 */
   ['../assets/glb/Low Poly Dire Wolf.glb', 'mob_wolf', 0], /* 3번째: 모델별 추가 yaw 보정(°) — 측면 이미지로 만든 모델은 정면이 ±90° 틀어질 수 있음 */
+  /* 애니메이션 모델(리깅 포함): 상태별 프레임을 행으로 굽는다. anim: 상태→클립 이름 정규식, frames: 상태별 프레임 수 */
+  { url: '../assets/glb/Orc_Skull.gltf', key: 'mob_orc', fr: 256, yaw: 0, hscale: 1,
+    anim: { idle: /^Idle$/i, walk: /^Walk$/i, attack: /^Weapon$|^Punch$/i, hurt: /^HitReact$/i, death: /^Death$/i } },
+  { url: '../assets/glb/Skeleton_Warrior.glb', key: 'mob_skeleton', fr: 256, yaw: 0, hscale: 1,
+    anim: { idle: /^Idle$|^Idle_A$|2H_Melee_Idle/i, walk: /^Walking_A$|^Walking_B$|^Walk$/i, attack: /1H_Melee_Attack_Slice_Diagonal|1H_Melee_Attack_Chop|2H_Melee_Attack_Slice/i, hurt: /^Hit_A$/i, death: /^Death_A$/i } },
 ];
+const ANIM_FRAMES = { idle: 4, walk: 6, attack: 6, hurt: 2, death: 4 };
+const ANIM_ORDER = ['idle', 'walk', 'attack', 'hurt', 'death'];
 const SAVE_URL = 'http://localhost:8124/save';
 const log = m => { const el = document.getElementById('log'); el.textContent += m + '\n'; el.scrollTop = 1e9; };
 const $ = id => document.getElementById(id);
@@ -97,25 +104,77 @@ function bakeOne(root, FR, elev, yawFix) {
   return { sheet, meta: { fr: FR, dirs: 8, top: topMin, feet: botMax, elev, yawFix } };
 }
 async function loadGlb(url) {
-  return new Promise((res, rej) => loader.load(url, g => res(g.scene), undefined, rej));
+  return new Promise((res, rej) => loader.load(url, g => res({ scene: g.scene, animations: g.animations || [] }), undefined, rej));
+}
+/* 애니메이션 모델 베이크: 상태별 프레임을 행(row)으로, 8방향을 열(col)로 */
+function bakeAnimated(root, animations, FR, elev, yawFix, animMap) {
+  renderer.setSize(FR, FR, false);
+  const cam = makeCamera(elev);
+  const mixer = new THREE.AnimationMixer(root);
+  const states = {};
+  const plan = [];
+  for (const st of ANIM_ORDER) {
+    const re = animMap[st]; if (!re) continue;
+    const clip = animations.find(c => re.test(c.name));
+    if (!clip) { log(`  · ${st}: 클립 없음 (${re})`); continue; }
+    const n = ANIM_FRAMES[st] || 4;
+    states[st] = { row: plan.length, n, clip: clip.name };
+    for (let i = 0; i < n; i++) plan.push({ st, clip, t: st === 'death' ? clip.duration * (i / Math.max(1, n - 1)) * .98 : clip.duration * (i / n) });
+  }
+  const rows = plan.length;
+  const sheet = document.createElement('canvas'); sheet.width = FR * 8; sheet.height = FR * rows;
+  const sc = sheet.getContext('2d');
+  let topMin = FR, botMax = 0;
+  let action = null;
+  for (let r = 0; r < rows; r++) {
+    const { clip, t } = plan[r];
+    if (!action || action.getClip() !== clip) { mixer.stopAllAction(); action = mixer.clipAction(clip); action.play(); }
+    mixer.setTime(t);
+    root.updateMatrixWorld(true);
+    for (let d = 0; d < 8; d++) {
+      const phi = d * Math.PI / 4;
+      root.rotation.y = Math.atan2(-Math.cos(phi), -Math.sin(phi)) + yawFix * Math.PI / 180;
+      renderer.render(scene, cam);
+      sc.drawImage(renderer.domElement, d * FR, r * FR);
+      if (plan[r].st === 'idle') { /* 알파 스캔은 대기 프레임 기준 */
+        const px = sc.getImageData(d * FR, r * FR, FR, FR).data;
+        outer: for (let y = 0; y < FR; y++) for (let x = 0; x < FR; x += 2) if (px[(y * FR + x) * 4 + 3] > 30) { topMin = Math.min(topMin, y); break outer; }
+        outer2: for (let y = FR - 1; y >= 0; y--) for (let x = 0; x < FR; x += 2) if (px[(y * FR + x) * 4 + 3] > 30) { botMax = Math.max(botMax, y); break outer2; }
+      }
+    }
+  }
+  mixer.stopAllAction();
+  return { sheet, meta: { fr: FR, dirs: 8, rows, top: topMin, feet: botMax, elev, yawFix, states: Object.fromEntries(Object.entries(states).map(([k, v]) => [k, { row: v.row, n: v.n, clip: v.clip }])) } };
 }
 async function run(onlyFirst) {
   const FR = +$('fr').value || 512, elev = +$('elev').value || 26, yawFix = +$('yawFix').value || 0, hs = +$('hscale').value || 1;
   $('out').innerHTML = '';
-  for (const [url, name, yawExtra = 0] of (onlyFirst ? JOBS.slice(0, 1) : JOBS)) {
+  for (const job of (onlyFirst ? JOBS.slice(0, 1) : JOBS)) {
+    const isObj = !Array.isArray(job);
+    const url = isObj ? job.url : job[0], name = isObj ? job.key : job[1], yawExtra = isObj ? (job.yaw || 0) : (job[2] || 0);
+    const frJob = isObj && job.fr ? job.fr : FR, hsJob = isObj && job.hscale ? job.hscale : hs;
     $('st').textContent = `로딩: ${name}`;
     const t0 = performance.now();
-    let root;
-    try { root = await loadGlb(url); } catch (e) { log(`✗ ${name} 로드 실패: ${e.message || e}`); continue; }
-    normalize(root, hs);
+    let g;
+    try { g = await loadGlb(url); } catch (e) { log(`✗ ${name} 로드 실패: ${e.message || e}`); continue; }
+    const root = g.scene;
+    if (isObj && job.anim) { /* 리깅 모델: 대기 포즈 기준으로 정규화 (스킨 포함 정밀 bbox) */
+      const mx = new THREE.AnimationMixer(root); const idleClip = g.animations.find(c => job.anim.idle.test(c.name)) || g.animations[0];
+      if (idleClip) { mx.clipAction(idleClip).play(); mx.setTime(0); root.updateMatrixWorld(true); }
+      const box = new THREE.Box3().setFromObject(root, true);
+      const size = box.getSize(new THREE.Vector3()), ctr = box.getCenter(new THREE.Vector3());
+      const sN = (1 / size.y) * hsJob;
+      root.scale.setScalar(sN); root.position.set(-ctr.x * sN, -box.min.y * sN, -ctr.z * sN); root.updateMatrixWorld(true);
+      mx.stopAllAction();
+    } else normalize(root, hsJob);
     scene.add(root);
-    const { sheet, meta } = bakeOne(root, FR, elev, yawFix + yawExtra);
+    const { sheet, meta } = (isObj && job.anim) ? bakeAnimated(root, g.animations, frJob, elev, yawFix + yawExtra, job.anim) : bakeOne(root, frJob, elev, yawFix + yawExtra);
     scene.remove(root);
     root.traverse(o => { if (o.geometry) o.geometry.dispose(); });
     meta.name = name; meta.src = url.split('/').pop();
     const img = document.createElement('img'); img.className = 'sheet'; img.src = sheet.toDataURL('image/png'); img.title = name;
     $('out').appendChild(img);
-    log(`✓ ${name}: ${(performance.now() - t0 | 0)}ms  top=${meta.top} feet=${meta.feet} (셀 ${FR})`);
+    log(`✓ ${name}: ${(performance.now() - t0 | 0)}ms  top=${meta.top} feet=${meta.feet} (셀 ${meta.fr}${meta.rows ? ', 행 ' + meta.rows + ' ' + Object.keys(meta.states).join('/') : ''})`);
     if (!onlyFirst) {
       try {
         const r = await fetch(SAVE_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, png: img.src, meta }) });

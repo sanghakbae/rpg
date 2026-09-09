@@ -1,0 +1,38 @@
+{
+ "fr": 256,
+ "dirs": 8,
+ "rows": 22,
+ "top": 54,
+ "feet": 228,
+ "elev": 26,
+ "yawFix": 180,
+ "states": {
+  "idle": {
+   "row": 0,
+   "n": 4,
+   "clip": "2H_Melee_Idle"
+  },
+  "walk": {
+   "row": 4,
+   "n": 6,
+   "clip": "Walking_A"
+  },
+  "attack": {
+   "row": 10,
+   "n": 6,
+   "clip": "1H_Melee_Attack_Chop"
+  },
+  "hurt": {
+   "row": 16,
+   "n": 2,
+   "clip": "Hit_A"
+  },
+  "death": {
+   "row": 18,
+   "n": 4,
+   "clip": "Death_A"
+  }
+ },
+ "name": "mob_skeleton",
+ "src": "Skeleton_Warrior.glb"
+}

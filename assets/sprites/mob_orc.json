@@ -1,0 +1,38 @@
+{
+ "fr": 256,
+ "dirs": 8,
+ "rows": 22,
+ "top": 53,
+ "feet": 235,
+ "elev": 26,
+ "yawFix": 180,
+ "states": {
+  "idle": {
+   "row": 0,
+   "n": 4,
+   "clip": "Idle"
+  },
+  "walk": {
+   "row": 4,
+   "n": 6,
+   "clip": "Walk"
+  },
+  "attack": {
+   "row": 10,
+   "n": 6,
+   "clip": "Punch"
+  },
+  "hurt": {
+   "row": 16,
+   "n": 2,
+   "clip": "HitReact"
+  },
+  "death": {
+   "row": 18,
+   "n": 4,
+   "clip": "Death"
+  }
+ },
+ "name": "mob_orc",
+ "src": "Orc_Skull.gltf"
+}

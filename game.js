@@ -1051,6 +1051,7 @@ function watchMonsters() {
         if (dc.id === 'boss' && !bossWasAlive) bossAlert(true);
       }
       if (!d.alive && s.alive && dc.id === 'boss') bossAlert(false);
+      if (s.alive && !d.alive) s.deadT = Date.now(); /* 사망 애니메이션 시작 시각 */
       s.alive = !!d.alive;
       s.uniq = !!d.uniq;
       s.hp = typeof d.hp === 'number' ? d.hp : sdef(s).hp;
@@ -2527,6 +2528,7 @@ function updateSims(now, dt) {
         s.y = clampN(s.y + Math.sin(s.dirA) * sp, 40, WORLD.h - 40);
       } else if (now >= s.atkCdUntil) {
         s.atkCdUntil = now + (s.type === 'boss' ? 1800 : 1300);
+        s.atkAnimT = now; /* 애니메이션 시트: 공격 행 재생 */
         s.swingT = now;
         if (tgt.mine) monsterHitMe(s, now);
       }
@@ -4100,7 +4102,7 @@ const PORTRAIT_GEAR = {
 /* ===== VARCO 베이크 시트 (tools/bake.html → assets/sprites/<key>.png/.json) =====
    8방향 × 1프레임 정적 시트. 걷기/공격/피격/사망 연출은 drawChar의 캔버스 변환(바운스·스웨이·런지·회전)으로 처리.
    시트가 없거나 아직 로드 전이면 null → 기존 벡터 20프레임으로 폴백 */
-const HERO_SHEETS = {}, SHEET_VER = 2;
+const HERO_SHEETS = {}, SHEET_VER = 3;
 const HERO_SHEET_H = 118; /* 시트 알파 박스(치켜든 무기 끝 포함)의 화면 높이(px). 몸통만 치면 ≈ 75~95px — 벡터 영웅(≈58px)보다 큼 */
 /* 매니페스트(있는 시트 키 목록)를 먼저 읽어, 없는 키(스켈레톤·오크 등)는 요청하지 않는다 — 404 소음·모바일 요청 낭비 제거.
    매니페스트가 없으면(구버전 배포) 예전처럼 직접 시도 */
@@ -4168,10 +4170,27 @@ function mobHueShift(s, base) {
   if (kk && bk && kk !== bk) { dh = hueOf(kk.main) - hueOf(bk.main); if (dh > 180) dh -= 360; if (dh < -180) dh += 360; if (Math.abs(dh) < 8) dh = 0; }
   return (_mobHueCache[s.kind] = Math.round(dh));
 }
+/* 애니메이션 시트 행 선택: meta.states = { idle:{row,n}, walk, attack, hurt, death } (없으면 단일 행 0) */
+function sheetRow(m, s, now) {
+  const st = m.states;
+  if (!st) return 0;
+  const pick = (name, fps, once) => {
+    const info = st[name] || st.idle; if (!info) return 0;
+    const t0 = once ? (s[once] || now) : 0;
+    let i = Math.floor((now - t0) / (1000 / fps));
+    i = once ? Math.min(info.n - 1, Math.max(0, i)) : ((i % info.n) + info.n) % info.n;
+    return info.row + i;
+  };
+  if (!s.alive) return pick('death', 8, 'deadT');
+  if (s.hitFlash && now - s.hitFlash < 260 && st.hurt) return pick('hurt', 8, 'hitFlash');
+  if (s.atkAnimT && now - s.atkAnimT < 520 && st.attack) return pick('attack', 12, 'atkAnimT');
+  if (s.movingF && st.walk) return pick('walk', 9);
+  return pick('idle', 4);
+}
 function drawMobSheet(s, base, x, y, opts = {}) {
   const sh = heroSheet('mob_' + base);
   if (!sh) return false;
-  const m = sh.meta, F = m.fr, d = sheetDir(s.dirA ?? Math.PI / 2);
+  const m = sh.meta, F = m.fr, d = sheetDir(s.dirA ?? Math.PI / 2), row = sheetRow(m, s, Date.now());
   const H = r0(s) * (MOB_SHEET_H[base] || 4.2), k = H / Math.max(1, m.feet - m.top);
   ctx.save();
   ctx.translate(x, y - (opts.bob || 0));
@@ -4179,7 +4198,7 @@ function drawMobSheet(s, base, x, y, opts = {}) {
   const dh = mobHueShift(s, base);
   if (dh && 'filter' in ctx) ctx.filter = `hue-rotate(${dh}deg)`; /* Safari 캔버스는 filter 미지원 → 무채색 유지 */
   if (opts.flash) ctx.globalAlpha = 1 - opts.flash * .6;
-  ctx.drawImage(sh.img, d * F, 0, F, F, -F * k / 2, -m.feet * k, F * k, F * k);
+  ctx.drawImage(sh.img, d * F, row * F, F, F, -F * k / 2, -m.feet * k, F * k, F * k);
   ctx.restore();
   return true;
 }

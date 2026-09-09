@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <link rel="icon" type="image/svg+xml" href="favicon.svg?v=1">
-<title>에테리아 — 룬의 대륙</title>
+<title>룬 크로니클 — RUNE CHRONICLE</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <style>
@@ -16,21 +16,76 @@
     border-radius: 8px; color: #ddd; }
   button { font-family: inherit; cursor: pointer; border: none; border-radius: 5px; }
 
-  /* ===== 구글 로그인 ===== */
-  #loginScreen { position: fixed; inset: 0; background: radial-gradient(ellipse at center, #1a2233 0%, #0a0e16 70%);
-    z-index: 101; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 26px; }
-  #loginScreen h1 { color: #ffd700; font-size: 46px; letter-spacing: 14px; text-indent: 14px; text-shadow: 0 0 24px rgba(255,215,0,.35); }
-  #loginScreen .sub { color: #8899aa; font-size: 13px; letter-spacing: 4px; margin-top: -14px; }
+  /* ===== 타이틀 화면(로그인·캐릭터 생성) — 대형 영웅 아트 배경 ===== */
+  #loginScreen { position: fixed; inset: 0; background: #070a12; z-index: 101; display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+    padding: 6vh 16px 4vh; overflow: hidden; }
+  .lgBg { position: absolute; inset: 0; overflow: hidden; pointer-events: none;
+    background: radial-gradient(ellipse at 50% 120%, #1c2a3f 0%, #0b1020 45%, #05070d 100%); }
+  .lgStars { position: absolute; inset: -50% 0 0 0;
+    background-image: radial-gradient(1.2px 1.2px at 12% 30%, rgba(255,255,255,.9), transparent 60%), radial-gradient(1px 1px at 40% 70%, rgba(255,255,255,.7), transparent 60%),
+      radial-gradient(1.6px 1.6px at 66% 22%, rgba(255,235,180,.9), transparent 60%), radial-gradient(1px 1px at 82% 58%, rgba(255,255,255,.6), transparent 60%),
+      radial-gradient(1.3px 1.3px at 28% 86%, rgba(200,220,255,.8), transparent 60%), radial-gradient(1px 1px at 92% 12%, rgba(255,255,255,.8), transparent 60%),
+      radial-gradient(1.1px 1.1px at 55% 45%, rgba(255,255,255,.5), transparent 60%), radial-gradient(1.4px 1.4px at 6% 64%, rgba(255,240,200,.7), transparent 60%);
+    background-size: 640px 640px; animation: lgDrift 90s linear infinite; opacity: .9; }
+  @keyframes lgDrift { to { transform: translateY(30%); } }
+  .lgFog { position: absolute; inset: 0; background:
+      radial-gradient(ellipse 60% 45% at 68% 62%, var(--lgc, rgba(255,215,0,.22)) 0%, transparent 70%),
+      radial-gradient(ellipse 45% 30% at 22% 30%, rgba(80,120,255,.14) 0%, transparent 70%);
+    animation: lgPulse 6s ease-in-out infinite; }
+  @keyframes lgPulse { 50% { opacity: .65; transform: scale(1.04); } }
+  .lgArt { position: absolute; right: 6vw; bottom: 3vh; height: min(84vh, 980px); width: auto; max-width: 70vw; object-fit: contain;
+    filter: drop-shadow(0 30px 40px rgba(0,0,0,.7)); opacity: 1; transition: opacity .35s ease, transform .35s ease; }
+  .lgArt.swap { opacity: 0; transform: translateY(10px) scale(.98); }
+  .lgVig { position: absolute; inset: 0; background:
+      linear-gradient(to top, rgba(5,7,13,.92) 0%, rgba(5,7,13,.55) 22%, transparent 48%),
+      linear-gradient(to bottom, rgba(5,7,13,.75) 0%, transparent 30%),
+      radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.55) 100%); }
+  .lgTop, .lgBottom { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; }
+  .lgTop { align-self: flex-start; align-items: flex-start; text-align: left; padding-left: 5vw; }
+  .lgEyebrow { color: #d9c27a; font-size: 12px; letter-spacing: 7px; opacity: .85; }
+  #loginScreen h1, #create h1 { margin: 0; font-family: Georgia, 'Noto Serif KR', 'Apple SD Gothic Neo', serif; font-weight: 900; font-size: clamp(46px, 8.5vw, 108px); line-height: 1.05;
+    letter-spacing: 8px; background: linear-gradient(180deg, #fff6c8 0%, #ffd700 48%, #c08a12 100%); -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 4px 0 rgba(90,60,0,.55)) drop-shadow(0 10px 30px rgba(255,200,60,.28)); }
+  #loginScreen .sub, #create h2 { color: #b9c3d6; font-size: clamp(12px, 1.6vw, 15px); letter-spacing: 4px; margin: 0; font-weight: normal; text-shadow: 0 2px 8px #000; }
   #loginScreen .party { display: flex; gap: 10px; }
   #loginScreen .lp { display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; padding: 8px 6px 6px;
-    border: 2px solid rgba(255,255,255,.12); border-radius: 14px; background: rgba(255,255,255,.03); transition: all .15s; animation: heroFloat 3.4s ease-in-out infinite; }
+    border: 2px solid rgba(255,255,255,.12); border-radius: 14px; background: rgba(10,14,24,.55); backdrop-filter: blur(6px); transition: all .15s; animation: heroFloat 3.4s ease-in-out infinite; }
   #loginScreen .lp:nth-child(2) { animation-delay: .35s; } #loginScreen .lp:nth-child(3) { animation-delay: .7s; } #loginScreen .lp:nth-child(4) { animation-delay: 1.05s; }
-  #loginScreen .lp img { width: min(104px, 20vw); height: auto; filter: drop-shadow(0 0 14px rgba(255,215,0,.25)); pointer-events: none; }
+  #loginScreen .lp img { width: min(96px, 18vw); height: auto; filter: drop-shadow(0 0 14px rgba(255,215,0,.25)); pointer-events: none; }
   #loginScreen .lp span { color: #cdb; font-size: 12px; letter-spacing: 3px; }
   #loginScreen .lp:hover { transform: translateY(-4px); border-color: #7788aa; }
-  #loginScreen .lp.sel { border-color: #ffd700; background: rgba(255,215,0,.08); box-shadow: 0 0 18px rgba(255,215,0,.25); }
-  #loginScreen .lphint { color: #667; font-size: 11px; letter-spacing: 1px; margin-top: -18px; }
+  #loginScreen .lp.sel { border-color: #ffd700; background: rgba(255,215,0,.10); box-shadow: 0 0 22px rgba(255,215,0,.3); }
+  #loginScreen .lphint { color: #8a93a6; font-size: 11px; letter-spacing: 1px; text-shadow: 0 1px 4px #000; }
   @keyframes heroFloat { 50% { transform: translateY(-8px); } }
+  #create { position: fixed; inset: 0; background: #070a12; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+    padding: 6vh 16px 4vh; overflow: hidden; }
+  #create .lgTop { gap: 8px; }
+  #nameInput { width: min(320px, 80vw); padding: 12px 16px; font-size: 17px; text-align: center;
+    background: rgba(10,14,24,.6); border: 1px solid #56617a; border-radius: 8px; color: #fff; outline: none; backdrop-filter: blur(6px); }
+  #nameInput:focus { border-color: #ffd700; box-shadow: 0 0 14px rgba(255,215,0,.25); }
+  #classGrid { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+  .ccard { width: 150px; padding: 14px 10px; background: rgba(10,14,24,.6); border: 2px solid rgba(255,255,255,.12); backdrop-filter: blur(6px);
+    border-radius: 12px; text-align: center; cursor: pointer; transition: all .15s; }
+  .ccard:hover { transform: translateY(-4px); border-color: #7788aa; }
+  .ccard.sel { border-color: #ffd700; background: rgba(255,215,0,.10); box-shadow: 0 0 22px rgba(255,215,0,.3); }
+  .cicon { font-size: 46px; margin-bottom: 8px; filter: drop-shadow(0 0 8px rgba(255,215,0,.55)) drop-shadow(0 2px 3px rgba(0,0,0,.8)); }
+  .cicon img { width: 74px; height: 74px; object-fit: contain; }
+  .cname { color: #fff; font-size: 18px; font-weight: bold; margin-bottom: 4px; }
+  .cweap { color: #ffd700; font-size: 12px; margin-bottom: 8px; }
+  .cstat { color: #aab; font-size: 11px; line-height: 1.6; }
+  .cstat b { color: #eef; }
+  #startBtn { padding: 13px 60px; font-size: 17px; font-weight: bold; background: linear-gradient(#e0b83a, #8f6f14);
+    color: #fff; letter-spacing: 3px; box-shadow: 0 6px 24px rgba(255,200,60,.25); }
+  #startBtn:hover { filter: brightness(1.15); }
+  @media (max-width: 640px) {
+    .lgArt { right: 50%; transform: translateX(50%); height: 58vh; max-width: 92vw; bottom: 22vh; }
+    .lgArt.swap { transform: translateX(50%) translateY(10px) scale(.98); }
+    .lgTop { align-self: center; align-items: center; text-align: center; padding-left: 0; }
+    #loginScreen h1, #create h1 { letter-spacing: 4px; }
+    .ccard { width: calc(50% - 8px); padding: 10px 6px; }
+    .cicon { font-size: 34px; margin-bottom: 4px; } .cicon img { width: 56px; height: 56px; }
+    .cname { font-size: 15px; } .cstat { font-size: 10px; }
+  }
   /* 스테이지 모드(?stage=1): 정적 게임 UI 숨김 */
   body.staging #hud, body.staging #invPanel, body.staging #chatBox, body.staging #hotbar, body.staging #mobileBar,
   body.staging #minimap, body.staging #onlineCnt, body.staging #rankPanel, body.staging #help, body.staging #footer,
@@ -41,26 +96,7 @@
   #googleLoginBtn:hover { box-shadow: 0 0 22px rgba(255,255,255,.4); transform: translateY(-2px); }
 
   /* ===== 캐릭터 생성 ===== */
-  #create { position: fixed; inset: 0; background: radial-gradient(ellipse at center, #1a2233 0%, #0a0e16 70%);
-    z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 26px; }
-  #create h1 { color: #ffd700; font-size: 42px; letter-spacing: 6px; text-shadow: 0 0 24px rgba(255,215,0,.35); }
-  #create h2 { color: #8899aa; font-size: 14px; font-weight: normal; margin-top: -18px; }
-  #nameInput { width: 300px; padding: 12px 16px; font-size: 17px; text-align: center;
-    background: rgba(255,255,255,.06); border: 1px solid #445; border-radius: 8px; color: #fff; outline: none; }
-  #nameInput:focus { border-color: #ffd700; }
-  #classGrid { display: flex; gap: 14px; }
-  .ccard { width: 150px; padding: 16px 10px; background: rgba(255,255,255,.04); border: 2px solid #334;
-    border-radius: 12px; text-align: center; cursor: pointer; transition: all .15s; }
-  .ccard:hover { transform: translateY(-4px); border-color: #7788aa; }
-  .ccard.sel { border-color: #ffd700; background: rgba(255,215,0,.08); box-shadow: 0 0 20px rgba(255,215,0,.25); }
-  .cicon { font-size: 46px; margin-bottom: 8px; filter: drop-shadow(0 0 8px rgba(255,215,0,.55)) drop-shadow(0 2px 3px rgba(0,0,0,.8)); }
-  .cname { color: #fff; font-size: 18px; font-weight: bold; margin-bottom: 4px; }
-  .cweap { color: #ffd700; font-size: 12px; margin-bottom: 8px; }
-  .cstat { color: #99a; font-size: 11px; line-height: 1.6; }
-  .cstat b { color: #ccd; }
-  #startBtn { padding: 13px 60px; font-size: 17px; font-weight: bold; background: linear-gradient(#c9a227, #8f6f14);
-    color: #fff; letter-spacing: 3px; }
-  #startBtn:hover { filter: brightness(1.15); }
+  /* (캐릭터 생성 스타일은 위 타이틀 화면 블록과 공용) */
   #loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
     background: #000; color: #888; z-index: 99; font-size: 15px; white-space: pre-line; text-align: center; padding: 20px; }
 
@@ -457,11 +493,13 @@
 <div id="loading">Firebase 연결 중...</div>
 
 <div id="create" style="display:none">
-  <h1>에테리아</h1>
-  <h2>룬의 대륙 · 캐릭터를 만들어 100개 구역 정복을 시작하세요</h2>
-  <input id="nameInput" maxlength="12" placeholder="캐릭터 이름 입력...">
-  <div id="classGrid"></div>
-  <button id="startBtn">모험 시작</button>
+  <div class="lgBg"><div class="lgStars"></div><div class="lgFog"></div><img class="lgArt" id="crArt" alt=""><div class="lgVig"></div></div>
+  <div class="lgTop"><div class="lgEyebrow">RUNE CHRONICLE · 캐릭터 생성</div><h1>룬 크로니클</h1><h2>룬의 대륙 · 영웅을 만들어 100개 구역 정복을 시작하세요</h2></div>
+  <div class="lgBottom">
+    <input id="nameInput" maxlength="12" placeholder="캐릭터 이름 입력...">
+    <div id="classGrid"></div>
+    <button id="startBtn">모험 시작</button>
+  </div>
 </div>
 
 <div id="hud" class="panel">
@@ -589,7 +627,7 @@
 </div>
 
 <footer id="footer">
-  <span>© 2026 에테리아</span>
+  <span>© 2026 룬 크로니클</span>
   <span id="verTag"></span>
   <span id="attrib">아이콘: <a href="https://game-icons.net" target="_blank" rel="noopener">game-icons.net</a> (CC BY 3.0)</span>
   <a id="privacyLink">개인정보처리방침</a>
@@ -599,7 +637,7 @@
 <div id="privacyModal">
   <div id="privacyBox" class="panel">
     <h2>개인정보처리방침</h2>
-    <p style="color:#667;font-size:12px;">에테리아 (rpg.sanghak.kr) · 시행일: 2026년 8월 24일 · <a href="privacy.html" target="_blank" style="color:#7fc7ff;">전체 페이지 보기</a></p>
+    <p style="color:#667;font-size:12px;">룬 크로니클 (rpg.sanghak.kr) · 시행일: 2026년 8월 24일 · <a href="privacy.html" target="_blank" style="color:#7fc7ff;">전체 페이지 보기</a></p>
     <h3>1. 수집하는 개인정보</h3>
     <p>· Google 로그인: 이메일, 이름(표시 이름), 고유 사용자 ID<br>
        · 게임 데이터: 캐릭터명, 직업, 레벨, 골드, 아이템, 장비, 좌표, 접속 시각<br>
@@ -623,7 +661,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=116"
+<script type="module" src="game.js?v=117"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

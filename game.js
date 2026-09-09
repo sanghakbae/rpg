@@ -25,13 +25,13 @@ const bagUpCost = () => 500 * Math.pow(2, (bagSize() - BASE_BAG) / 6);
 const MAX_SKILL_LV = 5;
 
 const CLASSES = {
-  warrior: { name: '전사',   icon: '⚔', weaponName: '장검',   hp: 160, atk: 13, speed: 230, range: 95,  atkCd: 520, crit: .05, color: '#e74c3c', melee: true, rec: 'stAtk',
+  warrior: { name: '전사',   icon: '⚔', weaponName: '장검',   hp: 160, mp: 70, atk: 13, speed: 230, range: 95,  atkCd: 520, crit: .05, color: '#e74c3c', melee: true, rec: 'stAtk',
     stats: ['stAtk', 'stHp', 'stDef', 'stSpd', 'stCrit', 'stAspd', 'stLife', 'stRegen'] },
-  archer:  { name: '아처',   icon: '🏹', weaponName: '활',     hp: 110, atk: 11, speed: 255, range: 290, atkCd: 560, crit: .10, color: '#27ae60', proj: 'arrow', rec: 'stSpd',
+  archer:  { name: '아처',   icon: '🏹', weaponName: '활',     hp: 110, mp: 90, atk: 11, speed: 255, range: 290, atkCd: 560, crit: .10, color: '#27ae60', proj: 'arrow', rec: 'stSpd',
     stats: ['stAtk', 'stHp', 'stSpd', 'stCrit', 'stAspd', 'stRange', 'stEvade', 'stWis'] },
-  rogue:   { name: '로그',   icon: '🗡', weaponName: '단검',   hp: 95,  atk: 9,  speed: 290, range: 66,  atkCd: 300, crit: .25, color: '#f39c12', melee: true, rec: 'stCrit',
+  rogue:   { name: '로그',   icon: '🗡', weaponName: '단검',   hp: 95,  mp: 80, atk: 9,  speed: 290, range: 66,  atkCd: 300, crit: .25, color: '#f39c12', melee: true, rec: 'stCrit',
     stats: ['stAtk', 'stHp', 'stSpd', 'stCrit', 'stCritDmg', 'stAspd', 'stEvade', 'stLife'] },
-  mage:    { name: '마법사', icon: '🪄', weaponName: '지팡이', hp: 85,  atk: 18, speed: 225, range: 270, atkCd: 850, crit: .05, color: '#9b59b6', proj: 'bolt', rec: 'stWis',
+  mage:    { name: '마법사', icon: '🪄', weaponName: '지팡이', hp: 85,  mp: 150, atk: 18, speed: 225, range: 270, atkCd: 850, crit: .05, color: '#9b59b6', proj: 'bolt', rec: 'stWis',
     stats: ['stAtk', 'stHp', 'stWis', 'stSpd', 'stCrit', 'stRange', 'stMana', 'stRegen'] },
 };
 /* 스탯 정의 — 직업별 8종 구성(CLASSES[*].stats). 효과는 아래 파생 공식들에 연결됨 */
@@ -1045,7 +1045,7 @@ const QUESTS = [
 /* 최대 100레벨 · 100구역: "구역 번호 ≈ 적정 레벨" 페이싱 — 요구는 lv², 구역 보상은 완만한 2차 가속(pageExp) */
 const expNeed = lv => Math.floor(200 * lv * lv);
 const maxHpOf = () => Math.round(cdef().hp + ((me.lv || 1) - 1) * 10 + (me.stHp || 0) * 15 + setBonus().b.hp);
-const maxMpOf = () => 100 + ((me.lv || 1) - 1) * 5 + (me.stWis || 0) * 12 + setBonus().b.mp;
+const maxMpOf = () => (cdef().mp || 100) + ((me.lv || 1) - 1) * 5 + (me.stWis || 0) * 12 + setBonus().b.mp; /* 직업별 기본 MP: 마법사 150 · 아처 90 · 로그 80 · 전사 70 */
 const clampN = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const rand = (a, b) => a + Math.random() * (b - a);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1159,7 +1159,8 @@ function setUserZoom(v) {
   userZoom = clampN(v, USER_ZOOM_MIN, USER_ZOOM_MAX);
   try { localStorage.setItem('zoom2', String(userZoom)); } catch (e) {} /* 'zoom' 키는 휠 폭주 버그 값이 남아 있어 폐기 */
 }
-try { const z0 = parseFloat(localStorage.getItem('zoom2')); if (z0 > 0) userZoom = clampN(z0, USER_ZOOM_MIN, USER_ZOOM_MAX); localStorage.removeItem('zoom'); } catch (e) {}
+userZoom = USER_ZOOM_MIN; /* 시작은 항상 가장 넓은 화면(최대 시야) — 세션 중 Ctrl/⌘+휠로만 확대 */
+try { localStorage.removeItem('zoom'); localStorage.removeItem('zoom2'); } catch (e) {}
 let lastAttackAt = 0, lastPosWrite = 0, hurtUntil = 0, picking = false;
 let sentX = -1, sentY = -1, sentHp = -1, sentMp = null;
 let ready = false;
@@ -4992,6 +4993,7 @@ function loadSheet(key, e) {
         delete portraitCache[key];
         const pel = document.querySelector(`#loginScreen .lp[data-cls="${key}"] img`);
         if (pel) { try { pel.src = heroPortrait(key); } catch (err) {} }
+        for (const aid of ['lgArt', 'crArt']) { const a = document.getElementById(aid); if (a && a.dataset.cls === key) { try { setTitleArt(aid, key); } catch (err) {} } } /* 타이틀 대형 아트 */
       }
     };
     img.onerror = () => { e.failed = true; };
@@ -5195,6 +5197,54 @@ function heroPortrait(cls) {
   return url;
 }
 
+/* 타이틀 화면용 대형 영웅 아트 (640px): 시트의 정면 프레임을 크게 + 직업색 림라이트·후광·바닥 그림자 */
+const heroArtCache = {};
+function heroArt(cls) {
+  if (heroArtCache[cls]) return heroArtCache[cls];
+  const sh = heroSheet(cls);
+  if (!sh) return null;
+  const col = (CLASSES[cls] && CLASSES[cls].color) || '#ffd700';
+  const S = 640, cv2 = document.createElement('canvas'); cv2.width = S; cv2.height = S;
+  const c = cv2.getContext('2d');
+  c.imageSmoothingEnabled = true; c.imageSmoothingQuality = 'high';
+  const m = sh.meta, F = m.fr, k = 520 / Math.max(1, m.feet - m.top);
+  const dx = S / 2 - F * k / 2, dy = 560 - m.feet * k;
+  /* 후광 */
+  const rgb = hexRgb(col);
+  const g = c.createRadialGradient(S / 2, 330, 10, S / 2, 330, 318);
+  g.addColorStop(0, `rgba(${rgb},.30)`); g.addColorStop(.4, `rgba(${rgb},.12)`); g.addColorStop(.75, `rgba(${rgb},.03)`); g.addColorStop(1, `rgba(${rgb},0)`);
+  c.fillStyle = g; c.fillRect(0, 0, S, S);
+  /* 바닥 그림자 */
+  c.fillStyle = 'rgba(0,0,0,.55)'; c.beginPath(); c.ellipse(S / 2, 566, 150, 26, 0, 0, 7); c.fill();
+  /* 뒤쪽 실루엣 글로우 */
+  c.save(); c.filter = 'blur(16px)'; c.globalAlpha = .35;
+  const sil = document.createElement('canvas'); sil.width = S; sil.height = S;
+  const sg = sil.getContext('2d'); sg.drawImage(sh.img, 2 * F, 0, F, F, dx, dy, F * k, F * k); sg.globalCompositeOperation = 'source-in'; sg.fillStyle = col; sg.fillRect(0, 0, S, S);
+  c.drawImage(sil, 0, 0); c.restore();
+  /* 본체 */
+  c.drawImage(sh.img, 2 * F, 0, F, F, dx, dy, F * k, F * k);
+  /* 림라이트: 우상단에서 직업색 */
+  const body = document.createElement('canvas'); body.width = S; body.height = S;
+  const bg = body.getContext('2d'); bg.drawImage(sh.img, 2 * F, 0, F, F, dx, dy, F * k, F * k); bg.globalCompositeOperation = 'source-in';
+  const rl = bg.createLinearGradient(S * .8, 40, S * .3, S * .7); rl.addColorStop(0, `rgba(${rgb},.65)`); rl.addColorStop(.45, `rgba(${rgb},.13)`); rl.addColorStop(1, `rgba(${rgb},0)`);
+  bg.fillStyle = rl; bg.fillRect(0, 0, S, S);
+  c.drawImage(body, 0, 0);
+  const url = cv2.toDataURL();
+  heroArtCache[cls] = url;
+  return url;
+}
+function setTitleArt(id, cls) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  let url = null;
+  try { url = heroArt(cls); } catch (e) { window.__lastErr = { at: Date.now(), where: 'heroArt', msg: String(e && e.message || e) }; }
+  const col = (CLASSES[cls] && CLASSES[cls].color) || '#ffd700';
+  const scr = el.closest('#loginScreen, #create'); if (scr) scr.style.setProperty('--lgc', `rgba(${hexRgb(col)},.22)`);
+  if (!url) { el.dataset.cls = cls; el.style.opacity = 0; return; } /* 시트 로드 후 loadSheet가 다시 호출 */
+  el.dataset.cls = cls;
+  el.classList.add('swap');
+  setTimeout(() => { el.src = url; el.style.opacity = ''; el.classList.remove('swap'); }, 120);
+}
 /* ================= 3D 캐릭터 (Three.js 합성) =================
    2D 월드는 그대로, 캐릭터만 오프스크린 WebGL에 렌더 후 합성.
    CDN 실패/WebGL 없음 → 기존 2D 프레임으로 자동 폴백 */
@@ -8113,7 +8163,7 @@ function loopBody(t) {
     ctx.fillStyle = '#8899aa';
     ctx.font = '16px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('⚔ 에테리아 ⚔', cvW / 2, cvH / 2 - 12);
+    ctx.fillText('⚔ 룬 크로니클 ⚔', cvW / 2, cvH / 2 - 12);
     ctx.fillStyle = '#556';
     ctx.font = '12px sans-serif';
     ctx.fillText('연결 중...', cvW / 2, cvH / 2 + 12);
@@ -8319,16 +8369,18 @@ function buildCreateUI(resolve) {
   grid.innerHTML = CLASS_ORDER.map(k => {
     const c = CLASSES[k];
     return `<div class="ccard ${k === selectedCls ? 'sel' : ''}" data-cls="${k}">
-      <div class="cicon">${c.icon}</div>
+      <div class="cicon">${heroSheet(k) ? `<img src="${heroPortrait(k)}" alt="">` : c.icon}</div>
       <div class="cname">${c.name}</div>
       <div class="cweap">「${c.weaponName}」</div>
-      <div class="cstat">HP <b>${c.hp}</b> · 공격 <b>${c.atk}</b><br>치명타 <b>${Math.round(c.crit * 100)}%</b><br>${info[k]}</div>
+      <div class="cstat">HP <b>${c.hp}</b> · MP <b>${c.mp || 100}</b> · 공격 <b>${c.atk}</b><br>치명타 <b>${Math.round(c.crit * 100)}%</b> · 속도 <b>${c.speed}</b><br>${info[k]}</div>
     </div>`;
   }).join('');
   grid.querySelectorAll('.ccard').forEach(card => card.onclick = () => {
     selectedCls = card.dataset.cls;
     grid.querySelectorAll('.ccard').forEach(c => c.classList.toggle('sel', c.dataset.cls === selectedCls));
+    setTitleArt('crArt', selectedCls);
   });
+  setTitleArt('crArt', selectedCls);
   $('startBtn').onclick = submit;
   function submit() {
     let n = $('nameInput').value.trim().slice(0, 12);
@@ -8358,16 +8410,18 @@ function waitForLoginClick() {
     if (!scr) {
       scr = document.createElement('div');
       scr.id = 'loginScreen';
-      scr.innerHTML = '<div class="party">'
+      scr.innerHTML = '<div class="lgBg"><div class="lgStars"></div><div class="lgFog"></div><img class="lgArt" id="lgArt" alt=""><div class="lgVig"></div></div>'
+      + '<div class="lgTop"><div class="lgEyebrow">RUNE CHRONICLE</div><h1>룬 크로니클</h1><div class="sub">룬의 대륙 · 100개 구역을 정복하라</div></div>'
+      + '<div class="lgBottom"><div class="party">'
       + ['warrior', 'archer', 'rogue', 'mage'].map(k => `<div class="lp" data-cls="${k}"><img alt=""><span></span></div>`).join('')
-      + '</div><h1>에테리아</h1><div class="sub">룬의 대륙 · 100개 구역을 정복하라</div><div class="lphint">마음에 드는 영웅을 고르면 캐릭터 생성에 반영됩니다</div><button id="googleLoginBtn">🅶 Google로 계속하기</button>';
+      + '</div><div class="lphint">영웅을 고르면 캐릭터 생성에 반영됩니다</div><button id="googleLoginBtn">🅶 Google로 계속하기</button></div>';
       scr.querySelectorAll('.lp').forEach(el => {
         try {
           const k = el.dataset.cls;
           el.querySelector('img').src = heroPortrait(k);
           el.querySelector('span').textContent = (CLASSES[k] && CLASSES[k].name) || k;
           el.classList.toggle('sel', k === selectedCls);
-          el.onclick = () => { selectedCls = k; scr.querySelectorAll('.lp').forEach(x => x.classList.toggle('sel', x === el)); };
+          el.onclick = () => { selectedCls = k; scr.querySelectorAll('.lp').forEach(x => x.classList.toggle('sel', x === el)); setTitleArt('lgArt', k); };
         } catch (e) { /* 초상화 실패해도 로그인은 진행 */
           el.querySelector('span').textContent = (CLASSES[el.dataset.cls] && CLASSES[el.dataset.cls].name) || el.dataset.cls;
         }
@@ -8375,6 +8429,7 @@ function waitForLoginClick() {
       document.body.appendChild(scr);
     }
     scr.style.display = 'flex';
+    setTitleArt('lgArt', selectedCls);
     const btn = $('googleLoginBtn');
     btn.onclick = async () => {
       btn.disabled = true;
@@ -8515,7 +8570,7 @@ async function init() {
   window.__PING = () => Promise.race([updateDoc(meRef, { lastSeen: Date.now() }).then(() => 'write-ok'), new Promise(r => setTimeout(() => r('write-timeout'), 8000))]).catch(e => 'write-error:' + (e.code || e.message)); /* 진단: 쓰기 채널 상태 */
   window.__MOB = async id => { const g = await getDoc(doc(db, 'monsters', id)); return g.exists() ? g.data() : null; };
   window.__give = async (id, slot = 17) => { await updX(meRef, { ['inv.' + slot]: id }); return 'ok'; }; /* 진단: 가방 슬롯에 아이템 넣기 */
-  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
+  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
   window.__ITEMS = () => ({ items: Object.keys(ITEMS).length, sets: Object.keys(SETS).length, sample: Object.entries(ITEMS).filter(([k]) => /_b[0-9]$/.test(k)).slice(0, 3).map(([k, v]) => k + ':' + v.name) });
   window.__ZONETEX = n => { try { const t = getTex('p' + n); return { w: t.width, h: t.height, cols: (worldColliders['p' + n] || []).length }; } catch (e) { return { err: String(e && e.stack || e).slice(0, 300) }; } };
   window.__DBG = () => ({ page: myPage(), colliders: (worldColliders[myMap()] || []).length, frozenMs: hitStopUntil - Date.now(), activeIsChat: document.activeElement === chatInput, activeTag: document.activeElement && document.activeElement.tagName + '#' + document.activeElement.id, wmUp: worldMapOpen(), mouseDown, moveSpd: moveSpd(), atkRange: atkRange(), atkCdMs: atkCdOf(), sinceAtk: Date.now() - lastAttackAt, mapFading, snapN: window.__snapN || 0, snapAgoMs: window.__snapT ? Date.now() - window.__snapT : null, lastDmg: window.__lastDmg || null, lastErr: window.__lastErr || null, dead: !!me.dead, paused, ready, sheets: Object.fromEntries(Object.entries(HERO_SHEETS).map(([k, v]) => [k, v.img ? 'ok' : v.failed ? 'failed' : 'loading'])), target: attackTargetSimId, hover: hoverSimId, dest: dest && { x: Math.round(dest.x), y: Math.round(dest.y) }, zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),

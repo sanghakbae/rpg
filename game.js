@@ -5052,6 +5052,26 @@ function sheetRow(m, s, now) {
   if (s.movingF && st.walk) return pick('walk', 9);
   return pick('idle', 4);
 }
+/* 색조 변형 시트 캐시 (base|hue → 캔버스). 구역당 최대 3종이라 LRU 6장이면 충분. Safari(캔버스 filter 미지원)는 원본 반환 */
+const hueSheetCache = new Map();
+function hueSheet(base, sh, dh) {
+  const key = base + '|' + dh;
+  let c = hueSheetCache.get(key);
+  if (c) { hueSheetCache.delete(key); hueSheetCache.set(key, c); return c; }
+  try {
+    c = document.createElement('canvas'); c.width = sh.img.width; c.height = sh.img.height;
+    const g = c.getContext('2d');
+    if (!('filter' in g)) return sh.img;
+    g.filter = `hue-rotate(${dh}deg)`; g.drawImage(sh.img, 0, 0);
+  } catch (e) { return sh.img; }
+  hueSheetCache.set(key, c);
+  while (hueSheetCache.size > 6) hueSheetCache.delete(hueSheetCache.keys().next().value);
+  return c;
+}
+/* 외곽선 텍스트: shadowBlur 텍스트는 글자마다 블러 패스를 돌려 모바일에서 프레임을 깎았다 → 스트로크 1회로 대체 */
+function outlinedText(txt, x, y, w = 3, col = 'rgba(0,0,0,.85)') {
+  ctx.lineJoin = 'round'; ctx.lineWidth = w; ctx.strokeStyle = col; ctx.strokeText(txt, x, y); ctx.fillText(txt, x, y);
+}
 function drawMobSheet(s, base, x, y, opts = {}) {
   const sh = heroSheet('mob_' + base);
   if (!sh) return false;
@@ -5061,9 +5081,9 @@ function drawMobSheet(s, base, x, y, opts = {}) {
   ctx.translate(x, y - (opts.bob || 0));
   if (opts.squashX || opts.squashY) ctx.scale(opts.squashX || 1, opts.squashY || 1);
   const dh = mobHueShift(s, base);
-  if (dh && 'filter' in ctx) ctx.filter = `hue-rotate(${dh}deg)`; /* Safari 캔버스는 filter 미지원 → 무채색 유지 */
+  const src = dh ? hueSheet(base, sh, dh) : sh.img; /* 색조 변형은 시트 단위로 1회 구워 캐시 — 매 프레임 ctx.filter는 모바일 GPU에 가장 비싼 연산이었다 */
   if (opts.flash) ctx.globalAlpha = 1 - opts.flash * .6;
-  ctx.drawImage(sh.img, d * F, row * F, F, F, -F * k / 2, -m.feet * k, F * k, F * k);
+  ctx.drawImage(src, d * F, row * F, F, F, -F * k / 2, -m.feet * k, F * k, F * k);
   ctx.restore();
   return true;
 }
@@ -5772,9 +5792,7 @@ function drawChar(o) {
   ctx.font = (o.isSelf ? 'bold ' : '') + '12px sans-serif';
   ctx.textAlign = 'center';
   ctx.fillStyle = o.isSelf ? '#fff' : (CLASSES[o.cls]?.color || '#eee');
-  ctx.shadowColor = 'rgba(0,0,0,.85)'; ctx.shadowBlur = 3;
-  ctx.fillText(o.name, o.x, headY - (!o.dead && o.hp < o.maxHp ? 18 : 8));
-  ctx.shadowBlur = 0;
+  outlinedText(o.name, o.x, headY - (!o.dead && o.hp < o.maxHp ? 18 : 8));
 }
 
 /* 몬스터 머리 꼭대기 y — VARCO 시트가 그려지는 중이면 시트 높이(r×MOB_SHEET_H), 아니면 예전 픽셀 기준 r×2.1 */
@@ -5817,9 +5835,8 @@ function mobUI(s, wide) {
     ctx.globalAlpha = Math.min(1, p * 2);
     ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
     ctx.fillStyle = '#ffd700';
-    ctx.shadowColor = 'rgba(0,0,0,.9)'; ctx.shadowBlur = 4;
-    ctx.fillText('!', s.x, ay);
-    ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+    outlinedText('!', s.x, ay, 4);
+    ctx.globalAlpha = 1;
   }
   if (s.hp < d2.hp || isBoss || isU) {
     const w = wide ? r * 2.7 : r * 2;
@@ -5834,9 +5851,7 @@ function mobUI(s, wide) {
   ctx.font = (wide || isU) ? 'bold 13px sans-serif' : '11px sans-serif';
   ctx.textAlign = 'center';
   ctx.fillStyle = isU ? '#ff8a5c' : isBoss ? '#ffb8b8' : 'rgba(255,255,255,.88)';
-  ctx.shadowColor = 'rgba(0,0,0,.8)'; ctx.shadowBlur = 3;
-  ctx.fillText(`Lv${simLevel(s)} ${d2.name}`, s.x, s.y + r + (wide ? 24 : 15));
-  ctx.shadowBlur = 0;
+  outlinedText(`Lv${simLevel(s)} ${d2.name}`, s.x, s.y + r + (wide ? 24 : 15));
 }
 
 function uniqAura(s, now) {
@@ -6548,9 +6563,7 @@ function drawLootItems(now) {
     ctx.font = '10px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillStyle = `rgba(${ncol3},.95)`;
-    ctx.shadowColor = 'rgba(0,0,0,.9)'; ctx.shadowBlur = 3;
-    ctx.fillText(it.name, l.x, l.y + 26);
-    ctx.shadowBlur = 0;
+    outlinedText(it.name, l.x, l.y + 26, 2.5);
   }
 }
 /* 미니맵 — draw() + 3D씬 공용 */
@@ -7243,9 +7256,7 @@ function draw(now) {
     ctx.font = 'bold 12px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillStyle = locked ? '#9a9aa8' : `rgb(${pc2})`;
-    ctx.shadowColor = 'rgba(0,0,0,.9)'; ctx.shadowBlur = 4;
-    ctx.fillText((locked ? '🔒 ' : (dirRight ? '▶ ' : '◀ ')) + label, px, 546);
-    ctx.shadowBlur = 0;
+    outlinedText((locked ? '🔒 ' : (dirRight ? '▶ ' : '◀ ')) + label, px, 546, 3.5);
   };
   if (pn < MAX_PAGE) drawPortal(1490, pageDef(pn + 1).name, !(me.conq || {})[pn], true);
   if (pn > 1) drawPortal(100, pageDef(pn - 1).name, false, false);
@@ -8570,7 +8581,7 @@ async function init() {
   window.__PING = () => Promise.race([updateDoc(meRef, { lastSeen: Date.now() }).then(() => 'write-ok'), new Promise(r => setTimeout(() => r('write-timeout'), 8000))]).catch(e => 'write-error:' + (e.code || e.message)); /* 진단: 쓰기 채널 상태 */
   window.__MOB = async id => { const g = await getDoc(doc(db, 'monsters', id)); return g.exists() ? g.data() : null; };
   window.__give = async (id, slot = 17) => { await updX(meRef, { ['inv.' + slot]: id }); return 'ok'; }; /* 진단: 가방 슬롯에 아이템 넣기 */
-  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
+  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
   window.__ITEMS = () => ({ items: Object.keys(ITEMS).length, sets: Object.keys(SETS).length, sample: Object.entries(ITEMS).filter(([k]) => /_b[0-9]$/.test(k)).slice(0, 3).map(([k, v]) => k + ':' + v.name) });
   window.__ZONETEX = n => { try { const t = getTex('p' + n); return { w: t.width, h: t.height, cols: (worldColliders['p' + n] || []).length }; } catch (e) { return { err: String(e && e.stack || e).slice(0, 300) }; } };
   window.__DBG = () => ({ page: myPage(), colliders: (worldColliders[myMap()] || []).length, frozenMs: hitStopUntil - Date.now(), activeIsChat: document.activeElement === chatInput, activeTag: document.activeElement && document.activeElement.tagName + '#' + document.activeElement.id, wmUp: worldMapOpen(), mouseDown, moveSpd: moveSpd(), atkRange: atkRange(), atkCdMs: atkCdOf(), sinceAtk: Date.now() - lastAttackAt, mapFading, snapN: window.__snapN || 0, snapAgoMs: window.__snapT ? Date.now() - window.__snapT : null, lastDmg: window.__lastDmg || null, lastErr: window.__lastErr || null, dead: !!me.dead, paused, ready, sheets: Object.fromEntries(Object.entries(HERO_SHEETS).map(([k, v]) => [k, v.img ? 'ok' : v.failed ? 'failed' : 'loading'])), target: attackTargetSimId, hover: hoverSimId, dest: dest && { x: Math.round(dest.x), y: Math.round(dest.y) }, zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),

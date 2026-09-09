@@ -12,3 +12,4 @@
 ## 아이템 아이콘 (assets/icons/items/*.svg)
 - game-icons.net — CC BY 3.0. 작가: Lorc, Delapouite, Skoll, sbed, Carl Olsen, Caro Asercion, Willdabeast.
   런타임에서 아이템 색으로 채색·베벨·후광을 합성해 128px 아이콘으로 사용.
+- UI 독 아이콘(assets/icons/ui/*.svg): game-icons.net CC BY 3.0 — Lorc, Delapouite.

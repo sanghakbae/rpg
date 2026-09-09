@@ -258,8 +258,16 @@
   /* 메뉴 독: 핫바 바로 위 가로 한 줄 (좌측 세로 배치는 HUD·채팅과 겹쳐서 하단 스택으로 통일) */
   #dockL { position: fixed; left: 50%; transform: translateX(-50%); bottom: 96px; z-index: 60;
     display: flex; flex-direction: row; justify-content: center; gap: 12px; }
-  #dockL button { width: 69px; height: 69px; font-size: 33px; background: rgba(10,14,22,.9); border: 1px solid rgba(255,255,255,.18); border-radius: 15px; color: #ddd; transition: all .12s; }
-  #dockL button:hover { border-color: #ffd700; transform: scale(1.08); }
+  #dockL button { width: 69px; height: 69px; padding: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+    background: linear-gradient(180deg, rgba(26,32,48,.95), rgba(10,14,22,.95)); border: 1px solid rgba(255,255,255,.18); border-radius: 15px; color: #ddd; transition: all .12s;
+    box-shadow: 0 4px 14px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.08); }
+  /* 독 아이콘: game-icons 실루엣을 금색 그라데이션으로 마스킹 (이모지 → 고해상도 벡터) */
+  #dockL .dki { width: 52%; aspect-ratio: 1; display: block; background: linear-gradient(180deg, #fff6d0 0%, #f2c94c 55%, #b8860b 100%);
+    -webkit-mask: var(--i) center / contain no-repeat; mask: var(--i) center / contain no-repeat; filter: drop-shadow(0 1px 0 rgba(0,0,0,.6)); }
+  #dockL button span { font-size: 10px; color: #cfd6e4; letter-spacing: .5px; line-height: 1; display: flex; align-items: center; gap: 3px; }
+  #dockL button span kbd { font: 8.5px/1 monospace; color: #8a93a6; border: 1px solid #3a4256; border-radius: 3px; padding: 1px 3px; background: rgba(0,0,0,.35); }
+  #dockL button:hover { border-color: #ffd700; transform: translateY(-3px); }
+  #dockL button:hover .dki, #dockL button.on .dki { filter: drop-shadow(0 0 6px rgba(255,215,0,.7)); }
   #dockL button.on { border-color: #ffd700; box-shadow: 0 0 10px rgba(255,215,0,.45); }
   #modalDim { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 40; display: none; }
   #modalDim.on { display: block; }
@@ -452,8 +460,10 @@
     /* 좌측 아이콘 → 모바일에서는 스킬창(핫바) 바로 위 가로 한 줄로 배치 */
     #dockL { left: 0; right: 0; top: auto; bottom: calc(72px + env(safe-area-inset-bottom)); transform: none;
       flex-direction: row; justify-content: center; gap: 5px; padding: 0 6px; }
-    #dockL button { width: calc((100vw - 52px) / 7); max-width: 52px; height: auto; aspect-ratio: 1;
+    #dockL button { width: calc((100vw - 52px) / 7); max-width: 52px; height: auto; aspect-ratio: 1; gap: 1px;
       font-size: min(26px, 6.2vw); border-radius: 12px; }
+    #dockL .dki { width: 58%; }
+    #dockL button span { font-size: 8px; } #dockL button span kbd { display: none; }
     #deadOv { z-index: 65 !important; }
     #chatLog { height: 64px; }
 
@@ -520,13 +530,13 @@
 </div>
 
 <div id="dockL">
-  <button data-p="invPanel" title="가방 [I]">🎒</button>
-  <button data-p="shopPanel" title="스킬샵 [B]">⚔</button>
-  <button data-p="treePanel" title="스킬트리 [T]">🌳</button>
-  <button data-p="questPanel" title="퀘스트 [Q]">📜</button>
-  <button data-p="worldMap" title="세계지도 [V]">🗺</button>
-  <button data-p="dexPanel" title="도감 [C]">📖</button>
-  <button data-p="chat" title="채팅 [L]">💬</button>
+  <button data-p="invPanel" title="가방 [I]"><i class="dki" style="--i:url(assets/icons/ui/knapsack.svg)"></i><span>가방<kbd>I</kbd></span></button>
+  <button data-p="shopPanel" title="스킬샵 [B]"><i class="dki" style="--i:url(assets/icons/ui/crossed-swords.svg)"></i><span>스킬<kbd>B</kbd></span></button>
+  <button data-p="treePanel" title="스킬트리 [T]"><i class="dki" style="--i:url(assets/icons/ui/pine-tree.svg)"></i><span>트리<kbd>T</kbd></span></button>
+  <button data-p="questPanel" title="퀘스트 [Q]"><i class="dki" style="--i:url(assets/icons/ui/scroll-unfurled.svg)"></i><span>퀘스트<kbd>Q</kbd></span></button>
+  <button data-p="worldMap" title="세계지도 [V]"><i class="dki" style="--i:url(assets/icons/ui/treasure-map.svg)"></i><span>지도<kbd>V</kbd></span></button>
+  <button data-p="dexPanel" title="도감 [C]"><i class="dki" style="--i:url(assets/icons/ui/open-book.svg)"></i><span>도감<kbd>C</kbd></span></button>
+  <button data-p="chat" title="채팅 [L]"><i class="dki" style="--i:url(assets/icons/ui/chat-bubble.svg)"></i><span>채팅<kbd>L</kbd></span></button>
 </div>
 <div id="modalDim"></div>
 
@@ -580,10 +590,12 @@
 <div id="help" class="panel">
   <b>❓ 조작법</b>
   <div class="hbody">
-    <b>이동</b> WASD/화살표/빈 곳 클릭<br>
-    <b>공격</b> Space/몬스터 더블클릭 · <b>스킬</b> 1~5 · <b>물약</b> 6·7<br>
-    <b>창</b> 왼쪽 아이콘 · <b>채팅</b> Enter/L<br>
-    루팅은 아이템에 접근 시 자동
+    <b>이동</b> WASD/화살표/빈 곳 클릭 · <b>시야</b> Ctrl/⌘+휠<br>
+    <b>공격</b> Space/몬스터 클릭 · <b>스킬</b> 1~5 · <b>물약</b> 6·7<br>
+    <b>창</b> 하단 독 아이콘(I B T Q V C L) · <b>채팅</b> Enter<br>
+    <b>루팅</b> 접근 시 자동 · <b>강화</b> 주문서를 장비에 드래그<br>
+    <b>스킬서</b> 보스 드랍 · 가방에서 더블 클릭 → 습득/강화<br>
+    <b>세트</b> 같은 세트 2개↑ 장착 시 네온 · <b>도감</b> 처치 종족 피해 보너스
   </div>
 </div>
 
@@ -661,7 +673,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=117"
+<script type="module" src="game.js?v=118"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

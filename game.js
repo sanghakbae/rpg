@@ -1,13 +1,13 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signInAnonymously, onAuthStateChanged, connectAuthEmulator, setPersistence, browserLocalPersistence, signOut } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import {
-  getFirestore, doc, setDoc, updateDoc, onSnapshot, collection,
+  getFirestore, initializeFirestore, deleteDoc, doc, setDoc, updateDoc, onSnapshot, collection,
   query, orderBy, limit, addDoc, runTransaction, getDoc, writeBatch, increment, where,
   connectFirestoreEmulator
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 const app = initializeApp(window.firebaseConfig);
-const db = getFirestore(app);
+const db = initializeFirestore(app, { ignoreUndefinedProperties: true }); /* 중첩 undefined로 updateDoc이 영구 실패(보류분 고착)하는 것 방지 */
 const auth = getAuth(app);
 
 if (location.search.includes('emu=1')) {
@@ -1189,7 +1189,7 @@ function fxFlash(rgb, ms, str = .35) { flashes.push({ rgb, t: 0, max: ms, str, x
 let othersPrev = {}, mePrev = { x: SPAWN.x, y: SPAWN.y }, meMovingNow = false;
 let mouseDown = false, dest = null, attackTargetSimId = null;
 /* 설정(로컬 저장) + 자동 사냥 */
-let autoHunt = false, autoSkillT = 0, autoPotT = 0;
+let autoHunt = false, autoSkillT = 0, autoPotT = 0, targetT0 = 0; const simSkip = {}; /* 자동 사냥: 8초 안에 못 닿는 몬스터는 20초 제외 */
 const settings = { autoPotHp: 45, autoPotMp: 20, dmgText: true, screenShake: true, autoSell: {} }; /* autoSell: 등급별 자동 판매 on/off */
 try { const sv = JSON.parse(localStorage.getItem('settings') || '{}'); Object.assign(settings, sv); } catch (e) {}
 const saveSettings = () => { try { localStorage.setItem('settings', JSON.stringify(settings)); } catch (e) {} };
@@ -1286,8 +1286,9 @@ let invRerenderT = 0, syncSoonT = 0;
 function applyLocalMe(upd) {
   applyUpd(me, upd);
   for (const k of Object.keys(upd)) { const top = k.split('.')[0]; if (!PEND_VOLATILE.has(top)) pendKeys.add(top); } /* 위치·HP·생사 같은 휘발 필드는 동기화 때 현재값으로 실린다 */
+  if (syncing) for (const k of Object.keys(upd)) dirtyDuringSync.add(k.split('.')[0]); /* 동기화 전송 중 바뀐 키는 성공 후에도 보류 유지 */
   savePend();
-  if (!offline) { clearTimeout(syncSoonT); syncSoonT = setTimeout(() => trySync(true), 1200); } /* 온라인인데 로컬 적용(로컬 루팅 등)이면 곧 동기화 */
+  if (!offline && Date.now() - lastSyncAt >= ECO_SYNC_MS) { clearTimeout(syncSoonT); syncSoonT = setTimeout(() => trySync(true), 1200); } /* 마지막 저장 후 1분 지났으면 곧 저장, 아니면 주기 저장에 실림(쓰기 절약) */
   clearTimeout(invRerenderT);
   invRerenderT = setTimeout(() => { try { renderInvUI(); if ($('shopPanel')?.classList.contains('open')) renderShop(); if ($('treePanel')?.classList.contains('open')) renderTree(); } catch (e) {} }, 30);
 }
@@ -1360,30 +1361,44 @@ function addLoot(data) {
   return withTimeout(addDoc(collection(db, 'loot'), data), UPD_TIMEOUT).catch(err => { if (isQuotaErr(err)) { enterOffline(err); local(); } });
 }
 /* 보류분 동기화 시도 — 로컬 모드이거나 보류 필드가 있으면 45초마다 (실패한 쓰기는 한도를 소비하지 않음) */
-let syncing = false;
+let syncing = false, syncQueued = false, syncP = null; const dirtyDuringSync = new Set();
 async function trySync(force) {
-  if (!meRef || !uid || syncing) return false;
+  if (!meRef || !uid) return false;
+  if (syncing) { if (force) syncQueued = true; return syncP || false; } /* 전송 중 강제 요청(종료·구역이동)은 큐에 넣고 같은 약속을 돌려줘 await 가능 */
   const now = Date.now();
   if (offline && now - offlineSince < OFFLINE_DWELL) return false; /* 한 번 로컬 모드가 되면 최소 5분 유지 — 처치마다 8초씩 매달리는 왕복 방지 */
   if (!force && now - lastProbe < (ecoOn() ? ECO_SYNC_MS : 45000)) return false; /* 절약 모드: 1분 주기(레벨업·구역이동·종료 시엔 즉시) */
   lastProbe = now;
   syncing = true;
-  try { return await trySyncInner(now); } finally { syncing = false; }
+  syncP = (async () => {
+    try {
+      let r = await trySyncInner(now);
+      for (let i = 0; i < 3 && r && syncQueued; i++) { syncQueued = false; if (pendKeys.size) r = await trySyncInner(Date.now()); }
+      syncQueued = false;
+      return r;
+    } finally { syncing = false; syncP = null; }
+  })();
+  return syncP;
 }
 async function trySyncInner(now) {
   if (!offline && !pendKeys.size) return true;
   const payload = {};
   for (const k of pendKeys) if (me[k] !== undefined) payload[k] = me[k];
   payload.x = me.x; payload.y = me.y; payload.hp = me.hp; if (me.mp != null) payload.mp = Math.round(me.mp);
-  payload.dead = !!me.dead; if (me.map) payload.map = me.map;
+  payload.dead = !!me.dead; payload.deadUntil = me.deadUntil || 0; if (me.map) payload.map = me.map;
+  payload.power = Math.round(totalAtk() * (1 + totalCrit()) * skillPow()) || 0; /* 랭킹 ⚔ 탭용(위치 심박은 절약 모드에서 꺼져 있음) */
   payload.lastSeen = now;
+  const sent = [...pendKeys]; dirtyDuringSync.clear();
   try {
     if (offline) /* 실패했던 것과 같은 종류(트랜잭션)로 시험 — 단순 update만 통하는 상태에서 온라인으로 오판하면 다음 처치가 또 8초 매달린다 */
       await withTimeout(runTransaction(db, async tx => { await tx.get(meRef); tx.update(meRef, payload); }), 12000);
     else await withTimeout(updateDoc(meRef, payload), 12000); /* 절약 모드 주기 저장: 쓰기 1회 */
     lastSyncAt = now;
     const was = offline;
-    offline = false; pendKeys.clear(); savePend();
+    offline = false;
+    for (const k of sent) if (!dirtyDuringSync.has(k)) pendKeys.delete(k); /* 전송 중 다시 바뀐 키는 보류 유지 → 다음 저장에 실림 */
+    dirtyDuringSync.clear(); savePend();
+    if (!pendKeys.size) try { localStorage.removeItem(PEND_KEY()); } catch (e) {} /* 종료 직전 저장 성공 시 디바운스 없이 즉시 제거(다음 로그인에 옛 보류분 복원 방지) */
     const el = document.getElementById('quotaBar'); if (el) el.style.display = 'none';
     if (was) toast('☁️ 서버 연결 복구 — 로컬 진행분을 동기화했습니다.', 'sysq');
     return true;
@@ -1394,12 +1409,13 @@ async function trySyncInner(now) {
   }
 }
 /* 시작 시: 이전 세션의 보류분 복원 (서버 문서 위에 덧씌움) */
-function restorePend() {
+function restorePend(srv) {
   try {
     const raw = localStorage.getItem(PEND_KEY());
     if (!raw) return;
     const st = JSON.parse(raw);
     if (!st || !st.keys || !st.me) return;
+    if (srv && Number(srv.lastSeen) > Number(st.ts || 0)) { localStorage.removeItem(PEND_KEY()); return; } /* 다른 기기에서 그 뒤에 저장했으면 이 보류분은 옛것 → 폐기(주 단위 롤백 방지) */
     for (const k of st.keys) { if (st.me[k] !== undefined) { me[k] = st.me[k]; pendKeys.add(k); } }
     if (Number.isFinite(st.me.x) && Number.isFinite(st.me.y)) { me.x = st.me.x; me.y = st.me.y; }
     if (Number.isFinite(st.me.hp) && st.me.hp > 0) me.hp = st.me.hp;
@@ -1686,6 +1702,7 @@ function watchMonsters() {
       try { s = sims.find(x => x.id === dc.id); if (!s) { s = makeSim(dc.id, d); sims.push(s); } }
       catch (e) { monErr = 'makeSim실패(' + dc.id + '):' + (e.message || e); if (!monWarned) { monWarned = true; toast('⚠️ 몬스터 로드 오류: ' + esc(monErr)); } return; }
       if (typeof d.hp === 'number' && typeof s.hp === 'number' && d.hp < s.hp && s.alive) s.hitFlash = Date.now();
+      if (!s.alive && d.alive && s.respawnAt > Date.now()) return; /* 내가 로컬에서 잡은 몬스터(리스폰 대기)는 서버의 옛 alive로 되살리지 않음 */
       if (!d.alive && s.alive) spawnPoof(s);
       if (d.alive && !s.alive) {
         s.x = d.homeX; s.y = d.homeY;
@@ -1849,7 +1866,10 @@ const classWeapon = raw => {
   const ti = id.indexOf('~');
   if (ti >= 0) { suf = id.slice(ti); id = id.slice(0, ti); }
   const fam = WEAPON_FAMILY_OF[id];
-  return ((fam && fam[myCls]) || id) + suf;
+  if (fam && fam[myCls]) return fam[myCls] + suf;
+  const zm = /^(\w+?)_(warrior|archer|rogue|mage)_b(\d)$/.exec(id); /* 구역 장비(방어구 포함)도 내 직업 변형으로 — 타 직업 방어구가 가방에 쌓이지 않게 */
+  if (zm && zm[2] !== myCls && ITEMS[`${zm[1]}_${myCls}_b${zm[3]}`]) return `${zm[1]}_${myCls}_b${zm[3]}` + suf;
+  return id + suf;
 };
 function rollDrops(type) {
   /* orc 계열(페이지 보스)은 전용 테이블이 없어 빈손 버그 — boss 테이블 공유 */
@@ -2024,10 +2044,11 @@ function nearestLoot(maxD) {
   }
   return best;
 }
-function nearestSim(maxD) {
+function nearestSim(maxD, skip) {
   let best = null, bestD = maxD;
   for (const s of sims) {
     if (!s.alive || s.map !== myMap()) continue;
+    if (skip && (skip[s.id] || 0) > Date.now()) continue;
     const d = Math.hypot(s.x - me.x, s.y - me.y);
     if (d < bestD) { bestD = d; best = s; }
   }
@@ -2560,7 +2581,7 @@ function checkDaily() {
     if (usedType.has(q.type)) continue; /* 같은 종류(예: 처치) 중복 방지 */
     usedType.add(q.type); qs.push(q.id);
   }
-  me.daily = { date: t, streak: consecutive ? (d.streak || 0) : 0, attended: false, base, quests: qs, claimed: {} };
+  me.daily = { date: t, streak: (consecutive && d.attended) ? (d.streak || 0) : 0, attended: false, base, quests: qs, claimed: {} }; /* 어제 출석을 안 했으면 연속 끊김 */
   updX(meRef, { daily: me.daily }).catch(() => {});
 }
 const dailyQDef = id => DAILY_QUEST_POOL.find(q => q.id === id);
@@ -2874,6 +2895,7 @@ async function pickup(lid, l) {
       tx.update(meRef, r.upd);
       item = { ...cand, itemId: giveId }; res = r.res; soldG = r.sold || 0;
     });
+    if (item && res !== 'full' && !lid.startsWith('local_')) deleteDoc(doc(db, 'loot', lid)).catch(() => {}); /* 서버 루팅 문서(구버전 드롭)는 실제로 지워야 스냅샷마다 되살아나 무한 획득되지 않음 */
     if (!item && res === null) { /* 루팅 문서가 이미 사라진 유령 항목: 자동 사냥이 그 자리에서 맴돌지 않게 건너뛰고, 로컬 항목이면 제거 */
       lootSkip[lid] = Date.now() + 5000;
       delete lootItems[lid]; /* 서버에 실제로 있으면 루팅 스냅샷이 다시 채운다 */
@@ -2978,6 +3000,7 @@ function addToInv(itemId) {
 
 let selPotKey = null, selPotT = 0;
 function slotClick(rawId) {
+  if (me.dead) { toast('사망 상태에서는 아이템을 사용할 수 없습니다'); return; }
   runTx(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return;
@@ -3171,6 +3194,8 @@ function closeEnhModal() { const m = $('enhModal'); if (m) m.remove(); }
 const normId = s => { const [b] = splitStack(s); const i = b.indexOf('+'); return i < 0 ? b : b.slice(0, i); };
 function findInvKey(inv, rawId) {
   for (const [k, v] of Object.entries(inv)) if (v === rawId) return k;
+  const it0 = getItem(rawId);
+  if (!(it0.heal || it0.mana || it0.scroll)) return null; /* 장비는 정확히 같은 항목만 — '같은 계열' 대체는 소모품(수량 표기 차이)에만 (장착템 판매·강화가 가방의 다른 +강화 사본을 건드리던 버그) */
   const want = normId(rawId);
   for (const [k, v] of Object.entries(inv)) if (normId(v) === want) return k;
   return null;
@@ -3187,7 +3212,9 @@ function sellByGrade(grade) {
     let gain = 0, n = 0;
     for (const [k, v] of Object.entries(inv)) {
       const [bid] = splitStack(v);
-      if ((getItem(bid).rarity || 'common') !== grade) continue;
+      const gi = getItem(bid);
+      if ((gi.rarity || 'common') !== grade) continue;
+      if (gi.scroll || gi.book) continue; /* 주문서·스킬북은 장비 등급 일괄판매에서 제외(25G에 헐값 처분 방지) */
       gain += sellPrice(v); n++;
       delete inv[k];
     }
@@ -3292,7 +3319,7 @@ function showEnhMenu(x, y, rawId) {
   closeEnhMenu();
   const c = countScrolls();
   const it0 = getItem(rawId);
-  const noEnh = !!(it0.scroll);
+  const noEnh = !!(it0.scroll || it0.heal || it0.mana || it0.book); /* 소모품은 강화 불가(강화된 물약은 단축바 수량·자동물약에서 빠짐) */
   const lv = it0._lv || 0;
   enhMenuEl = document.createElement('div');
   enhMenuEl.id = 'enhMenu';
@@ -3435,7 +3462,7 @@ function bindBtns(id) {
 function potCount(kind) {
   const ids = kind === 'hp' ? ['potion', 'potion_hi'] : ['potion_mp', 'potion_mm'];
   let n = 0;
-  for (const v of Object.values(me.inv || {})) { const [bid, cnt] = splitStack(v); if (ids.includes(bid)) n += cnt; }
+  for (const v of Object.values(me.inv || {})) { const [bid, cnt] = splitStack(v); if (ids.includes(normId(bid))) n += cnt; }
   return n;
 }
 function usePotion(kind) {
@@ -4648,23 +4675,30 @@ function buildZoneWorld(n) {
     cols.push({ x, y, r: Math.min(rx, ry) * .7 });
     blocked.push({ x, y, r: Math.max(rx, ry) + 40 });
   };
-  const river = (vertical) => { /* 지도를 가로지르는 강 + 다리(길과 만나는 지점) */
+  const river = (vertical) => { /* 지도를 가로지르는 강 — 스폰·관문·사냥터를 피해 흐르고, 길과 만나는 지점마다 다리 */
     const [deep, mid, light] = P.water;
     const pts = [];
-    if (vertical) { let x = R(560, 1040); for (let y = -20; y <= WORLD.h + 20; y += 60) { x += R(-40, 40); pts.push({ x: clampN(x, 380, 1220), y }); } }
-    else { let y = R(300, 900); for (let x = -20; x <= WORLD.w + 20; x += 60) { y += R(-30, 30); pts.push({ x, y: clampN(y, 220, 980) }); } }
-    const bridgeAt = vertical ? pts.reduce((b, p) => Math.abs(p.y - 600) < Math.abs(b.y - 600) ? p : b) : pts.reduce((b, p) => Math.abs(p.x - 800) < Math.abs(b.x - 800) ? p : b);
+    const keep = [{ x: spawn.x, y: spawn.y, r: 150 }, ...mobZones.map(z => ({ x: z.x, y: z.y, r: 150 })), ...gates.map(g => ({ x: g.x, y: g.y, r: 120 }))];
+    const dodge = p => { for (const b of keep) { if (Math.hypot(p.x - b.x, p.y - b.y) < b.r + 40) { if (vertical) p.x = clampN(b.x + (p.x >= b.x ? 1 : -1) * (b.r + 40), 380, 1220); else p.y = clampN(b.y + (p.y >= b.y ? 1 : -1) * (b.r + 40), 220, 980); } } return p; };
+    if (vertical) { let x = R(560, 1040); for (let y = -20; y <= WORLD.h + 20; y += 60) { x += R(-40, 40); const p = dodge({ x: clampN(x, 380, 1220), y }); x = p.x; pts.push(p); } }
+    else { let y = R(300, 900); for (let x = -20; x <= WORLD.w + 20; x += 60) { y += R(-30, 30); const p = dodge({ x, y: clampN(y, 220, 980) }); y = p.y; pts.push(p); } }
     const stroke = (col, w) => { c.strokeStyle = col; c.lineWidth = w; c.lineCap = 'round'; c.lineJoin = 'round'; c.beginPath(); pts.forEach((p, i) => i ? c.lineTo(p.x, p.y) : c.moveTo(p.x, p.y)); c.stroke(); };
     stroke(P.style === 'snow' ? 'rgba(180,200,215,.9)' : 'rgba(150,140,100,.7)', 92); stroke(deep, 68); stroke(mid, 40);
     c.globalAlpha = .5; stroke(light, 3); c.globalAlpha = 1;
-    /* 다리 */
-    c.save(); c.translate(bridgeAt.x, bridgeAt.y); if (!vertical) c.rotate(Math.PI / 2);
-    c.fillStyle = '#6b4a2f'; c.fillRect(-44, -60, 88, 120); c.fillStyle = '#8a6b45';
-    for (let k = -54; k < 60; k += 12) c.fillRect(-40, k, 80, 8);
-    c.fillStyle = '#4a3524'; c.fillRect(-46, -60, 6, 120); c.fillRect(40, -60, 6, 120); c.restore();
-    for (const p of pts) { if (Math.hypot(p.x - bridgeAt.x, p.y - bridgeAt.y) < 70) continue; cols.push({ x: p.x, y: p.y, r: 30 }); blocked.push({ x: p.x, y: p.y, r: 80 }); }
-    blocked.push({ x: bridgeAt.x, y: bridgeAt.y, r: 90 });
-    for (let i = 1; i < pts.length - 1; i += 2) { const a = pts[i - 1], b = pts[i + 1]; if (Math.hypot(pts[i].x - bridgeAt.x, pts[i].y - bridgeAt.y) < 70) continue; waters.push({ x: pts[i].x, y: pts[i].y, rx: 46, ry: 18, rot: Math.atan2(b.y - a.y, b.x - a.x), lava: false }); } /* 강 물결 하이라이트 등록 */
+    /* 다리: 각 길이 강에 가장 가까이 닿는 지점(48px 이내)마다 하나 — 없으면 지도 중앙 교차점에 하나 */
+    const bridges = [];
+    for (const path of paths) { let best = null, bd = 1e9; for (const q of path) for (const p of pts) { const d = Math.hypot(q.x - p.x, q.y - p.y); if (d < bd) { bd = d; best = p; } } if (best && bd < 48 && !bridges.some(b => Math.hypot(b.x - best.x, b.y - best.y) < 120)) bridges.push(best); }
+    if (!bridges.length) bridges.push(vertical ? pts.reduce((b, p) => Math.abs(p.y - 600) < Math.abs(b.y - 600) ? p : b) : pts.reduce((b, p) => Math.abs(p.x - 800) < Math.abs(b.x - 800) ? p : b));
+    for (const b of bridges) {
+      c.save(); c.translate(b.x, b.y); if (!vertical) c.rotate(Math.PI / 2);
+      c.fillStyle = '#6b4a2f'; c.fillRect(-44, -60, 88, 120); c.fillStyle = '#8a6b45';
+      for (let k = -54; k < 60; k += 12) c.fillRect(-40, k, 80, 8);
+      c.fillStyle = '#4a3524'; c.fillRect(-46, -60, 6, 120); c.fillRect(40, -60, 6, 120); c.restore();
+      blocked.push({ x: b.x, y: b.y, r: 90 });
+    }
+    const nearBridge = p => bridges.some(b => Math.hypot(p.x - b.x, p.y - b.y) < 70);
+    for (const p of pts) { if (nearBridge(p)) continue; cols.push({ x: p.x, y: p.y, r: 30 }); blocked.push({ x: p.x, y: p.y, r: 80 }); }
+    for (let i = 1; i < pts.length - 1; i += 2) { const a = pts[i - 1], b = pts[i + 1]; if (nearBridge(pts[i])) continue; waters.push({ x: pts[i].x, y: pts[i].y, rx: 46, ry: 18, rot: Math.atan2(b.y - a.y, b.x - a.x), lava: false }); } /* 강 물결 하이라이트 등록 */
   };
   const waterfall = () => { /* 상단 절벽에서 떨어지는 폭포 + 웅덩이 */
     const x = R(500, 1100), cliffY = 120;
@@ -4680,9 +4714,21 @@ function buildZoneWorld(n) {
     for (let cx = x - 210; cx <= x + 210; cx += 40) cols.push({ x: cx, y: 60 + cliffY / 2, r: cliffY / 2 });
     blocked.push({ x, y: 60 + cliffY / 2, r: 300 });
   };
-  const pond = (rx0, rx1, ry0, ry1, pad, tries = 8) => { for (let t = 0; t < tries; t++) { const x = R(300, 1300), y = R(250, 1000); if (!isBlocked(x, y, pad)) { water(x, y, R(rx0, rx1), R(ry0, ry1), R(0, 3), false); return true; } } return false; };
+  /* 2) 길 (스폰 → 관문/보스) — 물보다 먼저 그려 연못이 길을 피하고, 강은 길과 만나는 곳에 다리를 놓는다 */
+  const paths = []; /* 길 표본(강 다리 위치 계산용) */
+  const pathTo = (sx, sy, tx, ty) => {
+    const pp = []; paths.push(pp);
+    const mx = (sx + tx) / 2 + (rng() - .5) * 260, my = (sy + ty) / 2 + (rng() - .5) * 200;
+    c.strokeStyle = P.path[0]; c.lineWidth = 44; c.lineCap = 'round'; c.beginPath(); c.moveTo(sx, sy); c.quadraticCurveTo(mx, my, tx, ty); c.stroke();
+    c.strokeStyle = P.path[1]; c.lineWidth = 36; c.beginPath(); c.moveTo(sx, sy); c.quadraticCurveTo(mx, my, tx, ty); c.stroke();
+    c.strokeStyle = 'rgba(0,0,0,.10)'; c.lineWidth = 46; c.setLineDash([3, 9]); c.beginPath(); c.moveTo(sx, sy); c.quadraticCurveTo(mx, my, tx, ty); c.stroke(); c.setLineDash([]); /* 가장자리 결 */
+    for (let i = 0; i < 70; i++) { const t = rng(), px = (1 - t) * (1 - t) * sx + 2 * (1 - t) * t * mx + t * t * tx, py = (1 - t) * (1 - t) * sy + 2 * (1 - t) * t * my + t * t * ty; c.fillStyle = i % 2 ? 'rgba(255,255,255,.14)' : 'rgba(0,0,0,.16)'; c.beginPath(); c.arc(px + (rng() - .5) * 26, py + (rng() - .5) * 26, 1.2 + rng() * 1.8, 0, 7); c.fill(); } /* 자갈 */
+    for (let i = 0; i <= 24; i++) { const t = i / 24; const px = (1 - t) * (1 - t) * sx + 2 * (1 - t) * t * mx + t * t * tx, py = (1 - t) * (1 - t) * sy + 2 * (1 - t) * t * my + t * t * ty; blocked.push({ x: px, y: py, r: 34 }); pp.push({ x: px, y: py }); c.fillStyle = 'rgba(0,0,0,.18)'; c.beginPath(); c.ellipse(px + R(-12, 12), py + R(-12, 12), R(2, 4.5), R(1.5, 3), R(0, 3), 0, 7); c.fill(); }
+  };
+  pathTo(spawn.x, spawn.y, 540, 430); pathTo(spawn.x, spawn.y, 1060, 770); pathTo(spawn.x, spawn.y, 800, 1000); pathTo(spawn.x, spawn.y, 1490, 600); if (n !== 1) pathTo(spawn.x, spawn.y, 110, 600);
+  const pond = (rx0, rx1, ry0, ry1, pad, tries = 24) => { for (let t = 0; t < tries; t++) { const x = R(300, 1300), y = R(250, 1000); if (!isBlocked(x, y, pad)) { water(x, y, R(rx0, rx1), R(ry0, ry1), R(0, 3), false); return true; } } return false; };
   const feat = rng();
-  if (P.lava) { for (let i = 0; i < 3 + (tier % 3); i++) { const x = R(200, 1400), y = R(200, 1050); if (!isBlocked(x, y, 120)) water(x, y, R(60, 130), R(40, 80), R(0, 3), true); } }
+  if (P.lava) { for (let i = 0; i < 3 + (tier % 3); i++) for (let t = 0; t < 8; t++) { const x = R(200, 1400), y = R(200, 1050); if (!isBlocked(x, y, 110)) { water(x, y, R(60, 130), R(40, 80), R(0, 3), true); break; } } } /* 용암 웅덩이: 빈 자리 8회 탐색 */
   else if (P.gaps) { for (let i = 0; i < P.gaps; i++) { const x = R(150, 1450), y = R(150, 1050); if (!isBlocked(x, y, 140)) { /* 구름 사이 틈(낙하 불가 영역) */ const rx = R(70, 140), ry = rx * R(.5, .8); c.save(); c.translate(x, y); const g = c.createRadialGradient(0, 0, 4, 0, 0, rx); g.addColorStop(0, '#1a2a4a'); g.addColorStop(.85, '#2a4a7a'); g.addColorStop(1, 'rgba(255,255,255,.9)'); c.fillStyle = g; c.beginPath(); c.ellipse(0, 0, rx, ry, 0, 0, 7); c.fill(); c.restore(); const steps = 10; for (let k = 0; k < steps; k++) { const a = k / steps * 6.283; cols.push({ x: x + Math.cos(a) * rx * .8, y: y + Math.sin(a) * ry * .8, r: 18 }); } cols.push({ x, y, r: Math.min(rx, ry) * .7 }); blocked.push({ x, y, r: rx + 40 }); } } }
   else if (P.style === 'cave') { /* 동굴: 지하 호수 */ pond(feat < .5 ? 90 : 55, feat < .5 ? 150 : 95, feat < .5 ? 60 : 38, feat < .5 ? 100 : 62, 120); }
   else if (feat < .30) { if (!pond(90, 170, 60, 110, 130)) pond(55, 95, 38, 62, 110); }
@@ -4691,21 +4737,11 @@ function buildZoneWorld(n) {
   else if (P.style === 'swamp' || P.murk) { for (let i = 0; i < 3; i++) pond(50, 100, 35, 70, 100, 4); }
   else if (P.style !== 'desert' || feat > .9) pond(55, 95, 38, 62, 110); /* 나머지: 작은 연못(사막은 10% 오아시스) */
 
-  /* 3) 길 (스폰 → 관문/보스) */
-  const pathTo = (sx, sy, tx, ty) => {
-    const mx = (sx + tx) / 2 + (rng() - .5) * 260, my = (sy + ty) / 2 + (rng() - .5) * 200;
-    c.strokeStyle = P.path[0]; c.lineWidth = 44; c.lineCap = 'round'; c.beginPath(); c.moveTo(sx, sy); c.quadraticCurveTo(mx, my, tx, ty); c.stroke();
-    c.strokeStyle = P.path[1]; c.lineWidth = 36; c.beginPath(); c.moveTo(sx, sy); c.quadraticCurveTo(mx, my, tx, ty); c.stroke();
-    c.strokeStyle = 'rgba(0,0,0,.10)'; c.lineWidth = 46; c.setLineDash([3, 9]); c.beginPath(); c.moveTo(sx, sy); c.quadraticCurveTo(mx, my, tx, ty); c.stroke(); c.setLineDash([]); /* 가장자리 결 */
-    for (let i = 0; i < 70; i++) { const t = rng(), px = (1 - t) * (1 - t) * sx + 2 * (1 - t) * t * mx + t * t * tx, py = (1 - t) * (1 - t) * sy + 2 * (1 - t) * t * my + t * t * ty; c.fillStyle = i % 2 ? 'rgba(255,255,255,.14)' : 'rgba(0,0,0,.16)'; c.beginPath(); c.arc(px + (rng() - .5) * 26, py + (rng() - .5) * 26, 1.2 + rng() * 1.8, 0, 7); c.fill(); } /* 자갈 */
-    for (let i = 0; i <= 24; i++) { const t = i / 24; const px = (1 - t) * (1 - t) * sx + 2 * (1 - t) * t * mx + t * t * tx, py = (1 - t) * (1 - t) * sy + 2 * (1 - t) * t * my + t * t * ty; blocked.push({ x: px, y: py, r: 34 }); c.fillStyle = 'rgba(0,0,0,.18)'; c.beginPath(); c.ellipse(px + R(-12, 12), py + R(-12, 12), R(2, 4.5), R(1.5, 3), R(0, 3), 0, 7); c.fill(); }
-  };
-  pathTo(spawn.x, spawn.y, 540, 430); pathTo(spawn.x, spawn.y, 1060, 770); pathTo(spawn.x, spawn.y, 800, 1000); pathTo(spawn.x, spawn.y, 1490, 600); if (n !== 1) pathTo(spawn.x, spawn.y, 110, 600);
   for (const z of mobZones) { const g = c.createRadialGradient(z.x, z.y, 10, z.x, z.y, 210); g.addColorStop(0, 'rgba(0,0,0,.10)'); g.addColorStop(.75, 'rgba(0,0,0,.05)'); g.addColorStop(1, 'transparent'); c.fillStyle = g; c.beginPath(); c.arc(z.x, z.y, 210, 0, 7); c.fill(); }
   c.strokeStyle = P.style === 'volcano' ? 'rgba(255,120,40,.35)' : 'rgba(120,60,40,.25)'; c.lineWidth = 6; c.beginPath(); c.arc(800, 1000, 130, 0, 7); c.stroke();
 
   /* 4) 풀·꽃·잔디 */
-  for (let i = 0; i < P.grass; i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; if (blocked.some(b => b.r > 60 && Math.hypot(b.x - x, b.y - y) < b.r - 40)) continue; c.strokeStyle = P.grass[i % 2]; c.lineWidth = 1.4; c.beginPath(); c.moveTo(x, y); c.lineTo(x + R(-2, 2), y - R(3, 7)); c.stroke(); }
+  for (let i = 0; i < (P.grassN || 0); i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; if (blocked.some(b => b.r > 60 && Math.hypot(b.x - x, b.y - y) < b.r - 40)) continue; c.strokeStyle = P.grass[i % 2]; c.lineWidth = 1.4; c.beginPath(); c.moveTo(x, y); c.lineTo(x + R(-2, 2), y - R(3, 7)); c.stroke(); }
   for (let i = 0; i < 240; i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; if (isBlocked(x, y, -60)) continue; const col = P.flowers[i % 4]; c.fillStyle = col; c.beginPath(); c.arc(x, y, 2.6, 0, 7); c.fill(); c.fillStyle = 'rgba(255,255,255,.55)'; c.beginPath(); c.arc(x, y, 1, 0, 7); c.fill(); }
   if (P.reeds) for (let i = 0; i < P.reeds; i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; c.strokeStyle = 'rgba(110,140,70,.8)'; c.lineWidth = 2; c.beginPath(); c.moveTo(x, y); c.lineTo(x + R(-3, 3), y - R(14, 26)); c.stroke(); c.fillStyle = '#6b4a2f'; c.fillRect(x - 2, y - R(20, 26), 4, 7); }
   if (P.embers) for (let i = 0; i < P.embers; i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; c.fillStyle = P.style === 'volcano' ? 'rgba(255,140,60,.75)' : 'rgba(200,120,255,.7)'; c.beginPath(); c.arc(x, y, R(.8, 2), 0, 7); c.fill(); }
@@ -4722,7 +4758,7 @@ function buildZoneWorld(n) {
     else { const cy = y - 32 * s; const blob = (bx, by, br, col) => { c.fillStyle = col; c.beginPath(); c.arc(bx, by, br, 0, 7); c.fill(); }; blob(x - 16 * s, cy + 7 * s, 18 * s, P.leaf[0]); blob(x + 16 * s, cy + 7 * s, 18 * s, P.leaf[0]); blob(x, cy + 10 * s, 19 * s, P.leaf[1]); blob(x, cy - 4 * s, 22 * s, P.leaf[2]); blob(x - 12 * s, cy - 12 * s, 14 * s, P.leaf[3]); blob(x + 12 * s, cy - 10 * s, 13 * s, P.leaf[3]); blob(x - 2 * s, cy - 16 * s, 12 * s, P.leaf[4]); for (let L2 = 0; L2 < 10; L2++) { const a = rng() * 6.283, rr2 = 10 + rng() * 16; blob(x + Math.cos(a) * rr2 * s * 1.15, cy - 4 * s + Math.sin(a) * rr2 * s * .6, 2.6 * s, 'rgba(255,255,255,.18)'); } }
   };
   const rock = (x, y, s) => { cols.push({ x, y, r: 10 * s }); if (drawPropTex(c, pick(PS.rocks), x, y + 6 * s, 26 * s, PS.tint, rng() < .5)) return; c.fillStyle = 'rgba(0,0,0,.28)'; c.beginPath(); c.ellipse(x + 3, y + 8 * s, 14 * s, 6 * s, 0, 0, 7); c.fill(); const g = c.createLinearGradient(x - 11 * s, y - 12 * s, x + 11 * s, y + 8 * s); g.addColorStop(0, P.rock[2]); g.addColorStop(.5, P.rock[0]); g.addColorStop(1, P.rock[1]); c.fillStyle = g; c.beginPath(); c.moveTo(x - 12 * s, y + 6 * s); c.lineTo(x - 9 * s, y - 8 * s); c.lineTo(x - 1 * s, y - 13 * s); c.lineTo(x + 9 * s, y - 7 * s); c.lineTo(x + 13 * s, y + 4 * s); c.lineTo(x + 6 * s, y + 9 * s); c.closePath(); c.fill(); c.strokeStyle = 'rgba(0,0,0,.45)'; c.lineWidth = 1.2; c.stroke(); };
-  const bush = (x, y, s) => { cols.push({ x, y, r: 8 * s }); if (drawPropTex(c, pick(PS.bushes), x, y + 5 * s, 22 * s, PS.tint, rng() < .5)) return; c.fillStyle = 'rgba(0,0,0,.22)'; c.beginPath(); c.ellipse(x + 3 * s, y + 7 * s, 13 * s, 5 * s, 0, 0, 7); c.fill(); c.fillStyle = P.leaf[2]; c.beginPath(); c.arc(x - 6 * s, y, 8 * s, 0, 7); c.arc(x + 6 * s, y - 1 * s, 9 * s, 0, 7); c.arc(x, y - 6 * s, 8 * s, 0, 7); c.fill(); c.fillStyle = P.leaf[4]; c.beginPath(); c.arc(x - 2 * s, y - 5 * s, 5.5 * s, 0, 7); c.fill(); if (rng() < .5) { c.fillStyle = P.flowers[0]; c.beginPath(); c.arc(x + 4 * s, y - 7 * s, 1.6 * s, 0, 7); c.arc(x - 5 * s, y - 3 * s, 1.6 * s, 0, 7); c.fill(); } };
+  const bush = (x, y, s) => { cols.push({ x, y, r: 8 * s }); if (drawPropTex(c, pick(PS.bushes), x, y + 5 * s, 22 * s, PS.tint, rng() < .5)) return; c.fillStyle = 'rgba(0,0,0,.22)'; c.beginPath(); c.ellipse(x + 3 * s, y + 7 * s, 13 * s, 5 * s, 0, 0, 7); c.fill(); c.fillStyle = P.leaf[2]; c.beginPath(); c.arc(x - 6 * s, y, 8 * s, 0, 7); c.arc(x + 6 * s, y - 1 * s, 9 * s, 0, 7); c.arc(x, y - 6 * s, 8 * s, 0, 7); c.fill(); c.fillStyle = P.leaf[4]; c.beginPath(); c.arc(x - 2 * s, y - 5 * s, 5.5 * s, 0, 7); c.fill(); if (((x * 7 + y * 13) | 0) % 2) { c.fillStyle = P.flowers[0]; c.beginPath(); c.arc(x + 4 * s, y - 7 * s, 1.6 * s, 0, 7); c.arc(x - 5 * s, y - 3 * s, 1.6 * s, 0, 7); c.fill(); } };
   const cactus = (x, y, s) => { cols.push({ x, y, r: 9 * s }); if (drawPropTex(c, pick(['cactus_short', 'cactus_tall']), x, y + 4 * s, 36 * s, PS.tint, rng() < .5)) return; c.fillStyle = 'rgba(0,0,0,.25)'; c.beginPath(); c.ellipse(x + 3, y + 6 * s, 12 * s, 5 * s, 0, 0, 7); c.fill(); c.fillStyle = '#5d8a41'; c.strokeStyle = '#3f5c33'; c.lineWidth = 1.2; roundRect(c, x - 6 * s, y - 34 * s, 12 * s, 40 * s, 6 * s); c.fill(); c.stroke(); roundRect(c, x - 20 * s, y - 22 * s, 10 * s, 18 * s, 5 * s); c.fill(); c.stroke(); c.fillRect(x - 15 * s, y - 10 * s, 12 * s, 6 * s); roundRect(c, x + 10 * s, y - 28 * s, 10 * s, 20 * s, 5 * s); c.fill(); c.stroke(); c.fillRect(x + 4 * s, y - 12 * s, 10 * s, 6 * s); c.fillStyle = 'rgba(255,255,255,.35)'; for (let k = 0; k < 6; k++) c.fillRect(x - 1, y - 30 * s + k * 6 * s, 2, 2); };
   const stalagmite = (x, y, s) => { cols.push({ x, y, r: 8 * s }); c.fillStyle = 'rgba(0,0,0,.35)'; c.beginPath(); c.ellipse(x + 2, y + 5 * s, 11 * s, 4 * s, 0, 0, 7); c.fill(); const g = c.createLinearGradient(x - 8 * s, y, x + 8 * s, y); g.addColorStop(0, P.rock[1]); g.addColorStop(.5, P.rock[2]); g.addColorStop(1, P.rock[1]); c.fillStyle = g; c.beginPath(); c.moveTo(x - 9 * s, y + 4 * s); c.lineTo(x - 3 * s, y - 30 * s); c.lineTo(x + 2 * s, y - 36 * s); c.lineTo(x + 5 * s, y - 28 * s); c.lineTo(x + 10 * s, y + 4 * s); c.closePath(); c.fill(); c.strokeStyle = 'rgba(0,0,0,.4)'; c.lineWidth = 1; c.stroke(); };
   const crystal = (x, y, s) => { c.fillStyle = P.flowers[i2 % 4]; c.shadowColor = P.flowers[0]; c.shadowBlur = 10; c.beginPath(); c.moveTo(x, y - 18 * s); c.lineTo(x + 5 * s, y - 4 * s); c.lineTo(x + 2 * s, y + 4 * s); c.lineTo(x - 3 * s, y + 4 * s); c.lineTo(x - 6 * s, y - 6 * s); c.closePath(); c.fill(); c.shadowBlur = 0; c.fillStyle = 'rgba(255,255,255,.5)'; c.beginPath(); c.moveTo(x, y - 16 * s); c.lineTo(x + 2 * s, y - 6 * s); c.lineTo(x - 1 * s, y - 6 * s); c.closePath(); c.fill(); };
@@ -4753,11 +4789,12 @@ function buildZoneWorld(n) {
   if (P.ice) for (let k = 0; k < P.ice; k++) { const x = R(200, 1400), y = R(200, 1050); if (isBlocked(x, y, 60)) continue; c.fillStyle = 'rgba(200,235,255,.55)'; c.beginPath(); c.ellipse(x, y, R(50, 100), R(30, 60), R(0, 3), 0, 7); c.fill(); c.strokeStyle = 'rgba(255,255,255,.7)'; c.lineWidth = 1.5; c.beginPath(); c.moveTo(x - 30, y - 10); c.lineTo(x + 10, y + 5); c.lineTo(x + 35, y - 12); c.stroke(); }
   /* 5b) 세트 드레싱: 소품(꽃·버섯·통나무…) + 스폰 캠프 + 관문 표지판 + 길가 울타리 */
   { const extras = 10 + (tier % 4) * 3;
-    for (let k = 0, tries = 0; k < extras && tries < extras * 5; tries++) { const x = 70 + rng() * (WORLD.w - 140), y = 70 + rng() * (WORLD.h - 140); if (isBlocked(x, y, -30)) continue; const ek = pick(PS.extra); const eh = ek === 'log' ? 9 + rng() * 4 : 16 + rng() * 12; /* 통나무는 납작·넓어 작게 */ if (drawPropTex(c, ek, x, y, eh, PS.tint, rng() < .5)) k++; else break; }
+    for (let k = 0, tries = 0; k < extras && tries < extras * 5; tries++) { const x = 70 + rng() * (WORLD.w - 140), y = 70 + rng() * (WORLD.h - 140); if (isBlocked(x, y, -30)) continue; const ek = pick(PS.extra); const eh = ek === 'log' ? 9 + rng() * 4 : 16 + rng() * 12; /* 통나무는 납작·넓어 작게 */ drawPropTex(c, ek, x, y, eh, PS.tint, rng() < .5); k++; } /* 로드 전이면 건너뛰되 난수 소비는 동일(로드 후 재빌드 시 배치 불변) */
     if (PS.dress.includes('campfire_logs')) { /* 스폰 캠프: 모닥불 + 통나무 + 그루터기 (텐트 모델은 정면이 벽처럼 구워져 제외) */
-      drawPropTex(c, 'campfire_logs', spawn.x - 90, spawn.y + 30, 20, null, false);
-      drawPropTex(c, 'log', spawn.x - 130, spawn.y + 56, 12, PS.tint, false);
-      drawPropTex(c, 'stump_round', spawn.x - 52, spawn.y + 62, 16, PS.tint, true);
+      const cx0 = n === 1 ? spawn.x - 90 : spawn.x + 40, cy0 = n === 1 ? spawn.y + 30 : spawn.y + 120; /* 2구역부터 스폰이 좌측 벽 옆 → 캠프는 스폰 아래쪽(테두리·관문 겹침 방지) */
+      drawPropTex(c, 'campfire_logs', cx0, cy0, 20, null, false);
+      drawPropTex(c, 'log', cx0 - 40, cy0 + 26, 12, PS.tint, false);
+      drawPropTex(c, 'stump_round', cx0 + 38, cy0 + 32, 16, PS.tint, true);
     }
     for (const g2 of gates) if (PS.dress.includes('sign')) drawPropTex(c, 'sign', g2.x + (g2.x < 800 ? 46 : -46), g2.y - 40, 30, PS.tint, g2.x > 800);
     const fenceKey = PS.dress.find(k => k.startsWith('fence'));
@@ -4765,7 +4802,7 @@ function buildZoneWorld(n) {
     for (const dk of PS.dress.filter(k => !/tent|campfire|sign|fence/.test(k)).slice(0, 2)) { const x = 200 + rng() * 1200, y = 180 + rng() * 800; if (!isBlocked(x, y, 40)) { const dh0 = dk === 'log' ? 13 : dk.startsWith('stump') ? 18 : 40; /* 통나무·그루터기는 납작해 작게 */ if (drawPropTex(c, dk, x, y, dh0, PS.tint, false)) cols.push({ x, y: y - 6, r: dh0 < 20 ? 10 : 16 }); } }
   }
   /* 6) 테두리 */
-  try { drawBrickBorder(c, P.style === 'volcano' ? 15 : P.style === 'abyss' ? 280 : P.style === 'snow' ? 205 : P.style === 'desert' ? 40 : 30, P.style === 'cave' ? .15 : .35); } catch (e) {}
+  try { drawBrickBorder(c, P.style === 'volcano' ? 15 : P.style === 'abyss' ? 280 : P.style === 'snow' ? 205 : P.style === 'desert' ? 40 : 30, P.style === 'cave' ? 12 : 30); } catch (e) {}
   worldColliders[pid] = cols;
   return cv2;
 }
@@ -4823,7 +4860,8 @@ const propSheet = k => heroSheet('prop_' + k.toLowerCase()); /* 베이크 서버
 let propRebuildT = 0;
 function onPropLoaded() { /* 프롭이 로드되면 현재 구역 지형을 다시 구워 벡터 폴백을 스프라이트로 교체 */
   clearTimeout(propRebuildT);
-  propRebuildT = setTimeout(() => { try { bioTexCache.delete(pageNum()); worldColliders[myMap()] = null; } catch (e) {} }, 400);
+  const allDone = PROP_KEYS.every(k => { const e = HERO_SHEETS['prop_' + k.toLowerCase()]; return e && (e.img || e.failed); });
+  propRebuildT = setTimeout(() => { try { bioTexCache.delete(pageNum()); worldColliders[myMap()] = null; } catch (e) {} }, allDone ? 0 : 1500); /* 46장이 따로따로 도착해도 재빌드는 한 번(전부 도착 시 즉시, 아니면 1.5초 정지 후) */
 }
 /* 바이옴별 프롭 세트 */
 const PROP_SETS = {
@@ -8286,6 +8324,7 @@ function updateHotbar(now) {
     const k = 'hb' + el;
     if (!id) { if (domCache[k] !== 'empty') { domCache[k] = 'empty'; nm.textContent = '-'; ic.textContent = '✦'; box.classList.remove('locked'); cdEl.style.display = 'none'; } return; }
     const def = skillDef(id);
+    if (!def) { if (domCache[k] !== 'empty') { domCache[k] = 'empty'; nm.textContent = '-'; ic.textContent = '✦'; box.classList.remove('locked'); cdEl.style.display = 'none'; } return; } /* 사라진 스킬 id가 바인딩돼 있으면 빈 칸(매 프레임 예외 방지) */
     const locked = !hasSkill(id);
     const remain = (skillCdUntil[id] || 0) - now;
     const cdSec = remain > 0 && !locked ? Math.ceil(remain / 1000) : 0;
@@ -9041,7 +9080,7 @@ function loopBody(t) {
       if (autoHunt && !attackTargetSimId && !dest) { /* 자동 사냥: 주변 루팅 먼저 → 없으면 가장 가까운 몬스터 */
         const loot = now < bagFullUntil ? null : nearestLoot(280); /* 가방 가득이면 루팅 경로 생략 → 사냥 계속 */
         if (loot) dest = { x: loot.x, y: loot.y, loot: loot.lid, t0: now };
-        else { const t = nearestSim(9999); if (t) attackTargetSimId = t.id; }
+        else { const t = nearestSim(9999, simSkip); if (t) { attackTargetSimId = t.id; targetT0 = now; } }
       }
       if (autoHunt) autoCombat(now);
     }
@@ -9049,8 +9088,11 @@ function loopBody(t) {
     else if (attackTargetSimId) {
       const s = sims.find(v => v.id === attackTargetSimId && v.map === myMap());
       if (!s || !s.alive) { attackTargetSimId = null; brake(dt); }
-      else if (Math.hypot(s.x - me.x, s.y - me.y) > atkRange()) glideToward(s.x, s.y, maxSpd, dt, 1);
-      else { brake(dt); tryAttack(now, s); }
+      else if (Math.hypot(s.x - me.x, s.y - me.y) > atkRange()) {
+        if (autoHunt) { if (!targetT0) targetT0 = now; else if (now - targetT0 > 8000) { simSkip[s.id] = now + 20000; attackTargetSimId = null; targetT0 = 0; } } /* 바위·연못 뒤 몬스터에 영원히 밀착하는 것 방지 */
+        glideToward(s.x, s.y, maxSpd, dt, 1);
+      }
+      else { targetT0 = now; brake(dt); tryAttack(now, s); }
     } else if (dest) {
       const dd = Math.hypot(dest.x - me.x, dest.y - me.y);
       if (dest.loot && (dd < 34 || !lootItems[dest.loot] || (lootSkip[dest.loot] || 0) > now || now - (dest.t0 || now) > 6000)) { /* 루팅 목적지: 줍기 반경 안 / 사라짐 / 건너뜀 / 6초 내 못 닿음(바위 속 등) */
@@ -9104,7 +9146,7 @@ if (meRef) updX(meRef, { x: me.x, y: me.y, hp: me.hp, ...(me.mp != null ? { mp: 
 
   if (me.dead && me.deadUntil && now > me.deadUntil) {
     me.dead = false; me.hp = maxHpOf();
-    me.x = SPAWN.x; me.y = SPAWN.y;
+    const sp0 = (pageDef(pageNum()) || {}).spawn || SPAWN; me.x = sp0.x; me.y = sp0.y; /* 현재 구역의 스폰 지점(2구역부터 좌측) */
     updX(meRef, { dead: false, hp: me.hp, x: me.x, y: me.y, lastSeen: now }).catch(() => {});
     $('deadOv').style.display = 'none';
     float(me.x, me.y - 40, '부활!', '#2ecc71');
@@ -9187,7 +9229,7 @@ function reviveNow() {
   }).then(ok => {
     reviving = false;
     if (!ok) { toast('💰 골드가 부족합니다'); return; }
-    me.gold -= cost;
+    /* 골드 차감은 트랜잭션(로컬 적용)에서 이미 반영됨 — 여기서 다시 빼면 이중 과금 */
     me.dead = false; me.hp = nhp;
     $('deadOv').style.display = 'none';
     rings.push({ x: me.x, y: me.y, r: 80, t: 0, max: 500, color: '255,215,0' });
@@ -9208,8 +9250,7 @@ function addStat(k) {
     return true;
   }).then(ok => {
     if (!ok) return;
-    sfx('buy');
-    me[k] = (me[k] || 0) + 1; /* 스냅샷 도착 전 낙관적 반영 — maxHpOf/maxMpOf 즉시 정확 */
+    sfx('buy'); /* 스탯 증가는 트랜잭션(로컬 적용)에서 이미 반영됨 — 재적용하면 +2 */
     if (k === 'stHp') {
       me.hp = Math.min(maxHpOf(), (me.hp || 0) + 15);
       updX(meRef, { hp: me.hp }).catch(() => {});
@@ -9403,7 +9444,7 @@ async function init() {
     me.y = Number.isFinite(d.y) ? d.y : SPAWN.y;
     me.hp = Number.isFinite(d.hp) ? clampN(d.hp, 1, maxHpOf()) : maxHpOf(); /* 저장된 HP 복원(이전엔 항상 기본값 100) */
     cam.x = me.x; cam.y = me.y;
-    restorePend(); /* 이전 세션에서 서버에 못 올린 진행분 */
+    restorePend(d); /* 이전 세션에서 서버에 못 올린 진행분(서버 lastSeen보다 새로울 때만) */
     await updX(meRef, { lastSeen: Date.now(), dead: false, ...(d.mp == null ? { mp: maxMpOf() } : {}) }).catch(() => {}); /* 한도 초과여도 로그인은 계속 */
     if (pendKeys.size) trySync(true);
   }
@@ -9416,7 +9457,7 @@ async function init() {
     const d = s.data();
     /* x/y/hp/mp/lastHurtAt는 로컬이 권위 — 자기 쓰기 에코가 이동/재생을 되돌리는 것 방지
        (이전의 '장착템=가방템 중복 제거' 클리너는 정당한 동일 아이템 사본까지 파괴해 제거함) */
-    const { x, y, hp, mp, lastHurtAt, ...rest } = d;
+    const { x, y, hp, mp, lastHurtAt, dead, deadUntil, ...rest } = d; /* 생사·부활시각도 로컬 권위(옛 서버값이 즉시 부활시키는 것 방지) */
     me = { ...me, ...rest };
     renderInvUI();
     try { /* 열려 있는 패널은 서버 상태로 다시 그림 — 수령/구매 직후 단계·잔액이 바로 맞게 */

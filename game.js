@@ -3422,6 +3422,177 @@ const BIOME_GRADE = [
   { f: 'hue-rotate(150deg) saturate(1.1) brightness(.55)', o: 'rgba(64,18,96,.42)' },      /* 마계 */
   { f: 'saturate(.9) brightness(1.18)', o: 'rgba(150,196,255,.30)' },                      /* 천공 */
 ];
+/* ===== 구역별 지형 생성 =====
+   100구역 각각을 결정적 시드로 생성: 바이옴 팔레트(땅·풀·나무·바위·물) + 구역 고유 지형 요소(연못/강/폭포/절벽/용암/구름틈)
+   + 장식 밀도(밀림·사막·설원…). 물·절벽·나무·바위는 worldColliders[pid]에 충돌체로 등록된다. */
+const BIOME_PAL = [
+  { ground: '#26492f', tints: ['#2a5034', '#224329', '#2d5538', '#1f3f26'], grass: ['rgba(46,94,58,.5)', 'rgba(64,120,74,.45)'], path: ['#8a7a52', '#6e6040'], trunk: '#4a3524', leaf: ['#173f28', '#1a4a2e', '#1f6039', '#257047', '#2e8455'], rock: ['#7a8288', '#5c646a', '#98a0a6'], flowers: ['#e8da7a', '#d98cb3', '#8ecae6', '#f4f1de'], water: ['#1d4e6b', '#2a6f95', '#7fc7e8'], style: 'meadow', trees: 30, bushes: 18, rocks: 16, grass: 2600 },
+  { ground: '#17301f', tints: ['#1a3a25', '#12281a', '#1f4229', '#0f2216'], grass: ['rgba(30,70,44,.5)', 'rgba(44,90,58,.45)'], path: ['#5f5540', '#4a4330'], trunk: '#332318', leaf: ['#0f2a1a', '#123421', '#164028', '#1a4d30', '#205a38'], rock: ['#5a6066', '#40464c', '#737a80'], flowers: ['#7a6fa8', '#4f6d8a', '#3f5f4a', '#8a8fa8'], water: ['#0e2f3a', '#164a58', '#4f8fa0'], style: 'jungle', trees: 62, bushes: 40, rocks: 14, grass: 3400 },
+  { ground: '#c9ac6e', tints: ['#d4b878', '#bfa062', '#dcc184', '#b3945a'], grass: ['rgba(150,120,70,.35)', 'rgba(170,140,90,.3)'], path: ['#a88d5a', '#8c7448'], trunk: '#6b5230', leaf: ['#5d7a3a', '#6b8a42', '#7a9a4c', '#86a656', '#94b262'], rock: ['#b39a70', '#8f7a56', '#cbb48c'], flowers: ['#e8b04a', '#d97a5a', '#f2d68a', '#c9a0c0'], water: ['#2a6f7a', '#3e95a3', '#a6dfe8'], style: 'desert', trees: 8, bushes: 6, rocks: 34, grass: 500, cacti: 26, dunes: 14 },
+  { ground: '#dfe8ef', tints: ['#eef4f8', '#cdd9e3', '#f5f9fb', '#c2d0dc'], grass: ['rgba(200,215,225,.5)', 'rgba(170,190,205,.4)'], path: ['#b9c2c9', '#9aa5ad'], trunk: '#4a3a30', leaf: ['#2f5a45', '#3a6b52', '#eaf2f6', '#f4f8fa', '#ffffff'], rock: ['#9fb0bd', '#7c8c99', '#c5d2dc'], flowers: ['#ffffff', '#cfe6f5', '#e8eef2', '#b9d7ea'], water: ['#5a86a8', '#7fb0d0', '#d6ecf7'], style: 'snow', trees: 26, bushes: 10, rocks: 20, grass: 900, snowPiles: 40, ice: 6 },
+  { ground: '#2b3b2a', tints: ['#324532', '#243424', '#3a4f36', '#1e2c1e'], grass: ['rgba(80,110,60,.5)', 'rgba(100,130,70,.45)'], path: ['#5a5a40', '#46462f'], trunk: '#3a3024', leaf: ['#2a4a2a', '#345a30', '#3e6a38', '#4a7a40', '#5a8a48'], rock: ['#6a7060', '#4e5448', '#868c7a'], flowers: ['#a0c060', '#c8d070', '#7fb07a', '#e0e090'], water: ['#243d2c', '#35583e', '#6f9a7a'], style: 'swamp', trees: 34, bushes: 30, rocks: 10, grass: 3000, reeds: 60, murk: true },
+  { ground: '#3a2622', tints: ['#472c26', '#2e1c19', '#52322b', '#241614'], grass: ['rgba(80,50,40,.5)', 'rgba(110,70,50,.4)'], path: ['#5a4a3c', '#463a2e'], trunk: '#2a1a14', leaf: ['#3a2a1a', '#4a3320', '#5a3c24', '#6a4a2c', '#7a5a34'], rock: ['#5a4a44', '#3e3230', '#7a6a62'], flowers: ['#ff7f27', '#ff4d2e', '#ffb347', '#e0522a'], water: ['#7a1e0c', '#c9440f', '#ffb04a'], style: 'volcano', trees: 10, bushes: 4, rocks: 40, grass: 600, lava: true, embers: 120 },
+  { ground: '#1d2130', tints: ['#242a3c', '#181c2a', '#2a3044', '#141826'], grass: ['rgba(60,70,100,.45)', 'rgba(80,90,120,.4)'], path: ['#3e4457', '#2f3444'], trunk: '#2a2e3a', leaf: ['#20263a', '#283048', '#303a56', '#3a4664', '#465274'], rock: ['#4a5062', '#343a4a', '#626a7e'], flowers: ['#6fb0ff', '#8ad0ff', '#4fd0c0', '#a0a8ff'], water: ['#0f1a2a', '#1a2e48', '#4f7aa8'], style: 'cave', trees: 0, bushes: 8, rocks: 56, grass: 400, stalagmites: 40, crystals: 24, walls: true },
+  { ground: '#4a4a44', tints: ['#555550', '#3f3f3a', '#606058', '#383834'], grass: ['rgba(110,110,80,.45)', 'rgba(130,130,100,.4)'], path: ['#6a6a60', '#54544a'], trunk: '#3a3028', leaf: ['#3a4a30', '#465a38', '#556a42', '#647a4c', '#748a58'], rock: ['#8a8a82', '#6a6a64', '#a8a8a0'], flowers: ['#c9c0a0', '#a89a78', '#d8d0b8', '#8a8878'], water: ['#2a3a3a', '#3e5a5a', '#7fa0a0'], style: 'ruin', trees: 14, bushes: 12, rocks: 22, grass: 1400, pillars: 22, walls: true },
+  { ground: '#24122e', tints: ['#2e1840', '#1a0c22', '#381c4c', '#140a1a'], grass: ['rgba(120,60,160,.45)', 'rgba(150,80,190,.4)'], path: ['#4a2a5a', '#3a2046'], trunk: '#2a1a34', leaf: ['#3a1a4a', '#4a2460', '#5a2e74', '#6a3a88', '#7a469c'], rock: ['#5a4a6a', '#40344e', '#7a6a8a'], flowers: ['#ff5fd0', '#c05fff', '#8a2fd4', '#ff8ae0'], water: ['#1a0a2a', '#3a1660', '#a04fff'], style: 'abyss', trees: 16, bushes: 10, rocks: 24, grass: 1200, cracks: 30, embers: 60 },
+  { ground: '#a9c8e8', tints: ['#bcd6f0', '#98b8dc', '#cfe2f5', '#8aaed4'], grass: ['rgba(200,225,245,.5)', 'rgba(170,205,235,.4)'], path: ['#d8e6f2', '#bccbdb'], trunk: '#6a5a4a', leaf: ['#6aa070', '#7ab080', '#8ac090', '#9ad0a0', '#aae0b0'], rock: ['#c8d8e8', '#a8bcd0', '#e4eef8'], flowers: ['#ffffff', '#ffe9a0', '#ffd0e8', '#d0ecff'], water: ['#2a4a7a', '#3a6aa8', '#8fc0f0'], style: 'sky', trees: 18, bushes: 12, rocks: 10, grass: 900, clouds: 40, gaps: 5 },
+];
+function zoneRng(n) { let t = (n * 2654435761 + 12345) >>> 0; return () => { t = (t + 0x6D2B79F5) >>> 0; let r = Math.imul(t ^ (t >>> 15), 1 | t); r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r; return ((r ^ (r >>> 14)) >>> 0) / 4294967296; }; }
+function buildZoneWorld(n) {
+  const bi = Math.min(9, Math.floor((n - 1) / 10)), P = BIOME_PAL[bi], tier = (n - 1) % 10;
+  const rng = zoneRng(n), R = (a, b) => a + rng() * (b - a);
+  const cv2 = document.createElement('canvas');
+  cv2.width = Math.round(WORLD.w * WSS); cv2.height = Math.round(WORLD.h * WSS);
+  const c = cv2.getContext('2d');
+  c.setTransform(WSS, 0, 0, WSS, 0, 0);
+  const cols = []; /* 충돌체 */
+  const blocked = []; /* 장식 배치 금지 영역 {x,y,r} */
+  const pid = pageId(n);
+  const spawn = n === 1 ? { x: 800, y: 600 } : { x: 170, y: 600 };
+  const mobZones = [{ x: 540, y: 430 }, { x: 1060, y: 770 }, { x: 800, y: 1000 }];
+  const gates = [{ x: 110, y: 600 }, { x: 1490, y: 600 }];
+  for (const z of [spawn, ...mobZones]) blocked.push({ x: z.x, y: z.y, r: 150 });
+  for (const g of gates) blocked.push({ x: g.x, y: g.y, r: 90 });
+  const isBlocked = (x, y, pad = 0) => blocked.some(b => Math.hypot(b.x - x, b.y - y) < b.r + pad);
+
+  /* 1) 땅 */
+  c.fillStyle = P.ground; c.fillRect(0, 0, WORLD.w, WORLD.h);
+  for (let i = 0; i < 90; i++) {
+    const x = rng() * WORLD.w, y = rng() * WORLD.h, r = 70 + rng() * 190;
+    const g = c.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, P.tints[i % 4] + '66'); g.addColorStop(1, 'transparent');
+    c.fillStyle = g; c.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  for (let y = 0; y < WORLD.h; y += 64) for (let x = 0; x < WORLD.w; x += 64) {
+    if ((x / 64 + y / 64) % 2 === 0) continue;
+    c.fillStyle = P.style === 'snow' || P.style === 'sky' ? 'rgba(0,0,0,.025)' : 'rgba(0,0,0,.045)'; c.fillRect(x, y, 64, 64);
+  }
+  if (P.dunes) for (let i = 0; i < P.dunes; i++) { /* 사막 사구: 밝은 호 */
+    const x = rng() * WORLD.w, y = rng() * WORLD.h, w = 120 + rng() * 260;
+    c.strokeStyle = 'rgba(255,240,200,.22)'; c.lineWidth = 10 + rng() * 14; c.lineCap = 'round';
+    c.beginPath(); c.moveTo(x - w / 2, y); c.quadraticCurveTo(x, y - w * .18, x + w / 2, y); c.stroke();
+    c.strokeStyle = 'rgba(120,90,40,.15)'; c.lineWidth = 4;
+    c.beginPath(); c.moveTo(x - w / 2, y + 8); c.quadraticCurveTo(x, y - w * .18 + 8, x + w / 2, y + 8); c.stroke();
+  }
+  if (P.cracks) for (let i = 0; i < P.cracks; i++) { /* 마계: 균열(빛나는 틈) */
+    let x = rng() * WORLD.w, y = rng() * WORLD.h;
+    c.strokeStyle = 'rgba(200,80,255,.55)'; c.lineWidth = 1.6; c.shadowColor = '#c05fff'; c.shadowBlur = 8;
+    c.beginPath(); c.moveTo(x, y);
+    for (let k = 0; k < 5; k++) { x += R(-40, 40); y += R(-30, 30); c.lineTo(x, y); }
+    c.stroke(); c.shadowBlur = 0;
+  }
+
+  /* 2) 물/용암/구름틈 — 구역 고유 요소 */
+  const water = (x, y, rx, ry, rot, lava) => {
+    const [deep, mid, light] = lava ? P.water : P.water;
+    c.save(); c.translate(x, y); c.rotate(rot);
+    /* 물가 (모래/진흙/얼음 테두리) */
+    c.fillStyle = P.style === 'snow' ? 'rgba(180,200,215,.9)' : P.style === 'volcano' ? 'rgba(30,18,14,.9)' : P.style === 'swamp' ? 'rgba(60,70,40,.9)' : 'rgba(190,170,120,.75)';
+    c.beginPath(); c.ellipse(0, 0, rx + 16, ry + 14, 0, 0, 7); c.fill();
+    const g = c.createRadialGradient(-rx * .2, -ry * .2, 4, 0, 0, Math.max(rx, ry));
+    g.addColorStop(0, mid); g.addColorStop(.7, deep); g.addColorStop(1, deep);
+    c.fillStyle = g; c.beginPath(); c.ellipse(0, 0, rx, ry, 0, 0, 7); c.fill();
+    c.strokeStyle = light; c.globalAlpha = .55; c.lineWidth = 1.6;
+    for (let i = 0; i < 6; i++) { c.beginPath(); c.ellipse(R(-rx * .5, rx * .5), R(-ry * .5, ry * .5), R(6, 22), R(2, 6), R(0, 3), 0, 7); c.stroke(); } /* 물결/용암 거품 */
+    if (lava) { c.globalAlpha = .35; c.shadowColor = '#ff7f27'; c.shadowBlur = 40; c.fillStyle = '#ff9a3a'; c.beginPath(); c.ellipse(0, 0, rx * .6, ry * .6, 0, 0, 7); c.fill(); c.shadowBlur = 0; }
+    c.globalAlpha = 1; c.restore();
+    /* 충돌체: 타원 둘레를 원으로 근사 */
+    const steps = Math.max(8, Math.round((rx + ry) / 18));
+    for (let i = 0; i < steps; i++) { const a = i / steps * Math.PI * 2; const px = Math.cos(a) * rx * .82, py = Math.sin(a) * ry * .82; const wx = x + px * Math.cos(rot) - py * Math.sin(rot), wy = y + px * Math.sin(rot) + py * Math.cos(rot); cols.push({ x: wx, y: wy, r: 18 }); }
+    cols.push({ x, y, r: Math.min(rx, ry) * .7 });
+    blocked.push({ x, y, r: Math.max(rx, ry) + 40 });
+  };
+  const river = (vertical) => { /* 지도를 가로지르는 강 + 다리(길과 만나는 지점) */
+    const [deep, mid, light] = P.water;
+    const pts = [];
+    if (vertical) { let x = R(560, 1040); for (let y = -20; y <= WORLD.h + 20; y += 60) { x += R(-40, 40); pts.push({ x: clampN(x, 380, 1220), y }); } }
+    else { let y = R(300, 900); for (let x = -20; x <= WORLD.w + 20; x += 60) { y += R(-30, 30); pts.push({ x, y: clampN(y, 220, 980) }); } }
+    const bridgeAt = vertical ? pts.reduce((b, p) => Math.abs(p.y - 600) < Math.abs(b.y - 600) ? p : b) : pts.reduce((b, p) => Math.abs(p.x - 800) < Math.abs(b.x - 800) ? p : b);
+    const stroke = (col, w) => { c.strokeStyle = col; c.lineWidth = w; c.lineCap = 'round'; c.lineJoin = 'round'; c.beginPath(); pts.forEach((p, i) => i ? c.lineTo(p.x, p.y) : c.moveTo(p.x, p.y)); c.stroke(); };
+    stroke(P.style === 'snow' ? 'rgba(180,200,215,.9)' : 'rgba(150,140,100,.7)', 92); stroke(deep, 68); stroke(mid, 40);
+    c.globalAlpha = .5; stroke(light, 3); c.globalAlpha = 1;
+    /* 다리 */
+    c.save(); c.translate(bridgeAt.x, bridgeAt.y); if (!vertical) c.rotate(Math.PI / 2);
+    c.fillStyle = '#6b4a2f'; c.fillRect(-44, -60, 88, 120); c.fillStyle = '#8a6b45';
+    for (let k = -54; k < 60; k += 12) c.fillRect(-40, k, 80, 8);
+    c.fillStyle = '#4a3524'; c.fillRect(-46, -60, 6, 120); c.fillRect(40, -60, 6, 120); c.restore();
+    for (const p of pts) { if (Math.hypot(p.x - bridgeAt.x, p.y - bridgeAt.y) < 70) continue; cols.push({ x: p.x, y: p.y, r: 30 }); blocked.push({ x: p.x, y: p.y, r: 80 }); }
+    blocked.push({ x: bridgeAt.x, y: bridgeAt.y, r: 90 });
+  };
+  const waterfall = () => { /* 상단 절벽에서 떨어지는 폭포 + 웅덩이 */
+    const x = R(500, 1100), cliffY = 120;
+    c.fillStyle = P.rock[1]; c.fillRect(x - 220, 60, 440, cliffY); c.fillStyle = P.rock[0]; c.fillRect(x - 220, 60, 440, 18);
+    c.fillStyle = 'rgba(0,0,0,.35)'; c.fillRect(x - 220, 60 + cliffY - 10, 440, 10);
+    for (let k = 0; k < 9; k++) { c.fillStyle = 'rgba(0,0,0,.18)'; c.fillRect(x - 210 + k * 48, 78, 3, cliffY - 30); }
+    const [deep, mid, light] = P.water;
+    const g = c.createLinearGradient(0, 78, 0, 60 + cliffY + 30); g.addColorStop(0, light); g.addColorStop(.5, mid); g.addColorStop(1, deep);
+    c.fillStyle = g; c.fillRect(x - 34, 78, 68, cliffY - 8);
+    c.fillStyle = 'rgba(255,255,255,.55)'; for (let k = 0; k < 10; k++) c.fillRect(x - 30 + k * 6.5, 78, 2, cliffY - 8 - (k % 3) * 8);
+    water(x, 60 + cliffY + 62, 120, 58, 0, false);
+    c.fillStyle = 'rgba(255,255,255,.35)'; for (let k = 0; k < 14; k++) { c.beginPath(); c.arc(x + R(-40, 40), 60 + cliffY + R(4, 30), R(2, 5), 0, 7); c.fill(); }
+    for (let cx = x - 210; cx <= x + 210; cx += 40) cols.push({ x: cx, y: 60 + cliffY / 2, r: cliffY / 2 });
+    blocked.push({ x, y: 60 + cliffY / 2, r: 300 });
+  };
+  const feat = rng();
+  if (P.lava) { for (let i = 0; i < 3 + (tier % 3); i++) { const x = R(200, 1400), y = R(200, 1050); if (!isBlocked(x, y, 120)) water(x, y, R(60, 130), R(40, 80), R(0, 3), true); } }
+  else if (P.gaps) { for (let i = 0; i < P.gaps; i++) { const x = R(150, 1450), y = R(150, 1050); if (!isBlocked(x, y, 140)) { /* 구름 사이 틈(낙하 불가 영역) */ const rx = R(70, 140), ry = rx * R(.5, .8); c.save(); c.translate(x, y); const g = c.createRadialGradient(0, 0, 4, 0, 0, rx); g.addColorStop(0, '#1a2a4a'); g.addColorStop(.85, '#2a4a7a'); g.addColorStop(1, 'rgba(255,255,255,.9)'); c.fillStyle = g; c.beginPath(); c.ellipse(0, 0, rx, ry, 0, 0, 7); c.fill(); c.restore(); const steps = 10; for (let k = 0; k < steps; k++) { const a = k / steps * 6.283; cols.push({ x: x + Math.cos(a) * rx * .8, y: y + Math.sin(a) * ry * .8, r: 18 }); } cols.push({ x, y, r: Math.min(rx, ry) * .7 }); blocked.push({ x, y, r: rx + 40 }); } } }
+  else if (P.style === 'cave') { /* 동굴: 지하 호수 가끔 */ if (feat < .5) { const x = R(300, 1300), y = R(250, 1000); if (!isBlocked(x, y, 140)) water(x, y, R(90, 150), R(60, 100), R(0, 3), false); } }
+  else if (feat < .30) { const x = R(300, 1300), y = R(250, 1000); if (!isBlocked(x, y, 140)) water(x, y, R(90, 170), R(60, 110), R(0, 3), false); }
+  else if (feat < .58) river(rng() < .5);
+  else if (feat < .72 && P.style !== 'desert') waterfall();
+  else if (P.style === 'swamp' || P.murk) { for (let i = 0; i < 3; i++) { const x = R(250, 1350), y = R(250, 1000); if (!isBlocked(x, y, 110)) water(x, y, R(50, 100), R(35, 70), R(0, 3), false); } }
+
+  /* 3) 길 (스폰 → 관문/보스) */
+  const pathTo = (sx, sy, tx, ty) => {
+    const mx = (sx + tx) / 2 + (rng() - .5) * 260, my = (sy + ty) / 2 + (rng() - .5) * 200;
+    c.strokeStyle = P.path[0]; c.lineWidth = 44; c.lineCap = 'round'; c.beginPath(); c.moveTo(sx, sy); c.quadraticCurveTo(mx, my, tx, ty); c.stroke();
+    c.strokeStyle = P.path[1]; c.lineWidth = 36; c.beginPath(); c.moveTo(sx, sy); c.quadraticCurveTo(mx, my, tx, ty); c.stroke();
+    for (let i = 0; i <= 24; i++) { const t = i / 24; const px = (1 - t) * (1 - t) * sx + 2 * (1 - t) * t * mx + t * t * tx, py = (1 - t) * (1 - t) * sy + 2 * (1 - t) * t * my + t * t * ty; blocked.push({ x: px, y: py, r: 34 }); c.fillStyle = 'rgba(0,0,0,.18)'; c.beginPath(); c.ellipse(px + R(-12, 12), py + R(-12, 12), R(2, 4.5), R(1.5, 3), R(0, 3), 0, 7); c.fill(); }
+  };
+  pathTo(spawn.x, spawn.y, 540, 430); pathTo(spawn.x, spawn.y, 1060, 770); pathTo(spawn.x, spawn.y, 800, 1000); pathTo(spawn.x, spawn.y, 1490, 600); if (n !== 1) pathTo(spawn.x, spawn.y, 110, 600);
+  for (const z of mobZones) { const g = c.createRadialGradient(z.x, z.y, 10, z.x, z.y, 210); g.addColorStop(0, 'rgba(0,0,0,.10)'); g.addColorStop(.75, 'rgba(0,0,0,.05)'); g.addColorStop(1, 'transparent'); c.fillStyle = g; c.beginPath(); c.arc(z.x, z.y, 210, 0, 7); c.fill(); }
+  c.strokeStyle = P.style === 'volcano' ? 'rgba(255,120,40,.35)' : 'rgba(120,60,40,.25)'; c.lineWidth = 6; c.beginPath(); c.arc(800, 1000, 130, 0, 7); c.stroke();
+
+  /* 4) 풀·꽃·잔디 */
+  for (let i = 0; i < P.grass; i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; if (blocked.some(b => b.r > 60 && Math.hypot(b.x - x, b.y - y) < b.r - 40)) continue; c.strokeStyle = P.grass[i % 2]; c.lineWidth = 1.4; c.beginPath(); c.moveTo(x, y); c.lineTo(x + R(-2, 2), y - R(3, 7)); c.stroke(); }
+  for (let i = 0; i < 240; i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; if (isBlocked(x, y, -60)) continue; const col = P.flowers[i % 4]; c.fillStyle = col; c.beginPath(); c.arc(x, y, 2.6, 0, 7); c.fill(); c.fillStyle = 'rgba(255,255,255,.55)'; c.beginPath(); c.arc(x, y, 1, 0, 7); c.fill(); }
+  if (P.reeds) for (let i = 0; i < P.reeds; i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; c.strokeStyle = 'rgba(110,140,70,.8)'; c.lineWidth = 2; c.beginPath(); c.moveTo(x, y); c.lineTo(x + R(-3, 3), y - R(14, 26)); c.stroke(); c.fillStyle = '#6b4a2f'; c.fillRect(x - 2, y - R(20, 26), 4, 7); }
+  if (P.embers) for (let i = 0; i < P.embers; i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; c.fillStyle = P.style === 'volcano' ? 'rgba(255,140,60,.75)' : 'rgba(200,120,255,.7)'; c.beginPath(); c.arc(x, y, R(.8, 2), 0, 7); c.fill(); }
+  if (P.snowPiles) for (let i = 0; i < P.snowPiles; i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; if (isBlocked(x, y, -30)) continue; c.fillStyle = 'rgba(255,255,255,.85)'; c.beginPath(); c.ellipse(x, y, R(14, 34), R(6, 12), 0, 0, 7); c.fill(); c.fillStyle = 'rgba(160,185,205,.5)'; c.beginPath(); c.ellipse(x, y + 4, R(14, 30), 4, 0, 0, Math.PI); c.fill(); }
+  if (P.clouds) for (let i = 0; i < P.clouds; i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; c.fillStyle = 'rgba(255,255,255,.35)'; for (let k = 0; k < 4; k++) { c.beginPath(); c.arc(x + k * 16 - 24, y + (k % 2) * 5, R(14, 26), 0, 7); c.fill(); } }
+
+  /* 5) 장식 오브젝트 (충돌체 포함) */
+  const tree = (x, y, s, pine) => {
+    cols.push({ x, y: y + 2, r: 13 * s });
+    c.fillStyle = 'rgba(0,0,0,.3)'; c.beginPath(); c.ellipse(x + 9 * s, y + 16 * s, 28 * s, 10 * s, 0, 0, 7); c.fill();
+    c.fillStyle = P.trunk; c.beginPath(); c.moveTo(x - 6.5 * s, y + 15 * s); c.quadraticCurveTo(x - 4 * s, y, x - 3.5 * s, y - 16 * s); c.lineTo(x + 3.5 * s, y - 16 * s); c.quadraticCurveTo(x + 4 * s, y, x + 6.5 * s, y + 15 * s); c.closePath(); c.fill();
+    if (pine) { for (let L = 2; L >= 0; L--) { const ly = y - 14 * s - L * 15 * s, lw = (26 - L * 6.5) * s; c.fillStyle = P.leaf[L]; c.beginPath(); c.moveTo(x - lw, ly + 14 * s); c.quadraticCurveTo(x, ly - 4 * s, x + lw, ly + 14 * s); c.quadraticCurveTo(x, ly + 8 * s, x - lw, ly + 14 * s); c.closePath(); c.fill(); c.strokeStyle = 'rgba(0,0,0,.22)'; c.lineWidth = 1.4; c.stroke(); } }
+    else { const cy = y - 32 * s; const blob = (bx, by, br, col) => { c.fillStyle = col; c.beginPath(); c.arc(bx, by, br, 0, 7); c.fill(); }; blob(x - 16 * s, cy + 7 * s, 18 * s, P.leaf[0]); blob(x + 16 * s, cy + 7 * s, 18 * s, P.leaf[0]); blob(x, cy + 10 * s, 19 * s, P.leaf[1]); blob(x, cy - 4 * s, 22 * s, P.leaf[2]); blob(x - 12 * s, cy - 12 * s, 14 * s, P.leaf[3]); blob(x + 12 * s, cy - 10 * s, 13 * s, P.leaf[3]); blob(x - 2 * s, cy - 16 * s, 12 * s, P.leaf[4]); for (let L2 = 0; L2 < 10; L2++) { const a = rng() * 6.283, rr2 = 10 + rng() * 16; blob(x + Math.cos(a) * rr2 * s * 1.15, cy - 4 * s + Math.sin(a) * rr2 * s * .6, 2.6 * s, 'rgba(255,255,255,.18)'); } }
+  };
+  const rock = (x, y, s) => { cols.push({ x, y, r: 10 * s }); c.fillStyle = 'rgba(0,0,0,.28)'; c.beginPath(); c.ellipse(x + 3, y + 8 * s, 14 * s, 6 * s, 0, 0, 7); c.fill(); const g = c.createLinearGradient(x - 11 * s, y - 12 * s, x + 11 * s, y + 8 * s); g.addColorStop(0, P.rock[2]); g.addColorStop(.5, P.rock[0]); g.addColorStop(1, P.rock[1]); c.fillStyle = g; c.beginPath(); c.moveTo(x - 12 * s, y + 6 * s); c.lineTo(x - 9 * s, y - 8 * s); c.lineTo(x - 1 * s, y - 13 * s); c.lineTo(x + 9 * s, y - 7 * s); c.lineTo(x + 13 * s, y + 4 * s); c.lineTo(x + 6 * s, y + 9 * s); c.closePath(); c.fill(); c.strokeStyle = 'rgba(0,0,0,.45)'; c.lineWidth = 1.2; c.stroke(); };
+  const bush = (x, y, s) => { cols.push({ x, y, r: 8 * s }); c.fillStyle = 'rgba(0,0,0,.22)'; c.beginPath(); c.ellipse(x + 3 * s, y + 7 * s, 13 * s, 5 * s, 0, 0, 7); c.fill(); c.fillStyle = P.leaf[2]; c.beginPath(); c.arc(x - 6 * s, y, 8 * s, 0, 7); c.arc(x + 6 * s, y - 1 * s, 9 * s, 0, 7); c.arc(x, y - 6 * s, 8 * s, 0, 7); c.fill(); c.fillStyle = P.leaf[4]; c.beginPath(); c.arc(x - 2 * s, y - 5 * s, 5.5 * s, 0, 7); c.fill(); if (rng() < .5) { c.fillStyle = P.flowers[0]; c.beginPath(); c.arc(x + 4 * s, y - 7 * s, 1.6 * s, 0, 7); c.arc(x - 5 * s, y - 3 * s, 1.6 * s, 0, 7); c.fill(); } };
+  const cactus = (x, y, s) => { cols.push({ x, y, r: 9 * s }); c.fillStyle = 'rgba(0,0,0,.25)'; c.beginPath(); c.ellipse(x + 3, y + 6 * s, 12 * s, 5 * s, 0, 0, 7); c.fill(); c.fillStyle = '#5d8a41'; c.strokeStyle = '#3f5c33'; c.lineWidth = 1.2; roundRect(c, x - 6 * s, y - 34 * s, 12 * s, 40 * s, 6 * s); c.fill(); c.stroke(); roundRect(c, x - 20 * s, y - 22 * s, 10 * s, 18 * s, 5 * s); c.fill(); c.stroke(); c.fillRect(x - 15 * s, y - 10 * s, 12 * s, 6 * s); roundRect(c, x + 10 * s, y - 28 * s, 10 * s, 20 * s, 5 * s); c.fill(); c.stroke(); c.fillRect(x + 4 * s, y - 12 * s, 10 * s, 6 * s); c.fillStyle = 'rgba(255,255,255,.35)'; for (let k = 0; k < 6; k++) c.fillRect(x - 1, y - 30 * s + k * 6 * s, 2, 2); };
+  const stalagmite = (x, y, s) => { cols.push({ x, y, r: 8 * s }); c.fillStyle = 'rgba(0,0,0,.35)'; c.beginPath(); c.ellipse(x + 2, y + 5 * s, 11 * s, 4 * s, 0, 0, 7); c.fill(); const g = c.createLinearGradient(x - 8 * s, y, x + 8 * s, y); g.addColorStop(0, P.rock[1]); g.addColorStop(.5, P.rock[2]); g.addColorStop(1, P.rock[1]); c.fillStyle = g; c.beginPath(); c.moveTo(x - 9 * s, y + 4 * s); c.lineTo(x - 3 * s, y - 30 * s); c.lineTo(x + 2 * s, y - 36 * s); c.lineTo(x + 5 * s, y - 28 * s); c.lineTo(x + 10 * s, y + 4 * s); c.closePath(); c.fill(); c.strokeStyle = 'rgba(0,0,0,.4)'; c.lineWidth = 1; c.stroke(); };
+  const crystal = (x, y, s) => { c.fillStyle = P.flowers[i2 % 4]; c.shadowColor = P.flowers[0]; c.shadowBlur = 10; c.beginPath(); c.moveTo(x, y - 18 * s); c.lineTo(x + 5 * s, y - 4 * s); c.lineTo(x + 2 * s, y + 4 * s); c.lineTo(x - 3 * s, y + 4 * s); c.lineTo(x - 6 * s, y - 6 * s); c.closePath(); c.fill(); c.shadowBlur = 0; c.fillStyle = 'rgba(255,255,255,.5)'; c.beginPath(); c.moveTo(x, y - 16 * s); c.lineTo(x + 2 * s, y - 6 * s); c.lineTo(x - 1 * s, y - 6 * s); c.closePath(); c.fill(); };
+  const pillar = (x, y, s, broken) => { cols.push({ x, y, r: 9 * s }); c.fillStyle = 'rgba(0,0,0,.3)'; c.beginPath(); c.ellipse(x + 4, y + 6 * s, 14 * s, 5 * s, 0, 0, 7); c.fill(); const h = (broken ? 22 : 46) * s; c.fillStyle = P.rock[0]; c.fillRect(x - 7 * s, y - h, 14 * s, h); c.fillStyle = P.rock[2]; c.fillRect(x - 7 * s, y - h, 4 * s, h); c.fillStyle = P.rock[1]; c.fillRect(x + 3 * s, y - h, 4 * s, h); c.fillStyle = P.rock[2]; c.fillRect(x - 9 * s, y - 4 * s, 18 * s, 5 * s); if (!broken) c.fillRect(x - 9 * s, y - h - 4 * s, 18 * s, 5 * s); else { c.fillStyle = P.rock[1]; c.beginPath(); c.moveTo(x - 7 * s, y - h); c.lineTo(x - 2 * s, y - h - 8 * s); c.lineTo(x + 3 * s, y - h - 3 * s); c.lineTo(x + 7 * s, y - h); c.closePath(); c.fill(); } };
+  let i2 = 0;
+  const place = (count, fn, pad, sMin, sMax) => { let tries = 0; for (let k = 0; k < count && tries < count * 6; tries++) { const x = 70 + rng() * (WORLD.w - 140), y = 90 + rng() * (WORLD.h - 180); if (isBlocked(x, y, pad)) continue; if (cols.some(o => Math.hypot(o.x - x, o.y - y) < 36)) continue; i2++; fn(x, y, sMin + rng() * (sMax - sMin)); k++; } };
+  if (P.walls) { /* 동굴/폐허: 가장자리 벽 덩이 */
+    for (let k = 0; k < 26; k++) { const side = k % 4, t = rng(); const x = side === 0 ? 40 + rng() * 60 : side === 1 ? WORLD.w - 40 - rng() * 60 : 60 + t * (WORLD.w - 120), y = side === 2 ? 40 + rng() * 50 : side === 3 ? WORLD.h - 40 - rng() * 50 : 60 + t * (WORLD.h - 120); if (isBlocked(x, y, 40)) continue; const r = 26 + rng() * 30; c.fillStyle = P.rock[1]; c.beginPath(); c.arc(x, y, r, 0, 7); c.fill(); c.fillStyle = P.rock[0]; c.beginPath(); c.arc(x - r * .2, y - r * .25, r * .6, 0, 7); c.fill(); cols.push({ x, y, r: r * .85 }); }
+  }
+  place(P.trees, (x, y, s) => tree(x, y, s, P.style === 'snow' ? rng() < .7 : rng() < .38), 20, .95, 1.6);
+  place(P.rocks, rock, 0, .8, 1.5);
+  place(P.bushes, bush, -20, .8, 1.3);
+  if (P.cacti) place(P.cacti, cactus, 0, .8, 1.3);
+  if (P.stalagmites) place(P.stalagmites, stalagmite, 0, .8, 1.5);
+  if (P.crystals) place(P.crystals, crystal, -40, .8, 1.4);
+  if (P.pillars) place(P.pillars, (x, y, s) => pillar(x, y, s, rng() < .55), 0, .9, 1.3);
+  if (P.ice) for (let k = 0; k < P.ice; k++) { const x = R(200, 1400), y = R(200, 1050); if (isBlocked(x, y, 60)) continue; c.fillStyle = 'rgba(200,235,255,.55)'; c.beginPath(); c.ellipse(x, y, R(50, 100), R(30, 60), R(0, 3), 0, 7); c.fill(); c.strokeStyle = 'rgba(255,255,255,.7)'; c.lineWidth = 1.5; c.beginPath(); c.moveTo(x - 30, y - 10); c.lineTo(x + 10, y + 5); c.lineTo(x + 35, y - 12); c.stroke(); }
+  /* 6) 테두리 */
+  try { drawBrickBorder(c, P.style === 'volcano' ? 15 : P.style === 'abyss' ? 280 : P.style === 'snow' ? 205 : P.style === 'desert' ? 40 : 30, P.style === 'cave' ? .15 : .35); } catch (e) {}
+  worldColliders[pid] = cols;
+  return cv2;
+}
 const bioTexCache = new Map(); /* 바이옴 텍스처는 크므로(데스크톱 3200x2400) 최근 2개만 보관 */
 function gradeWorld(src, gr) {
   const c = document.createElement('canvas');
@@ -3442,13 +3613,14 @@ function biomeIndexOf(mp) {
 }
 function getTex(mp) {
   if (mp === 'm2') { if (!mapTexs.m2) mapTexs.m2 = buildWorldM2(); return mapTexs.m2; }
-  const bi = biomeIndexOf(mp), gr = BIOME_GRADE[bi];
-  if (!gr) return worldTex;
-  let t = bioTexCache.get(bi);
+  const m = /^p(\d+)$/.exec(mp || '');
+  if (!m) return worldTex;
+  const n = +m[1];
+  let t = bioTexCache.get(n);
   if (!t) {
-    t = gradeWorld(worldTex, gr);
-    bioTexCache.set(bi, t);
-    if (bioTexCache.size > 2) bioTexCache.delete(bioTexCache.keys().next().value);
+    t = buildZoneWorld(n); /* 구역별 지형(팔레트·물·장식·충돌체) */
+    bioTexCache.set(n, t);
+    if (bioTexCache.size > 2) { const old = bioTexCache.keys().next().value; bioTexCache.delete(old); }
   }
   return t;
 }
@@ -7625,7 +7797,8 @@ async function init() {
   window.__DD = async id => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; const t0 = performance.now(); const r = await Promise.race([dealDamage(sm, 1), new Promise(rs => setTimeout(() => rs('dd-timeout'), 8000))]); return { r, ms: Math.round(performance.now() - t0) }; };
   window.__PING = () => Promise.race([updateDoc(meRef, { lastSeen: Date.now() }).then(() => 'write-ok'), new Promise(r => setTimeout(() => r('write-timeout'), 8000))]).catch(e => 'write-error:' + (e.code || e.message)); /* 진단: 쓰기 채널 상태 */
   window.__MOB = async id => { const g = await getDoc(doc(db, 'monsters', id)); return g.exists() ? g.data() : null; };
-  window.__DBG = () => ({ page: myPage(), frozenMs: hitStopUntil - Date.now(), activeIsChat: document.activeElement === chatInput, activeTag: document.activeElement && document.activeElement.tagName + '#' + document.activeElement.id, wmUp: worldMapOpen(), mouseDown, moveSpd: moveSpd(), atkRange: atkRange(), atkCdMs: atkCdOf(), sinceAtk: Date.now() - lastAttackAt, mapFading, snapN: window.__snapN || 0, snapAgoMs: window.__snapT ? Date.now() - window.__snapT : null, lastDmg: window.__lastDmg || null, lastErr: window.__lastErr || null, dead: !!me.dead, paused, ready, sheets: Object.fromEntries(Object.entries(HERO_SHEETS).map(([k, v]) => [k, v.img ? 'ok' : v.failed ? 'failed' : 'loading'])), target: attackTargetSimId, hover: hoverSimId, dest: dest && { x: Math.round(dest.x), y: Math.round(dest.y) }, zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),
+  window.__ZONETEX = n => { try { const t = getTex('p' + n); return { w: t.width, h: t.height, cols: (worldColliders['p' + n] || []).length }; } catch (e) { return { err: String(e && e.stack || e).slice(0, 300) }; } };
+  window.__DBG = () => ({ page: myPage(), colliders: (worldColliders[myMap()] || []).length, frozenMs: hitStopUntil - Date.now(), activeIsChat: document.activeElement === chatInput, activeTag: document.activeElement && document.activeElement.tagName + '#' + document.activeElement.id, wmUp: worldMapOpen(), mouseDown, moveSpd: moveSpd(), atkRange: atkRange(), atkCdMs: atkCdOf(), sinceAtk: Date.now() - lastAttackAt, mapFading, snapN: window.__snapN || 0, snapAgoMs: window.__snapT ? Date.now() - window.__snapT : null, lastDmg: window.__lastDmg || null, lastErr: window.__lastErr || null, dead: !!me.dead, paused, ready, sheets: Object.fromEntries(Object.entries(HERO_SHEETS).map(([k, v]) => [k, v.img ? 'ok' : v.failed ? 'failed' : 'loading'])), target: attackTargetSimId, hover: hoverSimId, dest: dest && { x: Math.round(dest.x), y: Math.round(dest.y) }, zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),
     me: { x: Math.round(me.x), y: Math.round(me.y), lv: me.lv, map: me.map, bag: me.bagSize, conq: JSON.stringify(me.conq || {}) },
     sims: sims.filter(s => s.alive).slice(0, 20).map(s => ({ id: s.id, x: Math.round(s.x), y: Math.round(s.y), d: Math.round(Math.hypot(s.x - me.x, s.y - me.y)), boss: s.boss, lv: simLevel(s) })) });
   $('loading').style.display = 'none';

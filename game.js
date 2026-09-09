@@ -533,12 +533,15 @@ function splitStack(id) {
 }
 
 const itemDefCache = {};
+let itemDefCacheN = 0;
+const ITEM_DEF_CACHE_MAX = 900; /* 랜덤롤(~pct)·강화(+lv) id로 키가 무한 증식하던 것 상한 — 초과 시 통째로 비움(순수 파생 캐시라 안전) */
 function getItem(id) {
   id = String(id);
   const star = id.indexOf('*');
   if (star >= 0) id = id.slice(0, star);
   const cacheKey = id;
   if (itemDefCache[cacheKey]) return itemDefCache[cacheKey];
+  if (itemDefCacheN > ITEM_DEF_CACHE_MAX) { for (const k in itemDefCache) delete itemDefCache[k]; itemDefCacheN = 0; }
   /* 스탯 랜덤롤 접미사 (~85~115): 같은 등급도 능력치 상이 */
   let pct = 100;
   const tilde = id.indexOf('~');
@@ -572,7 +575,7 @@ function getItem(id) {
     out._pct = pct;
     out.name = `${out.name} (${pct}%)`;
   }
-  itemDefCache[cacheKey] = out;
+  itemDefCache[cacheKey] = out; itemDefCacheN++;
   return out;
 }
 /* 아이템 파워 점수 (등급+스탯+강화+롤 종합) */
@@ -698,7 +701,7 @@ let setMemoKey = '', setMemoVal = null;
 let setPrevCounts = {}; /* 세트 발동 토스트용 이전 장착 카운트 */
 function setBonus() {
   /* 매 프레임 스탯 계산에서 호출되므로 장착이 바뀔 때만 재계산 */
-  const key = JSON.stringify(me.equipped || {});
+  const eq = me.equipped || {}; const key = eq.weapon + '|' + eq.armor + '|' + eq.helmet + '|' + eq.pants + '|' + eq.gloves + '|' + eq.boots + '|' + eq.bracelet + '|' + eq.necklace + '|' + eq.ring; /* 슬롯 고정(9칸) — JSON.stringify보다 가벼운 키 */
   if (key === setMemoKey && setMemoVal) return setMemoVal;
   setMemoKey = key;
   const counts = equippedSetCounts();
@@ -1671,10 +1674,18 @@ function watchMonsters() {
   });
 }
 
+let unsubPlayers = null;
 function watchPlayers() {
-  onSnapSafe('players', collection(db, 'players'), snap => {
-    snap.forEach(dc => { if (dc.id !== uid) others[dc.id] = dc.data(); });
-  });
+  /* 현재 구역 플레이어만 구독 — 전체 players 컬렉션 무필터 구독은 접속자가 늘수록 읽기·메모리가 무한 증가했다.
+     스냅샷마다 others를 통째로 다시 만들어(현 구역 한정) 떠난 플레이어가 쌓이지 않게 한다 */
+  if (unsubPlayers) unsubPlayers();
+  others = {}; othersPrev = {};
+  const sub = () => unsubPlayers = onSnapshot(query(collection(db, 'players'), where('map', '==', myPage())), snap => {
+    const next = {};
+    snap.forEach(dc => { if (dc.id !== uid) next[dc.id] = dc.data(); });
+    others = next;
+  }, err => { console.error('[players]', err); noteErr(err); setTimeout(() => { if (unsubPlayers) watchPlayers(); }, 5000); });
+  sub();
 }
 
 let unsubLoot = null;
@@ -2928,7 +2939,7 @@ function usePotion(kind) {
     if (!snap.exists()) return;
     const p = snap.data();
     const inv = { ...(p.inv || {}) };
-    for (const pid of ids) {
+    for (const pid of order) { /* 선호 물약(potPref)을 먼저 소비 — 이전엔 order를 만들고도 ids를 돌아 무시됐다 */
       for (const [k, v] of Object.entries(inv)) {
         const [bid, cnt] = splitStack(v);
         if (normId(bid) !== pid) continue;
@@ -4383,6 +4394,7 @@ function gotoPage(n) {
     if (mn) mn.textContent = pageDef(n).name;
     watchMonsters();
     watchLoot(); /* 루팅도 구역별 구독 재설정 */
+    watchPlayers(); /* 플레이어 구독도 새 구역 기준으로 재설정 */
     sysMsg(`${myName}님이 ${pageDef(n).name}(으)로 이동했습니다.`);
     try {
       const b = bandOfPage(n);
@@ -7585,7 +7597,8 @@ function updateHotbar(now) {
     const box = $(el);
     if (!box) return;
     const id = ids[i];
-    const nm = box.querySelector('.nm'), ic = box.querySelector('.ic2'), cdEl = box.querySelector('.cd');
+    const refs = box._hbRefs || (box._hbRefs = { nm: box.querySelector('.nm'), ic: box.querySelector('.ic2'), cdEl: box.querySelector('.cd') }); /* 자식 ref 1회만 조회 — 매 프레임 15회 querySelector 제거 */
+    const nm = refs.nm, ic = refs.ic, cdEl = refs.cdEl;
     const k = 'hb' + el;
     if (!id) { if (domCache[k] !== 'empty') { domCache[k] = 'empty'; nm.textContent = '-'; ic.textContent = '✦'; box.classList.remove('locked'); cdEl.style.display = 'none'; } return; }
     const def = skillDef(id);

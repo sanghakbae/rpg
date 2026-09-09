@@ -2323,9 +2323,127 @@ function buyPotion(itemId = 'potion') {
 /* ================= 퀘스트 ================= */
 const qCounter = key => key === 'lv' ? me.lv : (me.q || {})[key] || 0;
 
+/* ================= 일일 콘텐츠 (출석 · 일일 퀘스트) ================= */
+const todayStr = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+const dayNum = str => { const [y, m, d] = str.split('-').map(Number); return Math.floor(Date.UTC(y, m - 1, d) / 86400000); };
+/* 7일 출석 보상 (순환) */
+const DAILY_ATTEND = [
+  { gold: 300 }, { gold: 500 }, { gold: 700, gem: 2 }, { gold: 1000 }, { gold: 1500, gem: 3 }, { gold: 2000 }, { gold: 4000, gem: 8, item: 'scroll_adv' },
+];
+const DAILY_QUEST_POOL = [
+  { id: 'dq_kill', type: 'total', goal: 30, icon: '⚔️', name: '몬스터 30마리 처치', gold: 600, gem: 1 },
+  { id: 'dq_kill2', type: 'total', goal: 60, icon: '⚔️', name: '몬스터 60마리 처치', gold: 1000, gem: 2 },
+  { id: 'dq_boss', type: 'boss', goal: 1, icon: '👑', name: '보스 1마리 처치', gold: 900, gem: 2 },
+  { id: 'dq_gold', type: 'gold_earned', goal: 3000, icon: '💰', name: '골드 3,000 획득', gold: 500, gem: 1 },
+  { id: 'dq_enh', type: 'enh', goal: 3, icon: '🔨', name: '장비 3회 강화 성공', gold: 700, gem: 1 },
+  { id: 'dq_uniq', type: 'uniq', goal: 1, icon: '★', name: '유니크 몬스터 처치', gold: 1200, gem: 3 },
+  { id: 'dq_item', type: 'items', goal: 15, icon: '🎒', name: '아이템 15개 획득', gold: 500, gem: 1 },
+];
+/* 날짜가 바뀌면 일일 초기화: 연속 출석 유지/리셋, 일일 퀘스트 3종 선택, 카운터 기준선 스냅샷 */
+function checkDaily() {
+  const t = todayStr();
+  const d = me.daily || {};
+  if (d.date === t) return;
+  const consecutive = d.date && (dayNum(t) - dayNum(d.date) === 1);
+  const base = { total: (me.q || {}).total || 0, boss: (me.q || {}).boss || 0, gold_earned: (me.q || {}).gold_earned || 0, enh: (me.q || {}).enh || 0, uniq: (me.q || {}).uniq || 0, items: (me.q || {}).items || 0 };
+  /* 날짜 해시로 3종 선택(같은 날 재접속 시 동일) */
+  let h = 0; for (const c of t) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  const pool = [...DAILY_QUEST_POOL];
+  const qs = [], usedType = new Set();
+  for (let guard = 0; qs.length < 3 && pool.length; guard++) {
+    const idx = (h + guard * 7) % pool.length;
+    const q = pool.splice(idx, 1)[0];
+    if (usedType.has(q.type)) continue; /* 같은 종류(예: 처치) 중복 방지 */
+    usedType.add(q.type); qs.push(q.id);
+  }
+  me.daily = { date: t, streak: consecutive ? (d.streak || 0) : 0, attended: false, base, quests: qs, claimed: {} };
+  updX(meRef, { daily: me.daily }).catch(() => {});
+}
+const dailyQDef = id => DAILY_QUEST_POOL.find(q => q.id === id);
+const dailyQProgress = dq => Math.max(0, qCounter(dq.type) - ((me.daily || {}).base || {})[dq.type] || 0);
+function claimAttend() {
+  if ((me.daily || {}).attended) return;
+  runTx(db, async tx => {
+    const snap = await tx.get(meRef); if (!snap.exists()) return null;
+    const p = snap.data();
+    const dl = p.daily || {};
+    if (dl.date !== todayStr() || dl.attended) return null;
+    const streak = (dl.streak || 0) + 1;
+    const rw = DAILY_ATTEND[(streak - 1) % 7];
+    const upd = { gold: (p.gold || 0) + rw.gold, daily: { ...dl, attended: true, streak } };
+    if (rw.gem) upd.gem = (p.gem || 0) + rw.gem;
+    if (rw.item) { const r = computeAddToInv(p, rw.item); if (r) Object.assign(upd, r.upd); }
+    tx.update(meRef, upd);
+    return { streak, rw };
+  }).then(res => {
+    if (!res) return;
+    sfx('levelup'); enhFxFx(true);
+    rings.push({ x: me.x, y: me.y, r: 90, t: 0, max: 600, color: '255,215,0' });
+    fxSparks(me.x, me.y - 10, 20, '#ffd700', 190);
+    toast(`📅 ${res.streak}일차 출석! 💰${res.rw.gold}${res.rw.gem ? ' 💎' + res.rw.gem : ''}${res.rw.item ? ' · 📜 고급 강화 주문서' : ''}`, 'sysq');
+    renderQuests();
+  }).catch(() => {});
+}
+function claimDailyQuest(id) {
+  const dq = dailyQDef(id); if (!dq) return;
+  if (dailyQProgress(dq) < dq.goal) return;
+  runTx(db, async tx => {
+    const snap = await tx.get(meRef); if (!snap.exists()) return null;
+    const p = snap.data();
+    const dl = p.daily || {};
+    if (dl.date !== todayStr() || (dl.claimed || {})[id]) return null;
+    if (dailyQProgress(dq) < dq.goal) return null;
+    const claimed = { ...(dl.claimed || {}), [id]: true };
+    const upd = { gold: (p.gold || 0) + dq.gold, gem: (p.gem || 0) + (dq.gem || 0), daily: { ...dl, claimed } };
+    tx.update(meRef, upd);
+    return true;
+  }).then(ok => {
+    if (!ok) return;
+    sfx('coin');
+    toast(`✅ 일일 「${esc(dq.name)}」 완료! 💰${dq.gold}${dq.gem ? ' 💎' + dq.gem : ''}`, 'sysq');
+    float(me.x, me.y - 40, '일일 완료!', '#7fe3a0');
+    renderQuests();
+  }).catch(() => {});
+}
+function dailyPanelHtml() {
+  checkDaily();
+  const dl = me.daily || {};
+  const streak = dl.streak || 0;
+  const cycleDay = streak % 7; /* 다음에 받을 칸(0-based). attended면 이번 칸은 받은 것 */
+  const nextIdx = dl.attended ? (streak % 7) : (streak % 7);
+  /* 출석 캘린더 7칸 */
+  let cal = '<div class="dcal">';
+  for (let i = 0; i < 7; i++) {
+    const rw = DAILY_ATTEND[i];
+    const got = dl.attended ? (i < ((streak - 1) % 7 + 1)) : (i < (streak % 7));
+    const isNext = !dl.attended && i === (streak % 7);
+    cal += `<div class="dcell ${got ? 'got' : ''} ${isNext ? 'next' : ''}"><div class="dcd">${i + 1}일</div><div class="dcr">💰${rw.gold >= 1000 ? (rw.gold / 1000) + 'k' : rw.gold}${rw.gem ? '<br>💎' + rw.gem : ''}${rw.item ? '<br>📜' : ''}</div></div>`;
+  }
+  cal += '</div>';
+  const attendBtn = dl.attended
+    ? `<button class="claimBtn" disabled>출석 완료</button>`
+    : `<button class="claimBtn ready" id="attendBtn">${streak + 1}일차 출석</button>`;
+  let dqRows = '';
+  for (const id of (dl.quests || [])) {
+    const dq = dailyQDef(id); if (!dq) continue;
+    const cur = Math.min(dailyQProgress(dq), dq.goal), done = dailyQProgress(dq) >= dq.goal, claimed = (dl.claimed || {})[id];
+    const pct = clampN(cur / dq.goal * 100, 0, 100);
+    dqRows += `<div class="srow ${claimed ? 'qdone' : ''}">
+      <div class="si">${dq.icon}</div>
+      <div class="sm"><div class="st">${esc(dq.name)}</div>
+        <div class="sd">${cur}/${dq.goal} · 보상 💰${dq.gold}${dq.gem ? ' 💎' + dq.gem : ''}</div>
+        <div class="qbar"><div style="width:${pct}%"></div></div></div>
+      ${claimed ? '<button class="claimBtn" disabled>완료</button>' : `<button class="claimBtn ${done ? 'ready' : ''}" data-dq="${id}" ${done ? '' : 'disabled'}>수령</button>`}
+    </div>`;
+  }
+  return `<div class="dailyBox"><div class="dailyHd">📅 출석 체크 <span>연속 ${streak}일</span></div>${cal}<div style="text-align:center;margin:8px 0">${attendBtn}</div>
+    <div class="dailyHd">🎯 오늘의 일일 퀘스트 <span>매일 자정 초기화</span></div>${dqRows}</div>
+    <div class="dailyHd" style="margin-top:12px">📜 도전 퀘스트</div>`;
+}
+
 function renderQuests() {
   const body = $('questBody');
-  body.innerHTML = QUESTS.map(q => {
+  body.innerHTML = dailyPanelHtml() + QUESTS.map(q => {
     const claimed = (me.qc || {})[q.id];
     const needOk = !q.need || (me.qc || {})[q.need];
     const cur = qCounter(q.goal[0]);
@@ -2344,6 +2462,8 @@ function renderQuests() {
     </div>`;
   }).join('');
   body.querySelectorAll('[data-q]').forEach(b => b.onclick = () => claimQuest(b.dataset.q));
+  const ab = $('attendBtn'); if (ab) ab.onclick = claimAttend;
+  body.querySelectorAll('[data-dq]').forEach(b => b.onclick = () => claimDailyQuest(b.dataset.dq));
 }
 
 function claimQuest(id) {
@@ -8778,7 +8898,7 @@ async function init() {
       name: myName, cls: choice.cls, x: SPAWN.x, y: SPAWN.y,
       lv: 1, exp: 0, hp: c.hp, maxHp: c.hp, atk: c.atk,
       gold: 100, inv: {}, equipped: {}, skills: {}, q: {}, qc: {},
-      dead: false, color: colorOf(uid), map: 'p1', conq: {}, dex: {}, statPts: 0, lastSeen: Date.now(), mp: maxMpOf(), gem: 0, achv: {}, title: '',
+      dead: false, color: colorOf(uid), map: 'p1', conq: {}, dex: {}, statPts: 0, lastSeen: Date.now(), mp: maxMpOf(), gem: 0, achv: {}, title: '', daily: {},
     });
     me = { ...me, cls: choice.cls, map: 'p1', gold: 100, hp: c.hp, maxHp: c.hp, atk: c.atk }; /* 스냅샷 도착 전 로컬 동기화 */
     await sysMsg(`${myName}(${c.name})님이 월드에 입장했습니다.`);
@@ -8821,6 +8941,7 @@ async function init() {
   watchChat();
   watchRank();
 
+  try { checkDaily(); } catch (e) {} /* 일일 초기화(출석/일일퀘) */
   ready = true;
   loginAt = Date.now();
   window.__HIT = (sx, sy) => { const r = simAt(sx, sy); return { world: r.w, hit: r.s ? { id: r.s.id, kind: r.s.kind, x: Math.round(r.s.x), y: Math.round(r.s.y) } : null }; };

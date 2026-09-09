@@ -197,6 +197,15 @@
   .srow.act { border-left: 3px solid rgba(255,180,60,.55); }
   .srow.pas { border-left: 3px solid rgba(127,199,255,.55); }
   .astage { font-size: 10px; color: #ffd700; margin-left: 4px; }
+  .dailyBox { margin-bottom: 6px; }
+  .dailyHd { font-size: 12.5px; font-weight: bold; color: #ffd700; margin: 6px 2px 8px; border-bottom: 1px solid rgba(255,215,0,.2); padding-bottom: 5px; }
+  .dailyHd span { color: #778; font-weight: normal; font-size: 10px; margin-left: 4px; }
+  .dcal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+  .dcell { background: rgba(255,255,255,.04); border: 1px solid #445; border-radius: 6px; padding: 5px 2px; text-align: center; }
+  .dcell .dcd { font-size: 10px; color: #99a; } .dcell .dcr { font-size: 9.5px; color: #cdb; margin-top: 2px; line-height: 1.3; }
+  .dcell.got { background: rgba(46,204,113,.14); border-color: #2ecc71; opacity: .7; }
+  .dcell.next { border-color: #ffd700; box-shadow: 0 0 8px rgba(255,215,0,.4); }
+  @media (max-width: 640px) { .dcell .dcr { font-size: 8px; } .dcell .dcd { font-size: 8.5px; } }
   .achvTitles { margin: 2px 2px 10px; padding: 8px 10px; background: rgba(255,215,0,.05); border: 1px solid rgba(255,215,0,.2); border-radius: 8px; }
   .atHd { font-size: 12px; font-weight: bold; color: #ffd700; margin-bottom: 6px; } .atHd span { color: #778; font-weight: normal; font-size: 10px; margin-left: 4px; }
   .atList { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -701,7 +710,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=120"
+<script type="module" src="game.js?v=121"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

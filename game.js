@@ -2556,7 +2556,8 @@ function claimAttend() {
     const snap = await tx.get(meRef); if (!snap.exists()) return null;
     const p = snap.data();
     const dl = p.daily || {};
-    if (dl.date !== todayStr() || dl.attended) return null;
+    if (dl.date !== todayStr()) return { stale: true };
+    if (dl.attended) return { already: true };
     const streak = (dl.streak || 0) + 1;
     const rw = DAILY_ATTEND[(streak - 1) % 7];
     const upd = { gold: (p.gold || 0) + rw.gold, daily: { ...dl, attended: true, streak } };
@@ -2566,12 +2567,15 @@ function claimAttend() {
     return { streak, rw };
   }).then(res => {
     if (!res) return;
+    if (res.stale) { checkDaily(); renderQuests(); toast('날짜가 바뀌어 일일 정보를 새로 고쳤습니다'); return; }
+    if (res.already) { me.daily = { ...(me.daily || {}), attended: true }; renderQuests(); toast('오늘 출석은 이미 완료했습니다'); return; }
+    me.daily = { ...(me.daily || {}), attended: true, streak: res.streak }; /* 스냅샷 전에 즉시 확정(대입) */
     sfx('levelup'); enhFxFx(true);
     rings.push({ x: me.x, y: me.y, r: 90, t: 0, max: 600, color: '255,215,0' });
     fxSparks(me.x, me.y - 10, 20, '#ffd700', 190);
     toast(`📅 ${res.streak}일차 출석! 💰${res.rw.gold}${res.rw.gem ? ' 💎' + res.rw.gem : ''}${res.rw.item ? ' · 📜 고급 강화 주문서' : ''}`, 'sysq');
     renderQuests();
-  }).catch(() => {});
+  }).catch(e => { toast('⚠️ 출석 처리 실패: ' + esc((e && e.code) || e)); });
 }
 function claimDailyQuest(id) {
   const dq = dailyQDef(id); if (!dq) return;
@@ -2580,14 +2584,19 @@ function claimDailyQuest(id) {
     const snap = await tx.get(meRef); if (!snap.exists()) return null;
     const p = snap.data();
     const dl = p.daily || {};
-    if (dl.date !== todayStr() || (dl.claimed || {})[id]) return null;
-    if (dailyQProgress(dq) < dq.goal) return null;
+    if (dl.date !== todayStr()) return 'stale';
+    if ((dl.claimed || {})[id]) return 'already';
+    if (dailyQProgress(dq) < dq.goal) return 'short';
     const claimed = { ...(dl.claimed || {}), [id]: true };
     const upd = { gold: (p.gold || 0) + dq.gold, gem: (p.gem || 0) + (dq.gem || 0), daily: { ...dl, claimed } };
     tx.update(meRef, upd);
     return true;
   }).then(ok => {
     if (!ok) return;
+    if (ok === 'stale') { checkDaily(); renderQuests(); return; }
+    if (ok === 'already') { me.daily = { ...(me.daily || {}), claimed: { ...((me.daily || {}).claimed || {}), [id]: true } }; renderQuests(); toast('이미 수령한 일일 퀘스트입니다'); return; }
+    if (ok === 'short') { toast('아직 조건을 달성하지 않았습니다'); renderQuests(); return; }
+    me.daily = { ...(me.daily || {}), claimed: { ...((me.daily || {}).claimed || {}), [id]: true } }; /* 즉시 확정(대입) */
     sfx('coin');
     toast(`✅ 일일 「${esc(dq.name)}」 완료! 💰${dq.gold}${dq.gem ? ' 💎' + dq.gem : ''}`, 'sysq');
     float(me.x, me.y - 40, '일일 완료!', '#7fe3a0');
@@ -2770,24 +2779,37 @@ function claimAchv(id) {
     const snap = await tx.get(meRef); if (!snap.exists()) return null;
     const p = snap.data();
     const cl = (p.achv || {})[id] || 0;
-    if (cl >= a.tiers.length) return null;
-    if (achvValue(a.stat) < a.tiers[cl][0]) return null; /* achvValue는 me(로컬) 기준 — 로컬 권위, 서버 카운터와 동일 */
+    if (cl >= a.tiers.length) return { done: true };
+    const val = Math.max(achvValue(a.stat), achvValueOf(p, a.stat)); /* 로컬·서버 카운터 중 큰 값 — 어느 쪽이 늦어도 정당한 수령이 막히지 않게 */
+    if (val < a.tiers[cl][0]) return { short: a.tiers[cl][0] - val };
     const stage = a.tiers[cl];
     const achv = { ...(p.achv || {}), [id]: cl + 1 };
     const upd = { achv, gold: (p.gold || 0) + stage[1] };
     if (stage[2]) upd.gem = (p.gem || 0) + stage[2];
     tx.update(meRef, upd);
-    return stage;
-  }).then(stage => {
-    if (!stage) return;
-    /* me.achv/me.gem은 runTx(오프라인=localTx가 즉시 반영 / 온라인=meRef 스냅샷이 반영)가 갱신 — 여기서 또 더하면 이중 증가 */
+    return { stage, next: cl + 1 };
+  }).then(r => {
+    if (!r) return;
+    if (r.done) { toast('이미 모든 단계를 수령했습니다'); renderAchv(); return; }
+    if (r.short) { toast(`조건 미달 — ${r.short.toLocaleString()} 남음`); renderAchv(); return; }
+    const stage = r.stage;
+    /* 단계는 '대입'으로 즉시 확정(증가 아님 → 오프라인 localTx가 이미 반영했어도 이중 없음). 골드/보석은 스냅샷·localTx가 반영 */
+    me.achv = { ...(me.achv || {}), [id]: Math.max((me.achv || {})[id] || 0, r.next) };
     sfx('levelup'); enhFxFx(true);
     rings.push({ x: me.x, y: me.y, r: 90, t: 0, max: 600, color: '255,215,0' });
     fxSparks(me.x, me.y - 10, 22, '#ffd700', 200);
     toast(`🏆 업적 「${esc(a.name)}」 달성! 💰${stage[1]}${stage[2] ? ' 💎' + stage[2] : ''}${stage[3] ? ' · 칭호 <b>' + esc(TITLES[stage[3]].name) + '</b> 획득!' : ''}`, 'sysq');
     if (stage[3]) sysMsg(`🎖️ ${myName}님이 칭호 「${TITLES[stage[3]].name}」을(를) 획득했습니다!`, 'q');
     renderAchv();
-  }).catch(() => {});
+  }).catch(e => { window.__lastErr = { at: Date.now(), where: 'claimAchv', code: e && e.code, msg: String(e && e.message || e) }; toast('⚠️ 업적 수령 실패: ' + esc((e && e.code) || (e && e.message) || e)); });
+}
+/* 서버 문서 p 기준 업적 진행값 (로컬 me와 비교용) */
+function achvValueOf(p, stat) {
+  const q = p.q || {};
+  if (stat === 'lv') return p.lv || 1;
+  if (stat === 'zones') return Object.keys(p.conq || {}).length;
+  if (stat === 'dex') return Object.keys(p.dex || {}).length;
+  return q[stat] || 0;
 }
 /* 칭호 표시 문자열 */
 const titleTag = t => (t && TITLES[t]) ? `[${TITLES[t].name}] ` : '';
@@ -9223,6 +9245,11 @@ async function init() {
     const { x, y, hp, mp, lastHurtAt, ...rest } = d;
     me = { ...me, ...rest };
     renderInvUI();
+    try { /* 열려 있는 패널은 서버 상태로 다시 그림 — 수령/구매 직후 단계·잔액이 바로 맞게 */
+      if ($('achvPanel')?.classList.contains('open')) renderAchv();
+      if ($('questPanel')?.classList.contains('open')) renderQuests();
+      if ($('shopPanel')?.classList.contains('open')) renderShop();
+    } catch (e) {}
   });
 
   watchPlayers();

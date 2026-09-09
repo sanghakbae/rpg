@@ -223,6 +223,12 @@ const itemIcon = raw => ITEM_ICONS[splitStack(raw)[0]] || SLOT_ICONS[getItem(raw
    game-icons(CC BY 3.0) 실루엣 SVG를 128px 캔버스에 아이템 색으로 채색 + 베벨·스펙큘러·외곽선·등급 후광을 얹어
    가방/장비/툴팁/퀵슬롯/바닥 루팅 전부에 같은 이미지를 쓴다. 예전 ASCII 픽셀아트는 SVG 로드 전 폴백으로만 남김 */
 const ITEM_ICON_PX = 128;
+if (typeof CanvasRenderingContext2D !== 'undefined' && !CanvasRenderingContext2D.prototype.roundRect) { /* 구형 인앱 WebKit 폴리필 */
+  CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
+    r = Math.min(Array.isArray(r) ? r[0] : (r || 0), w / 2, h / 2);
+    this.moveTo(x + r, y); this.arcTo(x + w, y, x + w, y + h, r); this.arcTo(x + w, y + h, x, y + h, r); this.arcTo(x, y + h, x, y, r); this.arcTo(x, y, x + w, y, r); this.closePath();
+  };
+}
 const ITEM_ICON_IMG = {};
 let itemIconGen = 0;
 function glyphImg(path) {
@@ -1000,12 +1006,13 @@ function castTreeSkill(id) {
   treeSkillFx(id, d, t, cx, cy, castPage);
   const victims = d.aoe ? sims.filter(s => s.alive && Math.hypot(s.x - cx, s.y - cy) < d.aoe) : [t];
   if (!victims.length) { float(me.x, me.y - 34, '대상 없음', '#aaa'); return; }
+  const land = d.arch === 'nuke' ? 300 : 0; /* 메테오 낙하 시간 뒤에 피해 */
   victims.forEach((v, vi) => {
     for (let h = 0; h < (d.hits > 1 && !d.aoe ? d.hits : 1); h++) {
       setTimeout(() => {
         if (myPage() !== castPage || !v.alive) return;
         hit(v, d.mult, h === (d.hits > 1 && !d.aoe ? d.hits : 1) - 1 && Math.random() < totalCrit());
-      }, (vi * 60) + h * 130);
+      }, land + (vi * 60) + h * 130);
     }
   });
   if (d.aoe && d.hits > 1) {
@@ -1013,7 +1020,7 @@ function castTreeSkill(id) {
       setTimeout(() => {
         if (myPage() !== castPage) return;
         for (const v of sims.filter(s => s.alive && Math.hypot(s.x - cx, s.y - cy) < d.aoe)) hit(v, d.mult, false);
-      }, h * 200);
+      }, land + h * 200);
     }
   }
 }
@@ -8581,7 +8588,7 @@ async function init() {
   window.__PING = () => Promise.race([updateDoc(meRef, { lastSeen: Date.now() }).then(() => 'write-ok'), new Promise(r => setTimeout(() => r('write-timeout'), 8000))]).catch(e => 'write-error:' + (e.code || e.message)); /* 진단: 쓰기 채널 상태 */
   window.__MOB = async id => { const g = await getDoc(doc(db, 'monsters', id)); return g.exists() ? g.data() : null; };
   window.__give = async (id, slot = 17) => { await updX(meRef, { ['inv.' + slot]: id }); return 'ok'; }; /* 진단: 가방 슬롯에 아이템 넣기 */
-  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
+  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__useSkill = useSkill; window.__castTree = castTreeSkill; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
   window.__ITEMS = () => ({ items: Object.keys(ITEMS).length, sets: Object.keys(SETS).length, sample: Object.entries(ITEMS).filter(([k]) => /_b[0-9]$/.test(k)).slice(0, 3).map(([k, v]) => k + ':' + v.name) });
   window.__ZONETEX = n => { try { const t = getTex('p' + n); return { w: t.width, h: t.height, cols: (worldColliders['p' + n] || []).length }; } catch (e) { return { err: String(e && e.stack || e).slice(0, 300) }; } };
   window.__DBG = () => ({ page: myPage(), colliders: (worldColliders[myMap()] || []).length, frozenMs: hitStopUntil - Date.now(), activeIsChat: document.activeElement === chatInput, activeTag: document.activeElement && document.activeElement.tagName + '#' + document.activeElement.id, wmUp: worldMapOpen(), mouseDown, moveSpd: moveSpd(), atkRange: atkRange(), atkCdMs: atkCdOf(), sinceAtk: Date.now() - lastAttackAt, mapFading, snapN: window.__snapN || 0, snapAgoMs: window.__snapT ? Date.now() - window.__snapT : null, lastDmg: window.__lastDmg || null, lastErr: window.__lastErr || null, dead: !!me.dead, paused, ready, sheets: Object.fromEntries(Object.entries(HERO_SHEETS).map(([k, v]) => [k, v.img ? 'ok' : v.failed ? 'failed' : 'loading'])), target: attackTargetSimId, hover: hoverSimId, dest: dest && { x: Math.round(dest.x), y: Math.round(dest.y) }, zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),

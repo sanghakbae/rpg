@@ -396,8 +396,9 @@
   .islot .ic { font-size: 17px; }
 
   /* 스탯 포인트 */
-  #statPtsRow { display: none; margin-top: 6px; padding-top: 6px; border-top: 1px solid #333; align-items: center; gap: 5px; flex-wrap: wrap; font-size: 13.5px; color: #ffd700; }
-  .stbtn { padding: 4px 9px; font-size: 12px; font-weight: bold; background: linear-gradient(#c9a227, #8f6f14); color: #fff; border-radius: 4px; white-space: nowrap; }
+  #statPtsRow { display: none; margin-top: 6px; padding-top: 6px; border-top: 1px solid #333; align-items: center; gap: 3px; flex-wrap: nowrap; white-space: nowrap; font-size: 12px; color: #ffd700; } /* 항상 한 줄: 버튼이 남은 폭을 균등 분할 */
+  #statPtsRow > b { margin-right: 2px; }
+  .stbtn { flex: 1 1 0; min-width: 0; padding: 3px 1px; font-size: 10.5px; font-weight: bold; text-align: center; overflow: hidden; background: linear-gradient(#c9a227, #8f6f14); color: #fff; border-radius: 4px; white-space: nowrap; }
   .stbtn:hover { filter: brightness(1.2); }
   .stbtn.rec { outline: 1.5px solid #ffd700; box-shadow: 0 0 7px rgba(255,215,0,.45); } /* 직업 추천 스탯 */
   #stBtns { display: contents; } /* 버튼들이 statPtsRow flex에 직접 참여 */
@@ -484,8 +485,8 @@
     .bartext, #mpText, #expText { font-size: 9px; margin-top: -12px; margin-bottom: 2px; }
     #stats { display: none; }
     #goldRow { margin-top: 3px; padding-top: 3px; font-size: 11.5px; }
-    #statPtsRow { font-size: 10.5px; gap: 3px; }
-    .stbtn { padding: 2px 5px; font-size: 9.5px; }
+    #statPtsRow { font-size: 10.5px; gap: 2px; }
+    .stbtn { padding: 2px 1px; font-size: 9.5px; }
 
     /* 하단 액션 바 → 좌측 독으로 대체 */
     #mobileBar { display: none !important; }
@@ -762,7 +763,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=145"
+<script type="module" src="game.js?v=146"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

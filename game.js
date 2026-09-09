@@ -43,9 +43,9 @@ const STAT_DEFS = {
   stWis:     { n: '지혜',     d: '최대 MP +12 · 스킬 위력 +3%' },
   stCrit:    { n: '치명',     d: '치명타 확률 +1%' },
   stAspd:    { n: '공속',     d: '공격속도 +2% (최대 50%)' },
-  stCritDmg: { n: '치명피해', d: '치명타 피해 +6%' },
+  stCritDmg: { n: '치명피해', s: '치피', d: '치명타 피해 +6%' },
   stLife:    { n: '흡혈',     d: '가한 피해의 1% 회복' },
-  stRange:   { n: '사거리',   d: '공격 사거리 +6' },
+  stRange:   { n: '사거리',   s: '거리', d: '공격 사거리 +6' },
   stMana:    { n: '절약',     d: '스킬 마나 소모 -2% (최대 60%)' },
   stRegen:   { n: '재생',     d: '비전투 HP 재생 +15%' },
   stEvade:   { n: '회피',     d: '회피 확률 +1% (최대 35%)' },
@@ -8574,8 +8574,8 @@ function renderStatButtons() {
     const b = document.createElement('button');
     b.className = 'stbtn' + (k === cdef().rec ? ' rec' : '');
     b.dataset.st = k;
-    b.textContent = d.n;
-    b.title = d.d; /* 효과 설명 툴팁 */
+    b.textContent = d.s || d.n; /* HUD 한 줄 유지용 짧은 표기 */
+    b.title = d.n + ' — ' + d.d; /* 효과 설명 툴팁 */
     b.onclick = () => addStat(k);
     box.appendChild(b);
   }

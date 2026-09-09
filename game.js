@@ -19,7 +19,7 @@ if (location.search.includes('emu=1')) {
 const WORLD = { w: 1600, h: 1200 };
 const SPAWN = { x: 800, y: 600 };
 const OFFLINE_MS = 45000; /* 심박 20s 기준 여유 */
-const BASE_BAG = 18, MAX_BAG = 72; /* 6칸씩 9회 확장(비용 500G부터 2배씩) */
+const BASE_BAG = 18, MAX_BAG = 100; /* 6칸씩 확장(마지막은 96→100), 비용 500G부터 2배씩 */
 const bagSize = () => Math.min(MAX_BAG, me.bagSize || BASE_BAG);
 const bagUpCost = () => 500 * Math.pow(2, (bagSize() - BASE_BAG) / 6);
 const MAX_SKILL_LV = 5;
@@ -1167,7 +1167,7 @@ let othersPrev = {}, mePrev = { x: SPAWN.x, y: SPAWN.y }, meMovingNow = false;
 let mouseDown = false, dest = null, attackTargetSimId = null;
 /* 설정(로컬 저장) + 자동 사냥 */
 let autoHunt = false, autoSkillT = 0, autoPotT = 0;
-const settings = { autoPotHp: 45, autoPotMp: 20, dmgText: true, screenShake: true };
+const settings = { autoPotHp: 45, autoPotMp: 20, dmgText: true, screenShake: true, autoSell: {} }; /* autoSell: 등급별 자동 판매 on/off */
 try { const sv = JSON.parse(localStorage.getItem('settings') || '{}'); Object.assign(settings, sv); } catch (e) {}
 const saveSettings = () => { try { localStorage.setItem('settings', JSON.stringify(settings)); } catch (e) {} };
 const view = { x: 0, y: 0, z: 1 };
@@ -1975,6 +1975,17 @@ async function flushDamage(id) {
   if (r === true) { hitStopUntil = Math.max(hitStopUntil, Date.now() + 72); doShake(9); await handleKill(q.sim); }
 }
 
+const lootSkip = {}; /* lid → 재시도 가능 시각: 못 줍는(가방 가득) 루팅은 자동 사냥이 잠시 건너뜀 */
+function nearestLoot(maxD) {
+  let best = null, bd = maxD; const now = Date.now();
+  for (const [lid, l] of Object.entries(lootItems)) {
+    if ((l.map || 'm1') !== myMap() || pickHide.has(lid)) continue;
+    if ((lootSkip[lid] || 0) > now) continue;
+    const d = Math.hypot(l.x - me.x, l.y - me.y);
+    if (d < bd) { bd = d; best = { ...l, lid }; }
+  }
+  return best;
+}
 function nearestSim(maxD) {
   let best = null, bestD = maxD;
   for (const s of sims) {
@@ -2386,7 +2397,7 @@ function renderShop() {
   html += `<div class="srow">
       <div class="si">🎒</div>
       <div class="sm">
-        <div><span class="st">가방 확장</span><span class="slv">${bagSize()}칸 → ${bagSize() + 6}칸</span></div>
+        <div><span class="st">가방 확장</span><span class="slv">${bagSize()}칸 → ${Math.min(MAX_BAG, bagSize() + 6)}칸</span></div>
         <div class="sd">가방 슬롯을 영구적으로 6칸 늘립니다${canExpand ? '' : ' · 최대치 도달'}</div>
       </div>
       ${canExpand ? `<button class="buyBtn" id="buyBag" ${(me.gold || 0) >= upCost ? '' : 'disabled'}>${upCost} G</button>`
@@ -2420,7 +2431,7 @@ function buyBag() {
     if (bs >= MAX_BAG) return false;
     const cost = 500 * Math.pow(2, (bs - 18) / 6);
     if ((p.gold || 0) < cost) return false;
-    tx.update(meRef, { gold: p.gold - cost, bagSize: bs + 6 });
+    tx.update(meRef, { gold: p.gold - cost, bagSize: Math.min(MAX_BAG, bs + 6) });
     return true;
   }).then(ok => {
     if (ok) { sfx('buy'); toast('🎒 가방이 <b>6칸</b> 확장되었습니다!', 'sysq'); renderShop(); }
@@ -2786,6 +2797,15 @@ async function pickup(lid, l) {
       const cand = lsnap.data();
       /* 바닥의 타 직업 무기(다른 플레이어 드롭/과거 드롭)도 줍는 순간 내 직업 무기로 치환 */
       const giveId = classWeapon(cand.itemId);
+      const gi = getItem(giveId);
+      /* 등급 자동 판매: 설정에 켠 등급의 장비는 가방에 담지 않고 즉시 판매(골드만) */
+      if (gi.slot && !gi.scroll && !gi.heal && !gi.mana && !gi.book && settings.autoSell && settings.autoSell[gi.rarity]) {
+        const price = sellPrice(giveId);
+        tx.delete(ref);
+        tx.update(meRef, { gold: (psnap.data().gold || 0) + price });
+        item = { ...cand, itemId: giveId }; res = 'autosold'; soldG = price;
+        return;
+      }
       const r = computeAddToInv(psnap.data(), giveId);
       if (!r) { res = 'full'; return; }
       tx.delete(ref);
@@ -2794,6 +2814,7 @@ async function pickup(lid, l) {
     });
     if (res === 'full') {
       bagFullUntil = Date.now() + 2500; /* 자동 루팅 재시도 폭주 방지 */
+      lootSkip[lid] = Date.now() + 20000; /* 자동 사냥이 이 루팅 앞에 멈춰 서지 않게 */
       float(me.x, me.y - 30, '가방이 가득 참', '#e74c3c');
       toast('🎒 가방이 가득 찼습니다 — 아이템은 바닥에 남아있습니다');
       return;
@@ -2812,7 +2833,8 @@ async function pickup(lid, l) {
       flashInv();
       heroPickT = Date.now(); /* 줍기 숙이기 모션 */
       fxSparks(me.x, me.y - 22, 8, it.color || '#ffd700', 90);
-      if (res === 'equipped') toast(`${itemIconHtml(item.itemId, 22)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 → <b>자동 장착!</b> <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span>`, 'sysq');
+      if (res === 'autosold') { toast(`💰 <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span> ${esc(it.name)} 자동 판매 <b style="color:#ffd700">+${soldG.toLocaleString()} G</b>`); float(me.x, me.y - 30, `+${soldG} G`, '#ffd700'); }
+      else if (res === 'equipped') toast(`${itemIconHtml(item.itemId, 22)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 → <b>자동 장착!</b> <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span>`, 'sysq');
       else if (res === 'swapped') toast(`${itemIconHtml(item.itemId, 22)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 → <b>자동 장착!</b> 기존 장비 자동판매 <b style="color:#ffd700">+${soldG.toLocaleString()} G</b>`, 'sysq');
       else if (res === 'stacked') toast(`${itemIconHtml(item.itemId, 22)} <b style="color:${it.color}">${esc(it.name)}</b> 보유 수량 +1 <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span>`);
       else toast(`${itemIconHtml(item.itemId, 22)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span> → 가방 <b>${Object.keys(me.inv || {}).length}/${bagSize()}</b>`);
@@ -8381,6 +8403,7 @@ function openSettings() {
   $('setShake').checked = settings.screenShake;
   $('setHp').value = settings.autoPotHp; $('setHpVal').textContent = settings.autoPotHp;
   $('setMp').value = settings.autoPotMp; $('setMpVal').textContent = settings.autoPotMp;
+  document.querySelectorAll('#setAutoSell [data-rar]').forEach(b => b.classList.toggle('on', !!(settings.autoSell || {})[b.dataset.rar]));
   m.hidden = false;
 }
 { const hs = $('hudSettings'); if (hs) hs.onclick = e => { e.stopPropagation(); openSettings(); }; }
@@ -8392,6 +8415,7 @@ function openSettings() {
 { const el = $('setShake'); if (el) el.onchange = () => { settings.screenShake = el.checked; saveSettings(); }; }
 { const el = $('setHp'); if (el) el.oninput = () => { settings.autoPotHp = +el.value; $('setHpVal').textContent = el.value; saveSettings(); }; }
 { const el = $('setMp'); if (el) el.oninput = () => { settings.autoPotMp = +el.value; $('setMpVal').textContent = el.value; saveSettings(); }; }
+document.querySelectorAll('#setAutoSell [data-rar]').forEach(b => b.onclick = () => { settings.autoSell = settings.autoSell || {}; settings.autoSell[b.dataset.rar] = !settings.autoSell[b.dataset.rar]; b.classList.toggle('on', settings.autoSell[b.dataset.rar]); saveSettings(); sfx('click'); });
 { const sb = $('salvageBtn'); if (sb) sb.onclick = e => { e.stopPropagation(); sfx('click'); toggleSalvageMenu(); }; }
 { const st = $('sortBtn'); if (st) st.onclick = e => { e.stopPropagation(); sortBag(); }; }
 { const sb2 = $('statsBtn'); if (sb2) sb2.onclick = e => { e.stopPropagation(); openStats(); }; }
@@ -8786,9 +8810,10 @@ function loopBody(t) {
       const len = Math.hypot(dx, dy);
       glideToward(me.x + dx / len * 120, me.y + dy / len * 120, maxSpd, dt, 0);
     } else {
-      if (autoHunt && !attackTargetSimId && !dest) { /* 자동 사냥: 가장 가까운 몬스터를 타깃으로 */
-        const t = nearestSim(9999);
-        if (t) attackTargetSimId = t.id;
+      if (autoHunt && !attackTargetSimId && !dest) { /* 자동 사냥: 주변 루팅 먼저 → 없으면 가장 가까운 몬스터 */
+        const loot = now < bagFullUntil ? null : nearestLoot(280); /* 가방 가득이면 루팅 경로 생략 → 사냥 계속 */
+        if (loot) dest = { x: loot.x, y: loot.y, loot: loot.lid };
+        else { const t = nearestSim(9999); if (t) attackTargetSimId = t.id; }
       }
       if (autoHunt) autoCombat(now);
     }
@@ -8799,7 +8824,9 @@ function loopBody(t) {
       else if (Math.hypot(s.x - me.x, s.y - me.y) > atkRange()) glideToward(s.x, s.y, maxSpd, dt, 1);
       else { brake(dt); tryAttack(now, s); }
     } else if (dest) {
-      if (Math.hypot(dest.x - me.x, dest.y - me.y) < 10 && !mouseDown) { dest = null; brake(dt); }
+      const dd = Math.hypot(dest.x - me.x, dest.y - me.y);
+      if (dest.loot && (dd < 34 || !lootItems[dest.loot] || (lootSkip[dest.loot] || 0) > now)) { dest = null; brake(dt); } /* 루팅 목적지: 줍기 반경 안이거나 사라짐/건너뜀 */
+      else if (dd < 10 && !mouseDown) { dest = null; brake(dt); }
       else glideToward(dest.x, dest.y, maxSpd, dt, 1);
     } else brake(dt);
     /* 실제 속도로 걷기 판정 — 다리 모션·먼지가 속도와 동기화돼 밀림 현상 없음 */
@@ -9067,6 +9094,8 @@ setInterval(() => {
   for (const [, o] of Object.entries(others)) if (Date.now() - (o.lastSeen || 0) < OFFLINE_MS) n++;
   const el = $('ocN');
   if (el) el.textContent = n;
+  /* 만료된 루팅 건너뛰기 기록 정리 (lid 키 누적 방지) */
+  { const nowT = Date.now(); for (const k in lootSkip) if (lootSkip[k] <= nowT || !lootItems[k]) delete lootSkip[k]; }
   /* 자정 넘김 감지: 장시간 접속 중에도 날짜가 바뀌면 일일 초기화 (이전엔 재접속/퀘스트창 열 때만) */
   if (ready && Date.now() - _dailyCheckT > 30000) { _dailyCheckT = Date.now(); try { if ((me.daily || {}).date && (me.daily || {}).date !== todayStr()) { checkDaily(); if ($('questPanel')?.classList.contains('open')) renderQuests(); } } catch (e) {} }
 }, 1000);
@@ -9177,7 +9206,7 @@ async function init() {
   window.__PING = () => Promise.race([updateDoc(meRef, { lastSeen: Date.now() }).then(() => 'write-ok'), new Promise(r => setTimeout(() => r('write-timeout'), 8000))]).catch(e => 'write-error:' + (e.code || e.message)); /* 진단: 쓰기 채널 상태 */
   window.__MOB = async id => { const g = await getDoc(doc(db, 'monsters', id)); return g.exists() ? g.data() : null; };
   window.__give = async (id, slot = 17) => { await updX(meRef, { ['inv.' + slot]: id }); return 'ok'; }; /* 진단: 가방 슬롯에 아이템 넣기 */
-  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__pageDef = pageDef; window.__view = () => ({ x: view.x, y: view.y, z: view.z, dpr }); window.__mkUniqAt = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; cam.x=s0.x; cam.y=s0.y; return {id:s0.id, kind:s0.kind, x:s0.x, y:s0.y}; }; window.__mkUniq = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; const me2=window.__me?me:me; me.x=s0.x; me.y=s0.y-80; cam.x=s0.x; cam.y=s0.y-40; return {id:s0.id, kind:s0.kind}; }; window.__useSkill = useSkill; window.__sheets2 = () => ({ total: Object.keys(HERO_SHEETS).length, mob: Object.keys(HERO_SHEETS).filter(k=>k.startsWith('mob_')&&HERO_SHEETS[k].img).length, wss: WSS, bioTex: bioTexCache.size }); window.__loadMob = base => heroSheet('mob_'+base); window.__openStats = openStats; window.__sortBag = sortBag; window.__toggleAuto = toggleAuto; window.__auto = () => autoHunt; window.__settings = () => settings; window.__salvage = salvageBulk; window.__invRar = () => Object.entries(me.inv||{}).map(([k,v])=>({k, id:String(v).split(/[*~+]/)[0], rar:getItem(v).rarity, rank:RARITY_RANK[getItem(v).rarity]??0, slot:getItem(v).slot||'-'})); window.__claimAchv = claimAchv; window.__ownedTitles = ownedTitles; window.__paused = () => ({ paused, ready, dead: me.dead, wm: worldMapOpen() }); window.__unpause = () => { paused = false; }; window.__cdUntil = id => skillCdUntil[id]||0; window.__bound = boundId; window.__skillDef = skillDef; window.__mpc = id => { const d=skillDef(id); return d&&d.mp?mpCostOf(skillMp(id,d)):0; }; window.__castTree = castTreeSkill; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
+  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__pageDef = pageDef; window.__view = () => ({ x: view.x, y: view.y, z: view.z, dpr }); window.__mkUniqAt = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; cam.x=s0.x; cam.y=s0.y; return {id:s0.id, kind:s0.kind, x:s0.x, y:s0.y}; }; window.__mkUniq = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; const me2=window.__me?me:me; me.x=s0.x; me.y=s0.y-80; cam.x=s0.x; cam.y=s0.y-40; return {id:s0.id, kind:s0.kind}; }; window.__useSkill = useSkill; window.__sheets2 = () => ({ total: Object.keys(HERO_SHEETS).length, mob: Object.keys(HERO_SHEETS).filter(k=>k.startsWith('mob_')&&HERO_SHEETS[k].img).length, wss: WSS, bioTex: bioTexCache.size }); window.__loadMob = base => heroSheet('mob_'+base); window.__openStats = openStats; window.__sortBag = sortBag; window.__toggleAuto = toggleAuto; window.__autoState = () => ({ auto: autoHunt, target: attackTargetSimId, dest, map: me.map, myMap: myMap(), nearLoot: (l => l ? { x: Math.round(l.x), y: Math.round(l.y), d: Math.round(Math.hypot(l.x - me.x, l.y - me.y)) } : null)(nearestLoot(280)) }); window.__clearTarget = () => { attackTargetSimId = null; dest = null; }; window.__auto = () => autoHunt; window.__settings = () => settings; window.__salvage = salvageBulk; window.__invRar = () => Object.entries(me.inv||{}).map(([k,v])=>({k, id:String(v).split(/[*~+]/)[0], rar:getItem(v).rarity, rank:RARITY_RANK[getItem(v).rarity]??0, slot:getItem(v).slot||'-'})); window.__claimAchv = claimAchv; window.__ownedTitles = ownedTitles; window.__paused = () => ({ paused, ready, dead: me.dead, wm: worldMapOpen() }); window.__unpause = () => { paused = false; }; window.__cdUntil = id => skillCdUntil[id]||0; window.__bound = boundId; window.__skillDef = skillDef; window.__mpc = id => { const d=skillDef(id); return d&&d.mp?mpCostOf(skillMp(id,d)):0; }; window.__castTree = castTreeSkill; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
   window.__ITEMS = () => ({ items: Object.keys(ITEMS).length, sets: Object.keys(SETS).length, sample: Object.entries(ITEMS).filter(([k]) => /_b[0-9]$/.test(k)).slice(0, 3).map(([k, v]) => k + ':' + v.name) });
   window.__ZONETEX = n => { try { const t = getTex('p' + n); return { w: t.width, h: t.height, cols: (worldColliders['p' + n] || []).length }; } catch (e) { return { err: String(e && e.stack || e).slice(0, 300) }; } };
   window.__DBG = () => ({ page: myPage(), colliders: (worldColliders[myMap()] || []).length, frozenMs: hitStopUntil - Date.now(), activeIsChat: document.activeElement === chatInput, activeTag: document.activeElement && document.activeElement.tagName + '#' + document.activeElement.id, wmUp: worldMapOpen(), mouseDown, moveSpd: moveSpd(), atkRange: atkRange(), atkCdMs: atkCdOf(), sinceAtk: Date.now() - lastAttackAt, mapFading, snapN: window.__snapN || 0, snapAgoMs: window.__snapT ? Date.now() - window.__snapT : null, lastDmg: window.__lastDmg || null, lastErr: window.__lastErr || null, dead: !!me.dead, paused, ready, sheets: Object.fromEntries(Object.entries(HERO_SHEETS).map(([k, v]) => [k, v.img ? 'ok' : v.failed ? 'failed' : 'loading'])), target: attackTargetSimId, hover: hoverSimId, dest: dest && { x: Math.round(dest.x), y: Math.round(dest.y) }, zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),

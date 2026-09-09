@@ -5855,20 +5855,116 @@ function mobUI(s, wide) {
     ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 1;
     ctx.strokeRect(s.x - w / 2, y, w, wide ? 7 : 5);
   }
+  /* 유니크 등급 배지 (이름 위) */
+  if (isU) {
+    const by = (s.hp < d2.hp || isBoss) ? Math.min(s.y - r - (wide ? 38 : 18), mobTopY(s) - (wide ? 30 : 12)) - 9 : mobTopY(s) - 6;
+    const rgb = uniqColor(s), t = Date.now();
+    ctx.save();
+    ctx.font = 'bold 9.5px sans-serif'; ctx.textAlign = 'center';
+    const label = '★ 유니크';
+    const bw = ctx.measureText(label).width + 12;
+    const grd = ctx.createLinearGradient(s.x - bw / 2, 0, s.x + bw / 2, 0);
+    grd.addColorStop(0, `rgba(${rgb},.15)`); grd.addColorStop(.5, `rgba(${rgb},.55)`); grd.addColorStop(1, `rgba(${rgb},.15)`);
+    ctx.fillStyle = grd;
+    roundRect(ctx, s.x - bw / 2, by - 10, bw, 13, 6); ctx.fill();
+    ctx.strokeStyle = `rgba(255,214,102,${.55 + Math.sin(t / 300) * .35})`; ctx.lineWidth = 1;
+    roundRect(ctx, s.x - bw / 2, by - 10, bw, 13, 6); ctx.stroke();
+    ctx.fillStyle = '#fff5d6'; ctx.textBaseline = 'alphabetic';
+    ctx.fillText(label, s.x, by);
+    ctx.restore();
+  }
   ctx.font = (wide || isU) ? 'bold 13px sans-serif' : '11px sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillStyle = isU ? '#ff8a5c' : isBoss ? '#ffb8b8' : 'rgba(255,255,255,.88)';
-  outlinedText(`Lv${simLevel(s)} ${d2.name}`, s.x, s.y + r + (wide ? 24 : 15));
+  if (isU) { const rgb = uniqColor(s); ctx.fillStyle = `rgb(${rgb})`; outlinedText(`Lv${simLevel(s)} ${d2.name}`, s.x, s.y + r + (wide ? 24 : 15), 3.2, 'rgba(0,0,0,.9)'); }
+  else { ctx.fillStyle = isBoss ? '#ffb8b8' : 'rgba(255,255,255,.88)'; outlinedText(`Lv${simLevel(s)} ${d2.name}`, s.x, s.y + r + (wide ? 24 : 15)); }
 }
 
+/* 유니크 시그니처 색: 몬스터 색조를 반영한 보라~금 계열(구역마다 살짝 다르게) */
+const _uniqColCache = {};
+function uniqColor(s) {
+  const key = s.kind || s.type || 'u';
+  if (_uniqColCache[key]) return _uniqColCache[key];
+  const dh = (typeof mobHueShift === 'function' && s.type) ? mobHueShift(s, s.type) : 0;
+  /* 기본 마젠타-보라(280°)에서 몬스터 색조만큼 회전 → 종마다 오라 색이 다름 */
+  const hue = (280 + dh + 360) % 360;
+  const rgb = hslToRgb(hue / 360, .78, .62);
+  return (_uniqColCache[key] = rgb.join(','));
+}
+function hslToRgb(h, sa, l) {
+  const a = sa * Math.min(l, 1 - l);
+  const f = n => { const k = (n + h * 12) % 12; return Math.round(255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)))); };
+  return [f(0), f(8), f(4)];
+}
+/* 상용 수준 유니크 연출: 회전 마법진 + 상승 오라 기둥 + 잔불 파티클 (스프라이트 아래 지면 레이어) */
 function uniqAura(s, now) {
-  const rad = r0(s) * 1.5;
-  const p = .5 + Math.sin(now / 250) * .2;
-  ctx.fillStyle = `rgba(255,77,77,${.07 + p * .05})`;
-  ctx.beginPath(); ctx.arc(s.x, s.y + 6, rad, 0, 7); ctx.fill();
-  ctx.strokeStyle = `rgba(255,77,77,${.4 + p * .3})`;
-  ctx.lineWidth = 3;
-  ctx.beginPath(); ctx.arc(s.x, s.y + 6, rad, 0, 7); ctx.stroke();
+  const rad = r0(s) * 1.45;
+  const gx = s.x, gy = s.y + 8;            /* 발밑 지면 중심 */
+  const rgb = uniqColor(s);
+  const gold = '255,214,102';
+  const pulse = .5 + Math.sin(now / 380 + (s.blink || 0)) * .5;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  /* 1) 지면 소프트 글로우(원근 타원) */
+  const gg = ctx.createRadialGradient(gx, gy, 2, gx, gy, rad * 1.5);
+  gg.addColorStop(0, `rgba(${rgb},${.22 + pulse * .12})`);
+  gg.addColorStop(.6, `rgba(${rgb},${.10 + pulse * .06})`);
+  gg.addColorStop(1, `rgba(${rgb},0)`);
+  ctx.fillStyle = gg;
+  ctx.beginPath(); ctx.ellipse(gx, gy, rad * 1.5, rad * 1.5 * .42, 0, 0, 7); ctx.fill();
+  /* 2) 회전 마법진: 두 개의 역방향 링 + 룬 틱 (타원 투영) */
+  const flat = .42;
+  const drawRing = (rr, rot, ticks, tickLen, alpha, w) => {
+    ctx.strokeStyle = `rgba(${gold},${alpha})`;
+    ctx.lineWidth = w;
+    ctx.beginPath(); ctx.ellipse(gx, gy, rr, rr * flat, 0, 0, 7); ctx.stroke();
+    ctx.lineWidth = Math.max(1, w * .8);
+    for (let i = 0; i < ticks; i++) {
+      const a = rot + i / ticks * Math.PI * 2;
+      const c = Math.cos(a), sn = Math.sin(a) * flat;
+      ctx.beginPath();
+      ctx.moveTo(gx + c * rr, gy + sn * rr);
+      ctx.lineTo(gx + c * (rr + tickLen), gy + sn * (rr + tickLen));
+      ctx.stroke();
+    }
+  };
+  drawRing(rad, now / 1400, 12, 5, .5 + pulse * .3, 2);
+  drawRing(rad * .66, -now / 1000, 6, 4, .4 + pulse * .25, 1.6);
+  /* 스프라이트 뒤 바디 글로우 — 몬스터가 배경에서 확 떠 보이게 (스프라이트보다 먼저 그려져 뒤에 깔림) */
+  const by = s.y - r0(s) * .5;
+  const bg = ctx.createRadialGradient(gx, by, 2, gx, by, rad * 1.35);
+  bg.addColorStop(0, `rgba(${rgb},${.30 + pulse * .14})`);
+  bg.addColorStop(.55, `rgba(${rgb},${.12 + pulse * .06})`);
+  bg.addColorStop(1, `rgba(${rgb},0)`);
+  ctx.fillStyle = bg;
+  ctx.beginPath(); ctx.arc(gx, by, rad * 1.35, 0, 7); ctx.fill();
+  /* 룬 마젠타 내원 */
+  ctx.strokeStyle = `rgba(${rgb},${.45 + pulse * .3})`;
+  ctx.lineWidth = 1.4;
+  ctx.beginPath(); ctx.ellipse(gx, gy, rad * .4, rad * .4 * flat, 0, 0, 7); ctx.stroke();
+  /* 3) 상승 오라 기둥 */
+  const colH = rad * 2.2;
+  const cg = ctx.createLinearGradient(0, gy, 0, gy - colH);
+  cg.addColorStop(0, `rgba(${rgb},${.20 + pulse * .1})`);
+  cg.addColorStop(1, `rgba(${rgb},0)`);
+  ctx.fillStyle = cg;
+  ctx.beginPath();
+  ctx.moveTo(gx - rad * .8, gy);
+  ctx.lineTo(gx + rad * .8, gy);
+  ctx.lineTo(gx + rad * .3, gy - colH);
+  ctx.lineTo(gx - rad * .3, gy - colH);
+  ctx.closePath(); ctx.fill();
+  /* 4) 잔불 파티클(상태 없이 시간 시드로) */
+  const N = 7, seed = (s.blink || 0) + gx * .13;
+  for (let i = 0; i < N; i++) {
+    const t = ((now / 1600) + i / N + seed) % 1;      /* 0(바닥)→1(꼭대기) */
+    const ex = gx + Math.sin(seed + i * 2.3 + t * 3) * rad * .7 * (1 - t * .4);
+    const ey = gy - t * colH * .95;
+    const a = Math.sin(t * Math.PI) * (.7 + pulse * .3);  /* 시작·끝 페이드 */
+    const er = 2.4 * (1 - t * .6);
+    ctx.fillStyle = i % 3 === 0 ? `rgba(${gold},${a})` : `rgba(${rgb},${a})`;
+    ctx.beginPath(); ctx.arc(ex, ey, er, 0, 7); ctx.fill();
+  }
+  ctx.restore();
 }
 
 /* ================= 몬스터 종별 외형 파츠 =================
@@ -8588,7 +8684,7 @@ async function init() {
   window.__PING = () => Promise.race([updateDoc(meRef, { lastSeen: Date.now() }).then(() => 'write-ok'), new Promise(r => setTimeout(() => r('write-timeout'), 8000))]).catch(e => 'write-error:' + (e.code || e.message)); /* 진단: 쓰기 채널 상태 */
   window.__MOB = async id => { const g = await getDoc(doc(db, 'monsters', id)); return g.exists() ? g.data() : null; };
   window.__give = async (id, slot = 17) => { await updX(meRef, { ['inv.' + slot]: id }); return 'ok'; }; /* 진단: 가방 슬롯에 아이템 넣기 */
-  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__useSkill = useSkill; window.__castTree = castTreeSkill; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
+  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__view = () => ({ x: view.x, y: view.y, z: view.z, dpr }); window.__mkUniqAt = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; cam.x=s0.x; cam.y=s0.y; return {id:s0.id, kind:s0.kind, x:s0.x, y:s0.y}; }; window.__mkUniq = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; const me2=window.__me?me:me; me.x=s0.x; me.y=s0.y-80; cam.x=s0.x; cam.y=s0.y-40; return {id:s0.id, kind:s0.kind}; }; window.__useSkill = useSkill; window.__castTree = castTreeSkill; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
   window.__ITEMS = () => ({ items: Object.keys(ITEMS).length, sets: Object.keys(SETS).length, sample: Object.entries(ITEMS).filter(([k]) => /_b[0-9]$/.test(k)).slice(0, 3).map(([k, v]) => k + ':' + v.name) });
   window.__ZONETEX = n => { try { const t = getTex('p' + n); return { w: t.width, h: t.height, cols: (worldColliders['p' + n] || []).length }; } catch (e) { return { err: String(e && e.stack || e).slice(0, 300) }; } };
   window.__DBG = () => ({ page: myPage(), colliders: (worldColliders[myMap()] || []).length, frozenMs: hitStopUntil - Date.now(), activeIsChat: document.activeElement === chatInput, activeTag: document.activeElement && document.activeElement.tagName + '#' + document.activeElement.id, wmUp: worldMapOpen(), mouseDown, moveSpd: moveSpd(), atkRange: atkRange(), atkCdMs: atkCdOf(), sinceAtk: Date.now() - lastAttackAt, mapFading, snapN: window.__snapN || 0, snapAgoMs: window.__snapT ? Date.now() - window.__snapT : null, lastDmg: window.__lastDmg || null, lastErr: window.__lastErr || null, dead: !!me.dead, paused, ready, sheets: Object.fromEntries(Object.entries(HERO_SHEETS).map(([k, v]) => [k, v.img ? 'ok' : v.failed ? 'failed' : 'loading'])), target: attackTargetSimId, hover: hoverSimId, dest: dest && { x: Math.round(dest.x), y: Math.round(dest.y) }, zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),

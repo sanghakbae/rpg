@@ -150,6 +150,21 @@
   .skic img { width: 66%; height: 66%; filter: drop-shadow(0 1px 1px rgba(0,0,0,.7)); pointer-events: none; }
   .skic em { font-style: normal; font-size: 55%; line-height: 1; }
   .srow .si .skic { width: 46px; height: 46px; }
+  /* 고해상도 스킬 배지(캔버스 합성) — CSS 그라데이션 프레임은 폴백용 */
+  .skic.hi { background: none !important; border: none; box-shadow: none; border-radius: 0; }
+  .skic.hi img { width: 100%; height: 100%; filter: none; }
+  .shopCols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: start; }
+  .colHd { font-size: 12.5px; font-weight: bold; color: #ffd700; padding: 6px 4px; margin: 2px 0 6px; border-bottom: 1px solid rgba(255,215,0,.25); }
+  .colHd span { color: #778; font-weight: normal; font-size: 10.5px; margin-left: 6px; }
+  .colHd.pas { color: #7fc7ff; border-color: rgba(127,199,255,.3); }
+  .colHd.act { color: #ffb347; border-color: rgba(255,180,60,.3); }
+  .srow.act { border-left: 3px solid rgba(255,180,60,.55); }
+  .srow.pas { border-left: 3px solid rgba(127,199,255,.55); }
+  .sgr { font-size: 10px; border: 1px solid; border-radius: 4px; padding: 0 4px; margin-left: 6px; vertical-align: 1px; }
+  .skind { font-size: 10px; border-radius: 4px; padding: 0 5px; margin-left: 4px; vertical-align: 1px; }
+  .skind.act { background: rgba(255,180,60,.2); color: #ffb347; }
+  .skind.pas { background: rgba(127,199,255,.18); color: #7fc7ff; }
+  .tnode.pas { border-style: dashed; }
   .hslot .ic2 .skic { width: 34px; height: 34px; border-radius: 8px; }
   .hslot .ic2 .potic { width: 36px !important; height: 36px !important; display: block; filter: drop-shadow(0 1px 2px rgba(0,0,0,.6)); }
   .hslot.pot.locked .ic2 .potic { filter: grayscale(1) opacity(.45); }
@@ -385,6 +400,7 @@
     .hslot { width: 44px; height: 44px; overflow: hidden; }
     .hslot .ic2 { font-size: 17px; }
     .hslot .ic2 .skic { width: 26px; height: 26px; border-radius: 6px; }
+    .shopCols { grid-template-columns: 1fr; }
     .hslot .ic2 .potic { width: 27px !important; height: 27px !important; }
     .hslot .key { font-size: 8px; top: 2px; left: 4px; }
     .hslot .nm { font-size: 7.5px; margin-top: 0; max-width: 100%; padding: 0 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* 스킬 이름이 슬롯 밖으로 넘치던 것 */
@@ -607,7 +623,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=114"
+<script type="module" src="game.js?v=115"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

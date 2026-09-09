@@ -1190,7 +1190,7 @@ let othersPrev = {}, mePrev = { x: SPAWN.x, y: SPAWN.y }, meMovingNow = false;
 let mouseDown = false, dest = null, attackTargetSimId = null;
 /* 설정(로컬 저장) + 자동 사냥 */
 let autoHunt = false, autoSkillT = 0, autoPotT = 0;
-const settings = { autoPotHp: 45, autoPotMp: 20, dmgText: true, screenShake: true, autoSell: {} }; /* autoSell: 등급별 자동 판매 on/off */
+const settings = { autoPotHp: 45, autoPotMp: 20, dmgText: true, screenShake: true, autoSell: {}, ecoSave: true }; /* autoSell: 등급별 자동 판매 on/off · ecoSave: 서버 절약 모드(로컬 우선 + 주기 동기화) */
 try { const sv = JSON.parse(localStorage.getItem('settings') || '{}'); Object.assign(settings, sv); } catch (e) {}
 const saveSettings = () => { try { localStorage.setItem('settings', JSON.stringify(settings)); } catch (e) {} };
 const view = { x: 0, y: 0, z: 1 };
@@ -1227,8 +1227,10 @@ function onQuotaExceeded() {
    → 쓰기 실패를 감지하면 '로컬 모드'로 전환: 내 문서(me)·몬스터·루팅에 대한 트랜잭션/업데이트를 로컬 상태에 그대로 적용하고,
      바뀐 최상위 필드 이름을 기억(localStorage)해 두었다가 쓰기가 다시 통하는 시점에 그 필드들을 한 번에 서버로 밀어 넣는다.
    몬스터 HP는 평시에도 클라이언트가 권위(서버 쓰기는 처치·리스폰 1회) → 쓰기량 자체가 이전의 1/5 이하 */
-let offline = false, offlineSince = 0, lastProbe = 0, pendSaveT = 0;
+let offline = false, offlineSince = 0, lastProbe = 0, pendSaveT = 0, lastSyncAt = 0;
 const pendKeys = new Set();
+/* 서버 절약 모드: 온라인이어도 쓰기를 로컬에 모아 20초마다 한 번에 동기화 — Spark 일일 쓰기 한도(2만)를 수십 시간 플레이로 늘린다 */
+const ecoOn = () => !offline && settings.ecoSave !== false;
 const isQuotaErr = e => !!e && (e.code === 'resource-exhausted' || e.code === 'timeout' || /quota|resource-exhausted/i.test(String(e.message || e)));
 /* Firestore SDK는 resource-exhausted 쓰기를 지수 백오프로 무한 재시도해 promise가 수십 초 매달린다 → 시간 제한을 걸어 로컬 모드로 넘긴다
    (네트워크 단절도 같은 경로로 로컬 모드가 된다) */
@@ -1334,7 +1336,7 @@ function localTx(fn) {
 }
 /* 트랜잭션 진입점: 온라인이면 서버, 한도 초과면 로컬 */
 function runTx(dbArg, fn) {
-  if (offline) return localTx(fn);
+  if (offline || ecoOn()) return localTx(fn); /* 절약 모드: 로컬 적용 + 보류 → 주기 동기화 */
   return withTimeout(runTransaction(dbArg, fn), TX_TIMEOUT).catch(err => {
     if (!isQuotaErr(err)) throw err;
     enterOffline(err);
@@ -1343,7 +1345,7 @@ function runTx(dbArg, fn) {
 }
 /* 내 문서 단순 업데이트 */
 function updX(ref, upd) {
-  if (offline) { applyLocalMe(upd); return Promise.resolve(); }
+  if (offline || ecoOn()) { applyLocalMe(upd); return Promise.resolve(); }
   return withTimeout(updateDoc(ref, toServerUpd(upd)), UPD_TIMEOUT).catch(err => {
     if (!isQuotaErr(err)) throw err;
     enterOffline(err);
@@ -1354,7 +1356,7 @@ function updX(ref, upd) {
 let localLootN = 0;
 function addLoot(data) {
   const local = () => { lootItems['local_' + Date.now().toString(36) + '_' + (localLootN++)] = data; };
-  if (offline) { local(); return Promise.resolve(); }
+  if (offline || ecoOn()) { local(); return Promise.resolve(); }
   return withTimeout(addDoc(collection(db, 'loot'), data), UPD_TIMEOUT).catch(err => { if (isQuotaErr(err)) { enterOffline(err); local(); } });
 }
 /* 보류분 동기화 시도 — 로컬 모드이거나 보류 필드가 있으면 45초마다 (실패한 쓰기는 한도를 소비하지 않음) */
@@ -1363,7 +1365,7 @@ async function trySync(force) {
   if (!meRef || !uid || syncing) return false;
   const now = Date.now();
   if (offline && now - offlineSince < OFFLINE_DWELL) return false; /* 한 번 로컬 모드가 되면 최소 5분 유지 — 처치마다 8초씩 매달리는 왕복 방지 */
-  if (!force && now - lastProbe < 45000) return false;
+  if (!force && now - lastProbe < (ecoOn() ? 20000 : 45000)) return false; /* 절약 모드: 20초 주기 */
   lastProbe = now;
   syncing = true;
   try { return await trySyncInner(now); } finally { syncing = false; }
@@ -1376,8 +1378,10 @@ async function trySyncInner(now) {
   payload.dead = !!me.dead; if (me.map) payload.map = me.map;
   payload.lastSeen = now;
   try {
-    /* 실패했던 것과 같은 종류(트랜잭션)로 시험 — 단순 update만 통하는 상태에서 온라인으로 오판하면 다음 처치가 또 8초 매달린다 */
-    await withTimeout(runTransaction(db, async tx => { await tx.get(meRef); tx.update(meRef, payload); }), 12000);
+    if (offline) /* 실패했던 것과 같은 종류(트랜잭션)로 시험 — 단순 update만 통하는 상태에서 온라인으로 오판하면 다음 처치가 또 8초 매달린다 */
+      await withTimeout(runTransaction(db, async tx => { await tx.get(meRef); tx.update(meRef, payload); }), 12000);
+    else await withTimeout(updateDoc(meRef, payload), 12000); /* 절약 모드 주기 저장: 쓰기 1회 */
+    lastSyncAt = now;
     const was = offline;
     offline = false; pendKeys.clear(); savePend();
     const el = document.getElementById('quotaBar'); if (el) el.style.display = 'none';
@@ -1435,7 +1439,16 @@ const classActiveId = () => Object.keys(SKILLS).find(k => SKILLS[k].cls === myCl
 const classActiveIds = () => Object.keys(SKILLS).filter(k => SKILLS[k].cls === myCls && SKILLS[k].type === 'active');
 
 function float(x, y, text, color = '#fff', big = false) { floats.push({ x, y, text, color, t: 0, big }); }
-async function sysMsg(text, k = '') { if (offline) return; await addDoc(collection(db, 'chat'), { from: '', text, ts: Date.now(), k }).catch(e => { if (isQuotaErr(e)) enterOffline(e); }); }
+const localSys = []; /* 절약/로컬 모드에서 서버에 쓰지 않은 시스템 메시지(내 화면에만 표시) */
+function sysLocal(text, k) {
+  localSys.push({ text, k }); while (localSys.length > 8) localSys.shift();
+  const log = $('chatLog'); if (!log) return;
+  const d = document.createElement('div'); d.className = k === 'q' ? 'sysq' : 'sys'; d.textContent = text; log.appendChild(d); log.scrollTop = log.scrollHeight;
+}
+async function sysMsg(text, k = '') {
+  if (offline || ecoOn()) { sysLocal(text, k); return; } /* 처치마다 채팅 문서를 쓰던 것 제거 — 절약 모드에선 내 화면에만 */
+  await addDoc(collection(db, 'chat'), { from: '', text, ts: Date.now(), k }).catch(e => { if (isQuotaErr(e)) enterOffline(e); });
+}
 
 function toast(html, kind = '') {
   const box = $('toasts');
@@ -1765,7 +1778,8 @@ function watchChat() {
     msgs.reverse();
     log.innerHTML = msgs.map(m =>
       m.from ? `<div><span class="nick">${esc(m.from)}</span>: ${esc(m.text)}</div>`
-             : `<div class="${m.k === 'q' ? 'sysq' : 'sys'}">${esc(m.text)}</div>`).join('');
+             : `<div class="${m.k === 'q' ? 'sysq' : 'sys'}">${esc(m.text)}</div>`).join('')
+      + localSys.map(m => `<div class="${m.k === 'q' ? 'sysq' : 'sys'}">${esc(m.text)}</div>`).join(''); /* 로컬 시스템 메시지 유지 */
     log.scrollTop = log.scrollHeight;
   }, () => {});
 }
@@ -1809,6 +1823,7 @@ async function gainExp(expGain, kill = null) {
   }).then(r => {
     if (!r || !r.leveled) return;
     float(me.x, me.y - 52, `LEVEL UP! Lv ${r.nlv}`, '#ffd700', true);
+    trySync(true); /* 레벨업은 즉시 저장 */
     toast(`✨ 레벨업! 스탯 포인트 +${3 * r.leveled} (좌측 상단에서 분배)`, 'sysq');
     rings.push({ x: me.x, y: me.y, r: 90, t: 0, max: 600, color: '255,215,0' });
     fxSparks(me.x, me.y, 22, '#ffd700', 180);
@@ -4884,6 +4899,7 @@ function gotoPage(n) {
     pickFx.length = 0; pickHide.clear(); /* 비행 중 연출 정리 */
     cam.x = sp.x; cam.y = sp.y;
     updX(meRef, { map: pageId(n), x: sp.x, y: sp.y }).catch(() => {});
+    trySync(true); /* 구역 이동은 즉시 저장 */
     const mn = $('mapName');
     if (mn) mn.textContent = pageDef(n).name;
     watchMonsters();
@@ -8384,6 +8400,7 @@ document.querySelector('#rankPanel h3').addEventListener('click', e => {
   $('rankPanel').classList.toggle('folded');
 });
 async function doLogout() {
+  try { if (pendKeys.size) await trySync(true); } catch (e) {} /* 보류 진행분 먼저 저장 */
   try { await signOut(auth); } catch (e) {}
   location.reload();
 }
@@ -8456,6 +8473,7 @@ function openSettings() {
   $('setAuto').checked = autoHunt;
   $('setDmg').checked = settings.dmgText;
   $('setShake').checked = settings.screenShake;
+  { const el = $('setEco'); if (el) el.checked = settings.ecoSave !== false; }
   $('setHp').value = settings.autoPotHp; $('setHpVal').textContent = settings.autoPotHp;
   $('setMp').value = settings.autoPotMp; $('setMpVal').textContent = settings.autoPotMp;
   document.querySelectorAll('#setAutoSell [data-rar]').forEach(b => b.classList.toggle('on', !!(settings.autoSell || {})[b.dataset.rar]));
@@ -8468,6 +8486,7 @@ function openSettings() {
 { const el = $('setAuto'); if (el) el.onchange = () => { if (el.checked !== autoHunt) toggleAuto(); }; }
 { const el = $('setDmg'); if (el) el.onchange = () => { settings.dmgText = el.checked; saveSettings(); }; }
 { const el = $('setShake'); if (el) el.onchange = () => { settings.screenShake = el.checked; saveSettings(); }; }
+{ const el = $('setEco'); if (el) el.onchange = () => { settings.ecoSave = el.checked; saveSettings(); if (!el.checked && pendKeys.size) trySync(true); toast(el.checked ? '☁️ 서버 절약 모드 켜짐 — 진행을 20초마다 모아 저장' : '서버 절약 모드 꺼짐 — 즉시 저장(한도 소모 ↑)'); }; }
 { const el = $('setHp'); if (el) el.oninput = () => { settings.autoPotHp = +el.value; $('setHpVal').textContent = el.value; saveSettings(); }; }
 { const el = $('setMp'); if (el) el.oninput = () => { settings.autoPotMp = +el.value; $('setMpVal').textContent = el.value; saveSettings(); }; }
 document.querySelectorAll('#setAutoSell [data-rar]').forEach(b => b.onclick = () => { settings.autoSell = settings.autoSell || {}; settings.autoSell[b.dataset.rar] = !settings.autoSell[b.dataset.rar]; b.classList.toggle('on', settings.autoSell[b.dataset.rar]); saveSettings(); sfx('click'); });
@@ -8526,7 +8545,8 @@ addEventListener('keydown', e => {
 addEventListener('keyup', e => keys[e.code] = false);
 /* 포커스 이탈/탭 전환 시 keyup 유실로 캐릭터가 계속 걷는 것 방지 */
 addEventListener('blur', () => { keys = {}; mouseDown = false; });
-document.addEventListener('visibilitychange', () => { if (document.hidden) { keys = {}; mouseDown = false; } });
+document.addEventListener('visibilitychange', () => { if (document.hidden) { keys = {}; mouseDown = false; if (pendKeys.size) trySync(true); } });
+addEventListener('pagehide', () => { if (pendKeys.size) trySync(true); }); /* 탭 닫기/이동 전 저장(최선 노력, 실패해도 localStorage 보류분이 다음 접속에 복원) */
 
 function screenToWorld(mx, my) { const z = view.z || 1; return { x: mx / z + view.x, y: my / z + view.y }; }
 cv.addEventListener('contextmenu', e => e.preventDefault());
@@ -8908,7 +8928,7 @@ function loopBody(t) {
   if (me.mp != null && !Number.isFinite(me.mp)) me.mp = maxMpOf();
   const movedFar = Math.abs(me.x - sentX) + Math.abs(me.y - sentY) > 16; /* 2px→16px: 미세 이동은 보내지 않음 */
   const mpChanged = me.mp != null && (Math.abs(Math.round(me.mp) - (sentMp ?? 0)) >= 5 || (Math.round(me.mp) !== sentMp && me.mp >= maxMpOf()));
-  const quotaBackoff = offline || now - quotaHitAt < 60000; /* 로컬 모드/한도 초과 직후엔 위치 심박 중단 (동기화 때 한 번에 실림) */
+  const quotaBackoff = offline || ecoOn() || now - quotaHitAt < 60000; /* 로컬 모드/한도 초과 직후엔 위치 심박 중단 (동기화 때 한 번에 실림) */
   if (offline || pendKeys.size) trySync(false);
   if (!quotaBackoff && ((now - lastPosWrite > 1500 && (movedFar || hpDirty || mpChanged)) || now - lastPosWrite > 20000)) { /* 600ms→1.5s, 심박 8s→20s: 쓰기 1/3 */
     lastPosWrite = now;

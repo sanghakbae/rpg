@@ -978,7 +978,7 @@ function treeSkillFx(id, d, t, cx, cy, castPage) {
 }
 function castTreeSkill(id) {
   const d = TREES_ALL[id];
-  if (!d) return;
+  if (!d) return false;
   const now = Date.now(), castPage = myPage();
   const col = TREE_COL[d.cls] || '#ffd700';
   const pow = totalAtk() * skillPow() * (SKILL_GRADE_MUL[skillGrade(id, d)] || 1); /* 등급 배율 */
@@ -992,10 +992,10 @@ function castTreeSkill(id) {
     rings.push({ x: me.x, y: me.y, r: 70, t: 0, max: 450, color: '46,204,113' });
     fxSparks(me.x, me.y - 10, 12, '#7fe3a0', 110);
     sfx('heal');
-    return;
+    return true;
   }
   const t = nearestSim(d.self ? (d.aoe + 40) : 340);
-  if (!t) { float(me.x, me.y - 34, '대상 없음', '#aaa'); return; }
+  if (!t) { float(me.x, me.y - 34, '대상 없음', '#aaa'); return false; }
   if (d.dash) {
     poofs.push({ x: me.x, y: me.y, vx: 0, vy: 0, r: 16, t: 0, color: '#34495e', g: -60 });
     me.x = clampN(t.x + rand(-40, 40), 40, WORLD.w - 40);
@@ -1005,7 +1005,7 @@ function castTreeSkill(id) {
   const cx = d.self ? me.x : t.x, cy = d.self ? me.y : t.y;
   treeSkillFx(id, d, t, cx, cy, castPage);
   const victims = d.aoe ? sims.filter(s => s.alive && Math.hypot(s.x - cx, s.y - cy) < d.aoe) : [t];
-  if (!victims.length) { float(me.x, me.y - 34, '대상 없음', '#aaa'); return; }
+  if (!victims.length) { float(me.x, me.y - 34, '대상 없음', '#aaa'); return false; }
   const land = d.arch === 'nuke' ? 300 : 0; /* 메테오 낙하 시간 뒤에 피해 */
   victims.forEach((v, vi) => {
     for (let h = 0; h < (d.hits > 1 && !d.aoe ? d.hits : 1); h++) {
@@ -1023,6 +1023,7 @@ function castTreeSkill(id) {
       }, land + h * 200);
     }
   }
+  return true;
 }
 const POTION_SHOP = [
   ['potion',    '🧪', 50],
@@ -1942,9 +1943,12 @@ async function flushDamage(id) {
   const q = dmgQueue.get(id);
   if (!q) return;
   dmgQueue.delete(id); clearTimeout(q.timer);
-  const kill = q.sim.hp <= 0 && q.sim.alive;
-  if (!kill) { window.__lastDmg = { id, dmg: q.total, r: 'local', at: Date.now() }; return; } /* 중간 피해: 서버 쓰기 없음 */
-  const r = await dealDamage(q.sim, q.total, true); /* 처치 확정(서버 1회 쓰기 / 로컬 모드면 즉시) */
+  const kill = q.sim.hp <= 0 && q.sim.alive && !q.sim._killing;
+  if (!kill) { window.__lastDmg = { id, dmg: q.total, r: 'local', at: Date.now() }; return; } /* 중간 피해/이미 처치 진행 중: 서버 쓰기 없음 */
+  q.sim._killing = true; /* 처치 쓰기 진행 중 표식 — 같은 몹에 대한 중복 처치(더블 XP/골드/루팅) 방지 */
+  let r = null;
+  try { r = await dealDamage(q.sim, q.total, true); } /* 처치 확정(서버 1회 쓰기 / 로컬 모드면 즉시) */
+  finally { q.sim._killing = false; }
   window.__lastDmg = { id, dmg: q.total, r, at: Date.now() }; /* 진단: null=문서없음/이미 죽음, true=처치 */
   if (r === true) { hitStopUntil = Math.max(hitStopUntil, Date.now() + 72); doShake(9); await handleKill(q.sim); }
 }
@@ -2160,7 +2164,7 @@ function useSkill(slot) {
       const dmg = Math.max(1, Math.round(totalAtk() * 2 * sLv('frost_nova') * skillPow() * rand(.9, 1.1)));
       attackResult(v, dmg, false);
     }
-  } else if (TREES_ALL[id]) castTreeSkill(id);
+  } else if (TREES_ALL[id]) { if (castTreeSkill(id) === false) return; } /* 대상 없음이면 MP·쿨다운 소모 없이 종료 */
   if (mpc) me.mp = (me.mp ?? maxMpOf()) - mpc; /* 서버 반영은 위치 심박(mp 변화 ≥5)에 묶임 */
   heroCast = { id, t0: now, dur: CAST_DUR[id] || 450 }; /* 스킬 시전 모션 트리거 */
   skillCdUntil[id] = now + def.cd;
@@ -3191,7 +3195,7 @@ function updateSims(now, dt) {
           if (!g.exists() || g.data().alive) return;
           const isUniq = Math.random() < .1;
           const d2 = sdef(s);
-          const mh = isUniq ? Math.round(s.def.hp * 6) : s.def.hp;
+          const mh = isUniq ? Math.round(s.def.hp * 3.5) : s.def.hp; /* sdef()의 유니크 HP 배율(3.5)과 일치 — 이전 6배는 클램프로 버려지던 사문(死文) 값 */
           tx.update(ref, { alive: true, hp: mh, maxHp: mh, uniq: isUniq, killedBy: null });
         }).catch(() => {});
       }
@@ -5353,7 +5357,7 @@ const skIconUrl = {};
 function skillIconHtml(id, def) {
   def = def || skillDef(id) || {};
   const cls = def.cls && CLASSES[def.cls] ? def.cls : myCls;
-  const col = SKILL_FX_COLOR[id] || (CLASSES[cls] && CLASSES[cls].color) || '#ffd700';
+  const col = SKILL_FX_COLOR[id] || (def.arch ? skillElemColor(def) : null) || (CLASSES[cls] && CLASSES[cls].color) || '#ffd700'; /* 배지 캔버스와 같은 색 규칙 */
   const cvS = skillIconCanvas(id, def);
   if (cvS) {
     const k = `${SKILL_ICON[id] || TREE_ARCH_ICON[def.arch] || TREE_ARCH_ICON[def.stat] || 'x'}|${skillGrade(id, def)}|${isPassiveSkill(def)}|${SKILL_FX_COLOR[id] || (def.arch ? skillElemColor(def) : '')}|${cls}`;
@@ -7582,9 +7586,9 @@ function updateHotbar(now) {
     if (!box) return;
     const id = ids[i];
     const nm = box.querySelector('.nm'), ic = box.querySelector('.ic2'), cdEl = box.querySelector('.cd');
-    if (!id) { nm.textContent = '-'; ic.textContent = '?'; return; }
-    const def = skillDef(id);
     const k = 'hb' + el;
+    if (!id) { if (domCache[k] !== 'empty') { domCache[k] = 'empty'; nm.textContent = '-'; ic.textContent = '✦'; box.classList.remove('locked'); cdEl.style.display = 'none'; } return; }
+    const def = skillDef(id);
     const locked = !hasSkill(id);
     const remain = (skillCdUntil[id] || 0) - now;
     const cdSec = remain > 0 && !locked ? Math.ceil(remain / 1000) : 0;
@@ -8684,7 +8688,7 @@ async function init() {
   window.__PING = () => Promise.race([updateDoc(meRef, { lastSeen: Date.now() }).then(() => 'write-ok'), new Promise(r => setTimeout(() => r('write-timeout'), 8000))]).catch(e => 'write-error:' + (e.code || e.message)); /* 진단: 쓰기 채널 상태 */
   window.__MOB = async id => { const g = await getDoc(doc(db, 'monsters', id)); return g.exists() ? g.data() : null; };
   window.__give = async (id, slot = 17) => { await updX(meRef, { ['inv.' + slot]: id }); return 'ok'; }; /* 진단: 가방 슬롯에 아이템 넣기 */
-  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__view = () => ({ x: view.x, y: view.y, z: view.z, dpr }); window.__mkUniqAt = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; cam.x=s0.x; cam.y=s0.y; return {id:s0.id, kind:s0.kind, x:s0.x, y:s0.y}; }; window.__mkUniq = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; const me2=window.__me?me:me; me.x=s0.x; me.y=s0.y-80; cam.x=s0.x; cam.y=s0.y-40; return {id:s0.id, kind:s0.kind}; }; window.__useSkill = useSkill; window.__castTree = castTreeSkill; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
+  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__view = () => ({ x: view.x, y: view.y, z: view.z, dpr }); window.__mkUniqAt = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; cam.x=s0.x; cam.y=s0.y; return {id:s0.id, kind:s0.kind, x:s0.x, y:s0.y}; }; window.__mkUniq = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; const me2=window.__me?me:me; me.x=s0.x; me.y=s0.y-80; cam.x=s0.x; cam.y=s0.y-40; return {id:s0.id, kind:s0.kind}; }; window.__useSkill = useSkill; window.__paused = () => ({ paused, ready, dead: me.dead, wm: worldMapOpen() }); window.__unpause = () => { paused = false; }; window.__cdUntil = id => skillCdUntil[id]||0; window.__bound = boundId; window.__skillDef = skillDef; window.__mpc = id => { const d=skillDef(id); return d&&d.mp?mpCostOf(skillMp(id,d)):0; }; window.__castTree = castTreeSkill; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
   window.__ITEMS = () => ({ items: Object.keys(ITEMS).length, sets: Object.keys(SETS).length, sample: Object.entries(ITEMS).filter(([k]) => /_b[0-9]$/.test(k)).slice(0, 3).map(([k, v]) => k + ':' + v.name) });
   window.__ZONETEX = n => { try { const t = getTex('p' + n); return { w: t.width, h: t.height, cols: (worldColliders['p' + n] || []).length }; } catch (e) { return { err: String(e && e.stack || e).slice(0, 300) }; } };
   window.__DBG = () => ({ page: myPage(), colliders: (worldColliders[myMap()] || []).length, frozenMs: hitStopUntil - Date.now(), activeIsChat: document.activeElement === chatInput, activeTag: document.activeElement && document.activeElement.tagName + '#' + document.activeElement.id, wmUp: worldMapOpen(), mouseDown, moveSpd: moveSpd(), atkRange: atkRange(), atkCdMs: atkCdOf(), sinceAtk: Date.now() - lastAttackAt, mapFading, snapN: window.__snapN || 0, snapAgoMs: window.__snapT ? Date.now() - window.__snapT : null, lastDmg: window.__lastDmg || null, lastErr: window.__lastErr || null, dead: !!me.dead, paused, ready, sheets: Object.fromEntries(Object.entries(HERO_SHEETS).map(([k, v]) => [k, v.img ? 'ok' : v.failed ? 'failed' : 'loading'])), target: attackTargetSimId, hover: hoverSimId, dest: dest && { x: Math.round(dest.x), y: Math.round(dest.y) }, zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),

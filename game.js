@@ -1916,7 +1916,7 @@ async function handleKill(sim) {
   if (sim.uniq) {
     sysMsg(`★ 유니크 ${d2.name} 처치!`, 'q');
     toast(`★ 유니크 몬스터 처치!`, 'sysq');
-    me.q = { ...(me.q || {}), uniq: ((me.q || {}).uniq || 0) + 1 }; updX(meRef, { 'q.uniq': inc(1) }).catch(() => {});
+    updX(meRef, { 'q.uniq': inc(1) }).catch(() => {}); /* 업적: 유니크 처치 카운트 — updX가 온/오프라인 모두 1회만 반영(로컬 중복 가산 제거) */
   }
   /* 도감 해금: 처음 잡은 종류를 기록 (맵 통째로 저장 — 이름에 공백이 있어 점 경로를 못 씀) */
   const dexKey = (sim.kind || d2.name || '').replace(/^★/, '');
@@ -2514,7 +2514,7 @@ function checkDaily() {
   updX(meRef, { daily: me.daily }).catch(() => {});
 }
 const dailyQDef = id => DAILY_QUEST_POOL.find(q => q.id === id);
-const dailyQProgress = dq => Math.max(0, qCounter(dq.type) - ((me.daily || {}).base || {})[dq.type] || 0);
+const dailyQProgress = dq => Math.max(0, qCounter(dq.type) - (((me.daily || {}).base || {})[dq.type] || 0)); /* base에 없는 종류여도 0 기준으로 안전 */
 function claimAttend() {
   if ((me.daily || {}).attended) return;
   runTx(db, async tx => {
@@ -3286,7 +3286,7 @@ function enhanceItem(itemId, grade = 'normal') {
     if (r === 'no') return;
     if (r === null) { toast('강화에 실패했습니다 — 다시 시도하세요'); return; }
     if (r.ok) {
-      me.q = { ...(me.q || {}), enh: ((me.q || {}).enh || 0) + 1 }; updX(meRef, { 'q.enh': inc(1) }).catch(() => {}); /* 업적: 강화 성공 카운트 */
+      updX(meRef, { 'q.enh': inc(1) }).catch(() => {}); /* 업적: 강화 성공 카운트 — updX가 1회만 반영 */
       sfx('levelup');
       enhFxFx(true);
       toast(`🔨 강화 성공! <b style="color:${RARITY_COLOR[getItem(r.nid).rarity]}">${getItem(r.nid).name}</b>`, 'sysq');

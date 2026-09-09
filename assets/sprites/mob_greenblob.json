@@ -1,9 +1,9 @@
 {
- "fr": 256,
+ "fr": 192,
  "dirs": 8,
  "rows": 15,
- "top": 54,
- "feet": 235,
+ "top": 34,
+ "feet": 170,
  "elev": 26,
  "yawFix": 180,
  "states": {
@@ -20,12 +20,12 @@
   "attack": {
    "row": 7,
    "n": 4,
-   "clip": "Punch"
+   "clip": "Bite_Front"
   },
   "hurt": {
    "row": 11,
    "n": 1,
-   "clip": "HitReact"
+   "clip": "HitRecieve"
   },
   "death": {
    "row": 12,
@@ -33,6 +33,6 @@
    "clip": "Death"
   }
  },
- "name": "mob_orc",
- "src": "Orc_Skull.gltf"
+ "name": "mob_greenblob",
+ "src": "GreenBlob.gltf"
 }

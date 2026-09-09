@@ -105,6 +105,49 @@ const KIND_BASE = {
   orc:      { hp: 800, atk: 35, exp: 400, gold: 500, r: 42, aggro: 420, speed: 65, respawn: 120000, range: 72 },
   lich:     { hp: 2000, atk: 55, exp: 1500, gold: 2500, r: 46, aggro: 460, speed: 55, respawn: 180000, range: 80 },
 };
+/* ===== 구역별 몬스터 변형 시스템 =====
+   실제 모델(시트) 33종 → 바이옴마다 일반 4종·보스 2종 풀에서 구역 티어별로 골라 색조·이름·능력치를 바꿔
+   100구역 × 3 = 300종(★유니크 포함 600)을 결정적으로 생성한다. 저장된 몬스터 문서는 슬롯(z0/z1/boss)으로 해석하므로 마이그레이션 쓰기 없음 */
+const MOB_MODELS = { /* base → 역할(스탯 템플릿)·표시명·비행 여부 */
+  slime: { role: 'small', kr: '슬라임' }, goblin: { role: 'mid', kr: '고블린' }, wolf: { role: 'fast', kr: '늑대' }, skeleton: { role: 'tank', kr: '스켈레톤' },
+  orc: { role: 'boss', kr: '오크' }, lich: { role: 'boss', kr: '리치' },
+  mushnub: { role: 'small', kr: '머시넙' }, mushnub2: { role: 'mid', kr: '독버섯' }, mushking: { role: 'boss', kr: '머시룸 킹' },
+  cactoro: { role: 'mid', kr: '카투로' }, tribal: { role: 'mid', kr: '트라이벌' }, dino: { role: 'boss', kr: '디노' }, yeti: { role: 'tank', kr: '예티' },
+  glub: { role: 'small', kr: '글럽', fly: true }, alpaking: { role: 'boss', kr: '알파킹', fly: true }, frog: { role: 'small', kr: '개구리' }, greenblob: { role: 'small', kr: '점액괴' },
+  hywirl: { role: 'fast', kr: '하이월', fly: true }, dragon: { role: 'boss', kr: '드래곤', fly: true }, monkroose: { role: 'tank', kr: '몽크루스' },
+  golem: { role: 'tank', kr: '골렘', fly: true }, golem2: { role: 'boss', kr: '대골렘', fly: true }, ninja: { role: 'boss', kr: '닌자' }, ghost: { role: 'fast', kr: '고스트', fly: true },
+  bluedemon: { role: 'boss', kr: '청마귀' }, birb: { role: 'fast', kr: '버브' }, armabee: { role: 'mid', kr: '아르마비', fly: true }, dragon2: { role: 'boss', kr: '고룡', fly: true },
+  ghostskull: { role: 'mid', kr: '해골 유령', fly: true }, demon: { role: 'tank', kr: '데몬' },
+  skelminion: { role: 'small', kr: '해골 병사' }, skelmage: { role: 'mid', kr: '해골 마도사' }, skelrogue: { role: 'fast', kr: '해골 도적' },
+};
+const ROLE_BASE_KEY = { small: 'slime', mid: 'goblin', fast: 'wolf', tank: 'skeleton', boss: 'orc' }; /* 역할 → KIND_BASE 템플릿·드랍 테이블 */
+const ROLE_SHEET_H = { small: 3.6, mid: 4.4, fast: 3.9, tank: 4.6, boss: 4.6 };
+const BIOME_MOBS = [
+  { normals: ['slime', 'goblin', 'wolf', 'frog'], bosses: ['orc', 'mushking'] },                 /* 초원 */
+  { normals: ['wolf', 'mushnub', 'skelminion', 'birb'], bosses: ['mushking', 'monkroose'] },     /* 어두운 숲 */
+  { normals: ['cactoro', 'tribal', 'goblin', 'skelrogue'], bosses: ['dino', 'orc'] },           /* 사막 */
+  { normals: ['yeti', 'glub', 'wolf', 'birb'], bosses: ['alpaking', 'golem2'] },                 /* 설원 */
+  { normals: ['frog', 'greenblob', 'mushnub2', 'ghost'], bosses: ['mushking', 'monkroose'] },   /* 못가 */
+  { normals: ['demon', 'hywirl', 'cactoro', 'skeleton'], bosses: ['dragon', 'bluedemon'] },     /* 화산 */
+  { normals: ['skelminion', 'golem', 'monkroose', 'ghostskull'], bosses: ['golem2', 'skelmage'] }, /* 동굴 */
+  { normals: ['skeleton', 'skelrogue', 'skelmage', 'wolf'], bosses: ['ninja', 'skelmage'] },    /* 폐허 */
+  { normals: ['demon', 'ghostskull', 'ghost', 'skelmage'], bosses: ['bluedemon', 'lich'] },     /* 마계 */
+  { normals: ['birb', 'armabee', 'glub', 'hywirl'], bosses: ['dragon2', 'alpaking'] },          /* 천공 */
+];
+/* 구역 형용사: 바이옴별 10개(티어) — 세트가 서로 겹치지 않아 300종 이름이 전부 다르다 */
+const ZONE_ADJ = [
+  ['풀숲', '들꽃', '햇살', '이슬', '바람', '초록', '들판', '개울', '언덕', '노을'],
+  ['그늘', '안개', '가시덤불', '늙은', '이끼', '뒤틀린', '음침한', '검은숲', '달빛', '심야'],
+  ['사구', '모래', '작열', '건조', '신기루', '전갈', '메마른', '태양', '황무지', '유적'],
+  ['서리', '눈보라', '빙결', '얼음', '동상', '설백', '냉기', '빙하', '극한', '설왕'],
+  ['진흙', '늪', '습기', '부패', '독기', '갈대', '물이끼', '수렁', '독안개', '심연늪'],
+  ['잿빛', '용암', '불꽃', '화상', '유황', '작열', '분출', '숯', '마그마', '지옥불'],
+  ['어둠', '박쥐', '동굴', '종유석', '지하', '암흑', '균열', '심층', '광석', '지저'],
+  ['폐허', '무너진', '잊힌', '낡은', '망령', '몰락', '녹슨', '고대', '저주', '봉인'],
+  ['마계', '악몽', '혼돈', '타락', '심연', '지옥', '파멸', '역병', '공포', '종말'],
+  ['천공', '구름', '창공', '뇌운', '별빛', '바람결', '고공', '광풍', '천상', '창천'],
+];
+const BOSS_TITLE = ['수장', '대장', '족장', '장군', '군주', '폭군', '수호자', '지배자', '고왕', '제왕'];
 const BIOMES = [
   { name: '초원', style: 'meadow', kinds: ['slime', 'goblin', 'wolf'], boss: 'orcchief' },
   { name: '어두운 숲', style: 'grave', kinds: ['wolf', 'goblin', 'pslime'], boss: 'troll' },
@@ -124,26 +167,46 @@ const pageNum = () => +myPage().slice(1) || 1;
 const pageDiff = n => 1 + (n - 1) * .45;
 const pageExp = n => 1 + (n - 1) * .5 + (n - 1) * (n - 1) * .06;
 function pageDef(n) {
-  const bio = BIOMES[Math.min(9, Math.floor((n - 1) / 10))];
+  const bi = Math.min(9, Math.floor((n - 1) / 10)), bio = BIOMES[bi];
   const tier = (n - 1) % 10;
   const dh = pageDiff(n), de = pageExp(n);
-  const mk = kindId => {
-    const k = KINDS[kindId], b = KIND_BASE[k.base];
+  const bm = BIOME_MOBS[bi] || BIOME_MOBS[0];
+  const pick = (arr, i) => arr[((i % arr.length) + arr.length) % arr.length];
+  const baseA = pick(bm.normals, tier);
+  let baseB = pick(bm.normals, tier + 1 + (tier >> 1));
+  if (baseB === baseA) baseB = pick(bm.normals, tier + 2);
+  const bossBase = pick(bm.bosses, tier);
+  const mkZ = (base, slot, isBoss) => {
+    const M = MOB_MODELS[base] || MOB_MODELS.goblin;
+    const b = KIND_BASE[base] || KIND_BASE[ROLE_BASE_KEY[M.role]] || KIND_BASE.goblin;
     const km = 1 + tier * .18;
-    return { ...k, hp: Math.round(b.hp * dh * km), atk: Math.round(b.atk * dh * km * .9),
+    const hue = ((n * 37 + slot * 131) % 120) - 60; /* 구역별 색조 -60~+59° */
+    /* 이름 고유성: 형용사는 티어에 1:1(바이옴별 세트가 서로 다름) → 같은 베이스가 다른 티어·바이옴에 나와도 이름이 겹치지 않는다.
+       보스도 구역 형용사 + 칭호 (예: '풀숲 오크 수장') */
+    const adj = ZONE_ADJ[bi][tier];
+    const name = isBoss ? `${adj} ${M.kr} ${BOSS_TITLE[tier]}` : `${adj} ${M.kr}`;
+    const k = { base, name, main: '#888888', shade: '#444444', hue, fx: [], th: bio.style, role: M.role, fly: !!M.fly, zone: n,
+      dropType: KIND_BASE[base] ? base : ROLE_BASE_KEY[M.role],
+      hp: Math.round(b.hp * dh * km), atk: Math.round(b.atk * dh * km * .9),
       exp: Math.round(b.exp * de * km), gold: Math.round(b.gold * de * km),
       r: b.r, aggro: b.aggro, speed: b.speed, respawn: b.respawn, range: b.range };
+    if (isBoss) { k.hp = Math.round(k.hp * 3); k.exp = Math.round(k.exp * 2.2); k.gold = Math.round(k.gold * 2); k.r = Math.round(b.r * 1.15); }
+    return k;
   };
-  const bossKind = mk(bio.boss);
-  bossKind.hp = Math.round(bossKind.hp * 3);
-  bossKind.exp = Math.round(bossKind.exp * 2.2);
-  bossKind.gold = Math.round(bossKind.gold * 2);
-  bossKind.r = Math.round(KIND_BASE[KINDS[bio.boss].base].r * 1.15);
   return {
     n, id: pageId(n), name: `${bio.name} ${tier + 1}구역`, bio,
-    kinds: [mk(bio.kinds[0]), mk(bio.kinds[1])], boss: bossKind,
+    kinds: [mkZ(baseA, 0, false), mkZ(baseB, 1, false)], boss: mkZ(bossBase, 2, true),
     spawn: { x: n === 1 ? 800 : 170, y: 600 },
   };
+}
+/* 이름 → 구역 kind (도감·hue·드랍용). 처음 조회 때 100구역을 훑어 색인 */
+let _zoneKindIndex = null;
+function zoneKindByName(name) {
+  if (!_zoneKindIndex) {
+    _zoneKindIndex = {};
+    for (let n = 1; n <= MAX_PAGE; n++) { const pd = pageDef(n); for (const k of [...pd.kinds, pd.boss]) _zoneKindIndex[k.name] = k; }
+  }
+  return _zoneKindIndex[name];
 }
 const myMap = myPage;
 
@@ -901,11 +964,12 @@ async function ensureWorldM2() {
 }
 
 function kindByName(name) {
-  return Object.values(KINDS).find(k => k.name === name) || KINDS.slime;
+  return Object.values(KINDS).find(k => k.name === name) || zoneKindByName(name) || KINDS.slime;
 }
 /* 종류(kind) 전용 스프라이트 id — 없으면 베이스 팔레트를 바꿔 등록. 도감 썸네일도 이걸 쓴다 */
 function kindSprId(k) {
   const sprId = k.base + '::' + k.name;
+  if (!SPRITE_DEFS[k.base]) return 'goblin';
   if (!SPRITE_DEFS[sprId]) {
     const bp = SPRITE_DEFS[k.base].pal;
     const keys = Object.keys(bp);
@@ -926,7 +990,8 @@ function mobThumb(k) {
       const g = c.getContext('2d');
       const bk = Object.values(KINDS).find(x => x.base === k.base);
       let dh = 0;
-      if (bk && bk !== k) { dh = hueOf(k.main) - hueOf(bk.main); if (dh > 180) dh -= 360; if (dh < -180) dh += 360; if (Math.abs(dh) < 8) dh = 0; }
+      if (typeof k.hue === 'number') dh = k.hue;
+      else if (bk && bk !== k) { dh = hueOf(k.main) - hueOf(bk.main); if (dh > 180) dh -= 360; if (dh < -180) dh += 360; if (Math.abs(dh) < 8) dh = 0; }
       if (dh && 'filter' in g) g.filter = `hue-rotate(${Math.round(dh)}deg)`;
       const kk = (S * .86) / Math.max(1, m.feet - m.top);
       g.drawImage(sh.img, 2 * F, 0, F, F, S / 2 - F * kk / 2, S * .94 - m.feet * kk, F * kk, F * kk);
@@ -941,14 +1006,17 @@ function makeSim(id, d) {
   const isPage = (d.page || '').startsWith('p');
   let def, type, sprId;
   if (isPage) {
-    const k = kindByName(d.kind || '슬라임');
-    type = k.base;
-    sprId = kindSprId(k);
-    /* 구역 스케일링(pageDiff/pageExp)이 적용된 정본 def 사용 — 이전엔 atk/exp/gold가 10으로 하드코딩돼
-       전 구역 밸런스가 죽어 있었음. HP도 문서의 (유니크 인플레이션 가능한) maxHp 대신 정본 기준 */
     const pn3 = +(d.page.slice(1)) || 1;
     const pd3 = pageDef(pn3);
-    const kk = d.boss ? pd3.boss : (pd3.kinds.find(x => x.name === (d.kind || '')) || pd3.kinds[0]);
+    const zm = /_z(\d+)_/.exec(id);
+    /* 문서의 kind 이름 대신 슬롯(z0/z1/boss)으로 해석 — 구역 변형 도입 후에도 기존 문서를 다시 쓰지 않는다 */
+    const kk = (d.boss || /_boss$/.test(id)) ? pd3.boss : (pd3.kinds[zm ? +zm[1] : 0] || pd3.kinds[0]);
+    d = { ...d, kind: kk.name };
+    const k = kk;
+    type = k.base;
+    sprId = SPRITE_DEFS[k.base] ? kindSprId(k) : 'goblin'; /* 픽셀 폴백은 기존 6종만 있음 */
+    /* 구역 스케일링(pageDiff/pageExp)이 적용된 정본 def 사용 — 이전엔 atk/exp/gold가 10으로 하드코딩돼
+       전 구역 밸런스가 죽어 있었음. HP도 문서의 (유니크 인플레이션 가능한) maxHp 대신 정본 기준 */
     def = { ...kk, maxHp: kk.hp };
   } else {
     def = d.type === 'boss' ? BOSS_DEF : d.type === 'skeleton' ? SKELETON_DEF : d.type === 'lich' ? LICH_DEF : (MONSTER_TYPES[d.type] || MONSTER_TYPES.slime);
@@ -959,7 +1027,7 @@ function makeSim(id, d) {
   return { id, type, page: mapId, map: mapId, boss: !!d.boss, sprId, uniq: !!d.uniq, def, kind: d.kind || null,
     homeX: d.homeX ?? 800, homeY: d.homeY ?? 600,
     x: d.homeX, y: d.homeY, wa: rand(0, Math.PI * 2), nextWander: 0, atkCdUntil: 0, alive: !!d.alive,
-    hp: typeof d.hp === 'number' ? d.hp : def.hp, maxHp: def.maxHp, respawnAt: d.respawnAt || 0,
+    hp: Math.min(def.maxHp || def.hp, typeof d.hp === 'number' ? d.hp : def.hp), maxHp: def.maxHp, respawnAt: d.respawnAt || 0,
     dirA: Math.PI / 2, movingF: false, aggroF: false, blink: rand(0, 4000) };
 }
 
@@ -1054,7 +1122,7 @@ function watchMonsters() {
       if (s.alive && !d.alive) s.deadT = Date.now(); /* 사망 애니메이션 시작 시각 */
       s.alive = !!d.alive;
       s.uniq = !!d.uniq;
-      s.hp = typeof d.hp === 'number' ? d.hp : sdef(s).hp;
+      s.hp = Math.min(sdef(s).maxHp || sdef(s).hp, typeof d.hp === 'number' ? d.hp : sdef(s).hp); /* 변형 도입 전 문서의 큰 hp 클램프 */
       s.respawnAt = d.respawnAt || 0;
     });
     sims = sims.filter(s => seenIds.has(s.id)); /* 문서가 삭제된 유령 몬스터 제거(불사신+실피해 방지) */
@@ -1248,8 +1316,9 @@ async function handleKill(sim) {
   float(sim.x, sim.y - d2.r - 30, `+${d2.exp} EXP`, '#3498db');
   float(sim.x, sim.y - d2.r - 52, `+${gold} G`, '#ffd700');
   sfx('coin');
-  await gainExp(d2.exp, { type: sim.boss ? 'boss' : sim.type, gold }); /* 보스 퀘스트(q.boss) 카운트 */
-  dropLoot(sim.type, sim.x, sim.y);
+  const dropType = (sim.def && sim.def.dropType) || sim.type; /* 신규 베이스는 역할별 레거시 테이블(slime/goblin/wolf/skeleton/orc) */
+  await gainExp(d2.exp, { type: sim.boss ? 'boss' : dropType, gold }); /* 보스 퀘스트(q.boss) 카운트 */
+  dropLoot(dropType, sim.x, sim.y);
   if (sim.boss && sim.page && sim.page.startsWith('p')) {
     const pn2 = +sim.page.slice(1);
     if (!(me.conq || {})[pn2]) {
@@ -4102,7 +4171,7 @@ const PORTRAIT_GEAR = {
 /* ===== VARCO 베이크 시트 (tools/bake.html → assets/sprites/<key>.png/.json) =====
    8방향 × 1프레임 정적 시트. 걷기/공격/피격/사망 연출은 drawChar의 캔버스 변환(바운스·스웨이·런지·회전)으로 처리.
    시트가 없거나 아직 로드 전이면 null → 기존 벡터 20프레임으로 폴백 */
-const HERO_SHEETS = {}, SHEET_VER = 3;
+const HERO_SHEETS = {}, SHEET_VER = 4;
 const HERO_SHEET_H = 118; /* 시트 알파 박스(치켜든 무기 끝 포함)의 화면 높이(px). 몸통만 치면 ≈ 75~95px — 벡터 영웅(≈58px)보다 큼 */
 /* 매니페스트(있는 시트 키 목록)를 먼저 읽어, 없는 키(스켈레톤·오크 등)는 요청하지 않는다 — 404 소음·모바일 요청 낭비 제거.
    매니페스트가 없으면(구버전 배포) 예전처럼 직접 시도 */
@@ -4149,6 +4218,7 @@ function heroSheet(key) {
 }
 /* face 각도(0=오른쪽, π/2=아래) → 시트 방향 인덱스 0..7 */
 const sheetDir = face => ((Math.round(face / (Math.PI / 4)) % 8) + 8) % 8;
+window.__ZONES = () => { const out = []; for (let n = 1; n <= MAX_PAGE; n++) { const pd = pageDef(n); for (const k of [...pd.kinds, pd.boss]) out.push({ n, name: k.name, base: k.base, hue: k.hue, boss: k === pd.boss }); } return out; }; /* 진단: 300종 목록 */
 window.__SHEETS = () => Object.fromEntries(Object.entries(HERO_SHEETS).map(([k, v]) => [k, v.img ? 'ok' : v.failed ? 'failed' : 'loading'])); /* 스테이지 모드에서도 쓰는 진단 훅 */
 /* ===== VARCO 몬스터 시트 =====
    키 'mob_<base>'. 시트가 없으면 false → 호출부가 기존 픽셀 스프라이트로 폴백.
@@ -4167,7 +4237,8 @@ function mobHueShift(s, base) {
   if (_mobHueCache[s.kind] !== undefined) return _mobHueCache[s.kind];
   const kk = mobKindByName(s.kind), bk = Object.values(KINDS).find(k => k.base === base);
   let dh = 0;
-  if (kk && bk && kk !== bk) { dh = hueOf(kk.main) - hueOf(bk.main); if (dh > 180) dh -= 360; if (dh < -180) dh += 360; if (Math.abs(dh) < 8) dh = 0; }
+  if (kk && typeof kk.hue === 'number') dh = kk.hue; /* 구역 변형: 지정 색조 */
+  else if (kk && bk && kk !== bk) { dh = hueOf(kk.main) - hueOf(bk.main); if (dh > 180) dh -= 360; if (dh < -180) dh += 360; if (Math.abs(dh) < 8) dh = 0; }
   return (_mobHueCache[s.kind] = Math.round(dh));
 }
 /* 애니메이션 시트 행 선택: meta.states = { idle:{row,n}, walk, attack, hurt, death } (없으면 단일 행 0) */
@@ -4191,7 +4262,7 @@ function drawMobSheet(s, base, x, y, opts = {}) {
   const sh = heroSheet('mob_' + base);
   if (!sh) return false;
   const m = sh.meta, F = m.fr, d = sheetDir(s.dirA ?? Math.PI / 2), row = sheetRow(m, s, Date.now());
-  const H = r0(s) * (MOB_SHEET_H[base] || 4.2), k = H / Math.max(1, m.feet - m.top);
+  const H = r0(s) * (MOB_SHEET_H[base] || ROLE_SHEET_H[(MOB_MODELS[base] || {}).role] || 4.2), k = H / Math.max(1, m.feet - m.top);
   ctx.save();
   ctx.translate(x, y - (opts.bob || 0));
   if (opts.squashX || opts.squashY) ctx.scale(opts.squashX || 1, opts.squashY || 1);
@@ -4799,7 +4870,20 @@ function drawChar(o) {
 /* 몬스터 머리 꼭대기 y — VARCO 시트가 그려지는 중이면 시트 높이(r×MOB_SHEET_H), 아니면 예전 픽셀 기준 r×2.1 */
 function mobTopY(s) {
   const base = s.type, r = sdef(s).r;
-  return (MOB_SHEET_H[base] && heroSheet('mob_' + base)) ? s.y - r * MOB_SHEET_H[base] : s.y - r * 2.1;
+  const hm = MOB_SHEET_H[base] || ROLE_SHEET_H[(MOB_MODELS[base] || {}).role];
+  return (hm && heroSheet('mob_' + base)) ? s.y - r * hm - ((MOB_MODELS[base] || {}).fly ? 14 : 0) : s.y - r * 2.1;
+}
+/* 신규 베이스(Quaternius/KayKit) 공용 렌더: 그림자 + 시트(비행형은 떠서 흔들림), 시트 없으면 고블린 픽셀 폴백 */
+function drawGenericMob(s, now) {
+  const M = MOB_MODELS[s.type] || {}, r = r0(s);
+  const hover = M.fly ? 14 + Math.sin(now / 320 + (s.blink || 0)) * 5 : 0;
+  ctx.fillStyle = M.fly ? 'rgba(0,0,0,.22)' : 'rgba(0,0,0,.3)';
+  ctx.beginPath(); ctx.ellipse(s.x, s.y + 10, r * (M.fly ? .7 : .95), r * (M.fly ? .26 : .36), 0, 0, 7); ctx.fill();
+  if (s.uniq) uniqAura(s, now);
+  const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
+  if (!drawMobSheet(s, s.type, s.x, s.y + 11 - hover, { flash, bob: (s.movingF && !M.fly) ? Math.abs(Math.sin(now / 120 + (s.blink || 0))) * 3 : 0 }))
+    drawSprite(s.sprId || 'goblin', s.x, s.y + 11, s.uniq ? 5.6 : 4.5, { flash });
+  drawKindExtras(s, now);
 }
 function mobUI(s, wide) {
   const d2 = sdef(s);
@@ -6276,6 +6360,8 @@ function draw(now) {
     else if (s.type === 'wolf') drawWolf(s, now);
     else if (s.type === 'skeleton') drawSkeleton(s, now);
     else if (s.type === 'lich') drawLich(s, now);
+    else if (s.type === 'orc' || s.type === 'boss') drawBoss(s, now);
+    else if (MOB_MODELS[s.type]) drawGenericMob(s, now);
     else drawBoss(s, now);
     ctx.restore();
   }
@@ -7042,6 +7128,8 @@ function stageMode() {
     else if (s.type === 'wolf') drawWolf(s, now);
     else if (s.type === 'skeleton') drawSkeleton(s, now);
     else if (s.type === 'lich') drawLich(s, now);
+    else if (s.type === 'orc' || s.type === 'boss') drawBoss(s, now);
+    else if (MOB_MODELS[s.type]) drawGenericMob(s, now);
     else drawBoss(s, now);
   };
   const sl = () => {

@@ -2,8 +2,8 @@
  "fr": 256,
  "dirs": 8,
  "rows": 15,
- "top": 54,
- "feet": 235,
+ "top": 34,
+ "feet": 232,
  "elev": 26,
  "yawFix": 180,
  "states": {
@@ -33,6 +33,6 @@
    "clip": "Death"
   }
  },
- "name": "mob_orc",
- "src": "Orc_Skull.gltf"
+ "name": "mob_ninja",
+ "src": "Ninja.gltf"
 }

@@ -1,26 +1,26 @@
 {
- "fr": 256,
+ "fr": 192,
  "dirs": 8,
  "rows": 15,
- "top": 54,
- "feet": 235,
+ "top": 29,
+ "feet": 191,
  "elev": 26,
  "yawFix": 180,
  "states": {
   "idle": {
    "row": 0,
    "n": 3,
-   "clip": "Idle"
+   "clip": "Flying_Idle"
   },
   "walk": {
    "row": 3,
    "n": 4,
-   "clip": "Walk"
+   "clip": "Fast_Flying"
   },
   "attack": {
    "row": 7,
    "n": 4,
-   "clip": "Punch"
+   "clip": "Headbutt"
   },
   "hurt": {
    "row": 11,
@@ -33,6 +33,6 @@
    "clip": "Death"
   }
  },
- "name": "mob_orc",
- "src": "Orc_Skull.gltf"
+ "name": "mob_armabee",
+ "src": "Armabee.gltf"
 }

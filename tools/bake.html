@@ -40,10 +40,26 @@ const JOBS = [
   /* 애니메이션 모델(리깅 포함): 상태별 프레임을 행으로 굽는다. anim: 상태→클립 이름 정규식, frames: 상태별 프레임 수 */
   { url: '../assets/glb/Orc_Skull.gltf', key: 'mob_orc', fr: 256, yaw: 0, hscale: 1,
     anim: { idle: /^Idle$/i, walk: /^Walk$/i, attack: /^Weapon$|^Punch$/i, hurt: /^HitReact$/i, death: /^Death$/i } },
-  { url: '../assets/glb/Skeleton_Warrior.glb', key: 'mob_skeleton', fr: 256, yaw: 0, hscale: 1,
+  { url: '../assets/glb/Skeleton_Warrior.glb', key: 'mob_skeleton', fr: 192, yaw: 0, hscale: 1,
     anim: { idle: /^Idle$|^Idle_A$|2H_Melee_Idle/i, walk: /^Walking_A$|^Walking_B$|^Walk$/i, attack: /1H_Melee_Attack_Slice_Diagonal|1H_Melee_Attack_Chop|2H_Melee_Attack_Slice/i, hurt: /^Hit_A$/i, death: /^Death_A$/i } },
 ];
-const ANIM_FRAMES = { idle: 4, walk: 6, attack: 6, hurt: 2, death: 4 };
+const BOSS_KEYS = new Set(['mob_mushking', 'mob_dino', 'mob_alpaking', 'mob_dragon', 'mob_golem2', 'mob_ninja', 'mob_bluedemon', 'mob_dragon2', 'mob_orc']); /* 보스는 화면에 크게 나와 256px */
+/* Quaternius 팩 애니메이션 프리셋 */
+const AN_BIG = { idle: /^Idle$/i, walk: /^Walk$/i, attack: /^Weapon$|^Punch$/i, hurt: /^HitReact$/i, death: /^Death$/i };
+const AN_FLY = { idle: /^Flying_Idle$/i, walk: /^Fast_Flying$/i, attack: /^Headbutt$|^Punch$/i, hurt: /^HitReact$/i, death: /^Death$/i };
+const AN_BLOB = { idle: /^Idle$/i, walk: /^Walk$/i, attack: /^Bite_Front$/i, hurt: /^HitRecieve$/i, death: /^Death$/i };
+const AN_KAY = { idle: /^Idle$|^Idle_A$|2H_Melee_Idle/i, walk: /^Walking_A$|^Walking_B$|^Walk$/i, attack: /1H_Melee_Attack_Slice_Diagonal|1H_Melee_Attack_Chop|2H_Melee_Attack_Slice|1H_Ranged_Shoot/i, hurt: /^Hit_A$/i, death: /^Death_A$/i };
+for (const [file, key, an] of [
+  ['MushroomKing', 'mob_mushking', AN_BIG], ['Mushnub', 'mob_mushnub', AN_BLOB], ['Mushnub_Evolved', 'mob_mushnub2', AN_BLOB],
+  ['Cactoro', 'mob_cactoro', AN_BIG], ['Tribal', 'mob_tribal', AN_BIG], ['Dino', 'mob_dino', AN_BIG], ['Yeti', 'mob_yeti', AN_BIG],
+  ['Glub', 'mob_glub', AN_FLY], ['Alpaking_Evolved', 'mob_alpaking', AN_FLY], ['Frog', 'mob_frog', AN_BIG], ['GreenBlob', 'mob_greenblob', AN_BLOB],
+  ['Hywirl', 'mob_hywirl', AN_FLY], ['Dragon', 'mob_dragon', AN_FLY], ['Monkroose', 'mob_monkroose', AN_BIG], ['Goleling', 'mob_golem', AN_FLY],
+  ['Goleling_Evolved', 'mob_golem2', AN_FLY], ['Ninja', 'mob_ninja', AN_BIG], ['Ghost', 'mob_ghost', AN_FLY], ['BlueDemon', 'mob_bluedemon', AN_BIG],
+  ['Birb', 'mob_birb', AN_BIG], ['Armabee', 'mob_armabee', AN_FLY], ['Dragon_Evolved', 'mob_dragon2', AN_FLY], ['Ghost_Skull', 'mob_ghostskull', AN_FLY],
+  ['Demon', 'mob_demon', AN_BIG],
+  ['Skeleton_Minion.glb', 'mob_skelminion', AN_KAY], ['Skeleton_Mage.glb', 'mob_skelmage', AN_KAY], ['Skeleton_Rogue.glb', 'mob_skelrogue', AN_KAY],
+]) JOBS.push({ url: '../assets/glb/' + (file.endsWith('.glb') ? file : file + '.gltf'), key, fr: BOSS_KEYS.has(key) ? 256 : 192, yaw: 0, hscale: 1, anim: an });
+const ANIM_FRAMES = { idle: 3, walk: 4, attack: 4, hurt: 1, death: 3 }; /* 15행 — 시트 용량(개당 ≈1.3MB) 억제 */
 const ANIM_ORDER = ['idle', 'walk', 'attack', 'hurt', 'death'];
 const SAVE_URL = 'http://localhost:8124/save';
 const log = m => { const el = document.getElementById('log'); el.textContent += m + '\n'; el.scrollTop = 1e9; };
@@ -149,7 +165,8 @@ function bakeAnimated(root, animations, FR, elev, yawFix, animMap) {
 async function run(onlyFirst) {
   const FR = +$('fr').value || 512, elev = +$('elev').value || 26, yawFix = +$('yawFix').value || 0, hs = +$('hscale').value || 1;
   $('out').innerHTML = '';
-  for (const job of (onlyFirst ? JOBS.slice(0, 1) : JOBS)) {
+  const onlyKeys = (new URLSearchParams(location.search).get('only') || '').split(',').filter(Boolean);
+  for (const job of (onlyFirst ? JOBS.slice(0, 1) : JOBS).filter(j => !onlyKeys.length || onlyKeys.includes(Array.isArray(j) ? j[1] : j.key))) {
     const isObj = !Array.isArray(job);
     const url = isObj ? job.url : job[0], name = isObj ? job.key : job[1], yawExtra = isObj ? (job.yaw || 0) : (job[2] || 0);
     const frJob = isObj && job.fr ? job.fr : FR, hsJob = isObj && job.hscale ? job.hscale : hs;

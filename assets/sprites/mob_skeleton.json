@@ -1,35 +1,35 @@
 {
- "fr": 256,
+ "fr": 192,
  "dirs": 8,
- "rows": 22,
- "top": 54,
- "feet": 228,
+ "rows": 15,
+ "top": 41,
+ "feet": 171,
  "elev": 26,
  "yawFix": 180,
  "states": {
   "idle": {
    "row": 0,
-   "n": 4,
+   "n": 3,
    "clip": "2H_Melee_Idle"
   },
   "walk": {
-   "row": 4,
-   "n": 6,
+   "row": 3,
+   "n": 4,
    "clip": "Walking_A"
   },
   "attack": {
-   "row": 10,
-   "n": 6,
+   "row": 7,
+   "n": 4,
    "clip": "1H_Melee_Attack_Chop"
   },
   "hurt": {
-   "row": 16,
-   "n": 2,
+   "row": 11,
+   "n": 1,
    "clip": "Hit_A"
   },
   "death": {
-   "row": 18,
-   "n": 4,
+   "row": 12,
+   "n": 3,
    "clip": "Death_A"
   }
  },

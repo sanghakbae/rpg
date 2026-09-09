@@ -2563,8 +2563,6 @@ function dailyPanelHtml() {
   checkDaily();
   const dl = me.daily || {};
   const streak = dl.streak || 0;
-  const cycleDay = streak % 7; /* 다음에 받을 칸(0-based). attended면 이번 칸은 받은 것 */
-  const nextIdx = dl.attended ? (streak % 7) : (streak % 7);
   /* 출석 캘린더 7칸 */
   let cal = '<div class="dcal">';
   for (let i = 0; i < 7; i++) {
@@ -9063,11 +9061,14 @@ function waitForLoginClick() {
 
 /* ================= 시작 ================= */
 /* (제거) 15초 lastSeen 별도 쓰기 — 위치 심박(20s)에 lastSeen이 포함돼 중복이었다 */
+let _dailyCheckT = 0;
 setInterval(() => {
   let n = 1;
   for (const [, o] of Object.entries(others)) if (Date.now() - (o.lastSeen || 0) < OFFLINE_MS) n++;
   const el = $('ocN');
   if (el) el.textContent = n;
+  /* 자정 넘김 감지: 장시간 접속 중에도 날짜가 바뀌면 일일 초기화 (이전엔 재접속/퀘스트창 열 때만) */
+  if (ready && Date.now() - _dailyCheckT > 30000) { _dailyCheckT = Date.now(); try { if ((me.daily || {}).date && (me.daily || {}).date !== todayStr()) { checkDaily(); if ($('questPanel')?.classList.contains('open')) renderQuests(); } } catch (e) {} }
 }, 1000);
 
 window.addEventListener('unhandledrejection', ev => { try { const r = ev.reason; window.__lastErr = { at: Date.now(), where: 'unhandledrejection', code: r && r.code, msg: String(r && (r.stack || r.message) || r).slice(0, 400) }; } catch (e) {} });

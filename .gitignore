@@ -4,3 +4,7 @@ node_modules/
 assets/glb/
 firebase-debug.log
 .DS_Store
+.claude/
+.firebase/
+boss_after.png
+assets/glb/dbg_*

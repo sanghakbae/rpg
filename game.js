@@ -1503,9 +1503,9 @@ function kindSprId(k) {
 }
 const mobThumbCache = {};
 /* 도감 썸네일: VARCO 시트가 있으면 정면(d=2) 셀 + 변종 색조 회전, 없으면 픽셀 스프라이트 */
-function mobThumb(k) {
+function mobThumb(k, allowSheet = true) {
   try {
-    const sh = heroSheet('mob_' + k.base);
+    const sh = allowSheet ? heroSheet('mob_' + k.base) : null; /* 미발견 몬스터는 무거운 시트를 받지 않고 벡터 폴백만 사용 */
     if (sh) {
       const ck = 'S:' + k.name;
       if (mobThumbCache[ck]) return mobThumbCache[ck];
@@ -7704,8 +7704,9 @@ function renderDex() {
   const dex = me.dex || {};
   const card = (k, n, tag) => {
     const seen = !!dex[k.name];
+    /* 발견한 몬스터만 실제 스프라이트 시트를 로드(도감 열 때 전 몬스터 64MB 일괄 다운로드 방지) — 미발견은 회색 벡터 폴백 */
     return `<div class="dexmon ${seen ? 'seen' : 'unseen'}" title="${esc(k.name)}${seen ? '' : ' — 미발견'}">
-      <img class="dexic ${heroSheet('mob_' + k.base) ? 'smooth' : ''}" src="${mobThumb(k)}" alt="">
+      <img class="dexic ${seen && heroSheet('mob_' + k.base) ? 'smooth' : ''}" src="${mobThumb(k, seen)}" alt="">
       <div class="dexnm">${seen ? esc(k.name) : '???'}</div>
       <div class="dexlv">${tag ? tag + ' ' : ''}Lv${n}</div>
     </div>`;

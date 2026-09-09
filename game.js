@@ -441,10 +441,51 @@ const SETS = {
     pieces: [['knight_sword', 'knight_bow', 'knight_dagger', 'knight_staff'], 'orb_lich'],
     bonus: { 2: { atk: 12, def: 6, critDmgMul: .3 } } },
 };
+/* ===== 직업별 구역 장비 (생성) =====
+   밴드(10구역 단위) × 직업 × 슬롯 9종(무기·갑옷·투구·바지·장갑·부츠·팔찌·목걸이·반지) = 360종, 밴드·직업마다 8부위 세트 40개.
+   id 는 `${slot}_${cls}_b${band}` 로 고정(저장된 인벤토리와 항상 일치). 능력치는 밴드에 따라 상승, 희귀도는 밴드 구간별 */
+const SET_BANDS = { cloth: [0], leather: [1], trinket: [2, 3], chief: [4, 5], steel: [6], knight: [7], crown: [8, 9] };
+const GEAR_BAND_ADJ = ['풋내기', '견습', '숙련', '정예', '수호', '영웅', '전설', '고대', '심연', '신성'];
+const GEAR_RARITY_BY_BAND = ['common', 'uncommon', 'rare', 'rare', 'epic', 'epic', 'legend', 'legend', 'legend', 'unique'];
+const GEAR_CLASS = {
+  warrior: { setName: '전사단', hue: '#c0392b', pieces: { weapon: '대검', armor: '판금 갑옷', helmet: '강철 투구', pants: '판금 각반', gloves: '건틀릿', boots: '철화', bracelet: '완갑', necklace: '군표', ring: '인장 반지' }, stat: { def: 1.4, atk: 1.0, hp: 1.3, crit: .4, spd: .6 } },
+  archer:  { setName: '추적자', hue: '#27ae60', pieces: { weapon: '장궁', armor: '가죽 조끼', helmet: '깃털 두건', pants: '사냥 바지', gloves: '사수 장갑', boots: '경보화', bracelet: '활팔찌', necklace: '송곳니 목걸이', ring: '매의 반지' }, stat: { def: .8, atk: 1.1, hp: .9, crit: 1.2, spd: 1.4 } },
+  rogue:   { setName: '암살자', hue: '#f39c12', pieces: { weapon: '쌍단검', armor: '그림자 외투', helmet: '복면', pants: '은신 바지', gloves: '독날 장갑', boots: '무음화', bracelet: '독침 팔찌', necklace: '밤의 목걸이', ring: '그림자 반지' }, stat: { def: .7, atk: 1.2, hp: .8, crit: 1.6, spd: 1.2 } },
+  mage:    { setName: '마도사', hue: '#9b59b6', pieces: { weapon: '지팡이', armor: '로브', helmet: '마법사 모자', pants: '마법 바지', gloves: '주문 장갑', boots: '부유화', bracelet: '마력 팔찌', necklace: '비전 목걸이', ring: '마도 반지' }, stat: { def: .7, atk: 1.4, hp: .9, crit: .8, spd: .8, mp: 1.5 } },
+};
+const GEAR_SLOTS = ['weapon', 'armor', 'helmet', 'pants', 'gloves', 'boots', 'bracelet', 'necklace', 'ring'];
+const zoneGearId = (band, cls, slot) => `${slot}_${cls}_b${band}`;
+(function genZoneGear() {
+  const shadeHex = (hex, f) => { const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)); return '#' + [r, g, b].map(v => Math.max(0, Math.min(255, Math.round(v * f))).toString(16).padStart(2, '0')).join(''); };
+  for (let band = 0; band < 10; band++) {
+    const k = 1 + band * .9; /* 밴드 배율: 0밴드 1.0 → 9밴드 9.1 */
+    for (const [cls, G] of Object.entries(GEAR_CLASS)) {
+      const color = shadeHex(G.hue, .75 + band * .05);
+      const pieces = [];
+      for (const slot of GEAR_SLOTS) {
+        const id = zoneGearId(band, cls, slot);
+        const it = { name: `${GEAR_BAND_ADJ[band]} ${G.pieces[slot]}`, slot, cls, color, rarity: GEAR_RARITY_BY_BAND[band], band };
+        if (slot === 'weapon') it.atk = Math.round(4 * k * G.stat.atk);
+        else if (slot === 'armor') { it.def = Math.round(2.2 * k * G.stat.def); it.hp = Math.round(12 * k * G.stat.hp); }
+        else if (slot === 'helmet') { it.def = Math.round(1.4 * k * G.stat.def); if (G.stat.mp) it.mp = Math.round(8 * k); }
+        else if (slot === 'pants') it.def = Math.round(1.6 * k * G.stat.def);
+        else if (slot === 'gloves') { it.def = Math.round(.8 * k * G.stat.def); it.atk = Math.round(1.2 * k * G.stat.atk); }
+        else if (slot === 'boots') { it.def = Math.round(.8 * k * G.stat.def); it.spd = Math.round(6 * k * G.stat.spd / 3); }
+        else if (slot === 'bracelet') { it.def = Math.round(.6 * k * G.stat.def); it.atk = Math.round(.8 * k * G.stat.atk); }
+        else if (slot === 'necklace') { it.atk = Math.round(1.4 * k * G.stat.atk); if (G.stat.mp) it.mp = Math.round(6 * k); }
+        else if (slot === 'ring') it.crit = +(0.012 * k * G.stat.crit).toFixed(3);
+        ITEMS[id] = it;
+        if (slot !== 'weapon') pieces.push(id);
+      }
+      SETS[`b${band}_${cls}`] = { name: `${GEAR_BAND_ADJ[band]} ${G.setName}`, color, pieces,
+        bonus: { 2: { def: Math.round(2 * k) }, 4: { hp: Math.round(40 * k), atk: Math.round(2 * k) }, 6: { crit: +(.02 + band * .004).toFixed(3), atkMul: .06 + band * .01 }, 8: { defMul: .08 + band * .01, critDmgMul: .1 + band * .02 } } };
+      SET_BANDS[`b${band}_${cls}`] = [band];
+    }
+  }
+})();
 const SET_PIECE_TO_SET = {};
 for (const [sid, s] of Object.entries(SETS)) for (const pid of s.pieces.flat()) SET_PIECE_TO_SET[pid] = sid;
 /* 세트 지역락: 밴드(10구역 단위) — 해당 지역에서만 드랍 */
-const SET_BANDS = { cloth: [0], leather: [1], trinket: [2, 3], chief: [4, 5], steel: [6], knight: [7], crown: [8, 9] };
 const SET_PIECE_BAND = {};
 for (const [sid, bands] of Object.entries(SET_BANDS)) for (const pid of (SETS[sid].pieces || []).flat()) SET_PIECE_BAND[pid] = bands;
 const bandOfPage = n => Math.min(9, Math.max(0, Math.floor((((n || 1) - 1)) / 10)));
@@ -1269,6 +1310,9 @@ function rollDrops(type) {
   const drops = table.filter(([, p]) => Math.random() < p).map(([id]) => classWeapon(id)).filter(allow);
   const uniqPool = UNIQUE_POOL.filter(id => allow(classWeapon(id)));
   if (Math.random() < UNIQUE_RATE && uniqPool.length) drops.push(classWeapon(uniqPool[Math.floor(Math.random() * uniqPool.length)]));
+  /* 구역 장비: 일반 몹 7% / 보스 60% 확률로 현재 밴드·내 직업 장비 1종(슬롯 무작위) */
+  const gearP = (type === 'boss' || type === 'orc' || type === 'lich') ? .6 : .07;
+  if (Math.random() < gearP) drops.push(zoneGearId(band, myCls, GEAR_SLOTS[Math.floor(Math.random() * GEAR_SLOTS.length)]));
   const legPool = LEGEND_POOL.filter(id => allow(classWeapon(id)));
   if (Math.random() < LEGEND_RATE && legPool.length) drops.push(classWeapon(legPool[Math.floor(Math.random() * legPool.length)]));
   return drops;
@@ -2430,6 +2474,16 @@ function enhFxFx(ok) {
   rings.push({ x: me.x, y: me.y, r: 90, t: 0, max: 550, color: ok ? '255,215,0' : '255,60,60' });
   float(me.x, me.y - 64, ok ? '강화 성공!' : '파괴...', ok ? '#ffd700' : '#ff5050', true);
 }
+/* 세트 네온: 같은 세트를 2개 이상 착용 중이면 그 세트 아이템 슬롯에 세트 색 발광 */
+function markSetGlow(div, rawId) {
+  try {
+    const base = getItem(rawId)._base || splitStack(rawId)[0];
+    const sid = SET_PIECE_TO_SET[base];
+    if (!sid) return;
+    const n = setBonus().counts[sid] || 0;
+    if (n >= 2) { div.classList.add('setglow'); div.style.setProperty('--sc', SETS[sid].color); }
+  } catch (e) {}
+}
 function renderInvUI() {
   /* 위치 저장 에코 스냅샷마다 호출되므로 실제 내용이 바뀐 경우에만 DOM 재구축 */
   hideTip();
@@ -2443,6 +2497,7 @@ function renderInvUI() {
     const div = document.createElement('div');
     div.className = 'islot';
     const itemId = (me.inv || {})[String(i)];
+    if (itemId) markSetGlow(div, itemId);
     if (itemId) {
       count++;
       const it = getItem(itemId);
@@ -2506,8 +2561,9 @@ function renderInvUI() {
     const s = SETS[sid];
     const total = s.pieces.length;
     const lines = Object.keys(s.bonus).map(Number).sort((a, b) => a - b).map(t =>
-      `<div style="color:${n >= t ? '#7fe3a0' : '#667'}">${n >= t ? '✔' : '○'} ${t}셋: ${esc(bonusText(s.bonus[t]))}</div>`).join('');
-    return `<div style="margin-bottom:4px;"><b style="color:${s.color}">◈ ${esc(s.name)}</b> <span style="color:#ffd700">${n}/${total}</span> <span style="color:#889;font-size:10.5px">📍${esc(setRegionText(sid))}</span>${lines}</div>`;
+      `<span class="${n >= t ? 'on' : 'off'}">${n >= t ? '✔' : '○'} ${t}셋 ${esc(bonusText(s.bonus[t]))}</span>`).join('');
+    const worn = s.pieces.flat().filter(pid => Object.values(me.equipped || {}).some(eid => (getItem(eid)._base || eid) === pid)).map(pid => esc(getItem(pid).name.replace(/^\S+\s/, ''))).join(' · ');
+    return `<div class="setline"><div class="seteff">${lines}</div><div class="setcnt"><b style="color:${s.color}">◈ ${esc(s.name)}</b> <span style="color:#ffd700">${n}/${total}</span><div class="setworn">${worn}</div></div></div>`;
   }).join('');
   if (setHtml) { setRow.innerHTML = setHtml; setRow.style.display = 'block'; }
   else setRow.style.display = 'none';
@@ -2534,6 +2590,7 @@ function renderInvUI() {
       const th2 = itemThumb(itemId);
       div.innerHTML = `<span class="slbl">${label}</span>` + (th2 ? `<img class="eic" src="${th2}" alt="">` : `<span style="color:${it.color}">${SLOT_ICONS[slot]}</span>`) + `<span class="enm" style="color:${it.color}">${esc(it.name)}</span>`;
       div.dataset.raw = itemId;
+      markSetGlow(div, itemId); /* 장착 슬롯 세트 네온 */
       const sl = it._base ? setLineFor(it._base) : '';
       div.title = `${it.name} [${RARITY_KR[it.rarity] || '일반'}]\n${itemStat(it)}${sl ? '\n' + sl : ''}\n클릭: 해제 · 우클릭: 강화`;
       div.onclick = () => unequip(slot);
@@ -7797,6 +7854,7 @@ async function init() {
   window.__DD = async id => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; const t0 = performance.now(); const r = await Promise.race([dealDamage(sm, 1), new Promise(rs => setTimeout(() => rs('dd-timeout'), 8000))]); return { r, ms: Math.round(performance.now() - t0) }; };
   window.__PING = () => Promise.race([updateDoc(meRef, { lastSeen: Date.now() }).then(() => 'write-ok'), new Promise(r => setTimeout(() => r('write-timeout'), 8000))]).catch(e => 'write-error:' + (e.code || e.message)); /* 진단: 쓰기 채널 상태 */
   window.__MOB = async id => { const g = await getDoc(doc(db, 'monsters', id)); return g.exists() ? g.data() : null; };
+  window.__ITEMS = () => ({ items: Object.keys(ITEMS).length, sets: Object.keys(SETS).length, sample: Object.entries(ITEMS).filter(([k]) => /_b[0-9]$/.test(k)).slice(0, 3).map(([k, v]) => k + ':' + v.name) });
   window.__ZONETEX = n => { try { const t = getTex('p' + n); return { w: t.width, h: t.height, cols: (worldColliders['p' + n] || []).length }; } catch (e) { return { err: String(e && e.stack || e).slice(0, 300) }; } };
   window.__DBG = () => ({ page: myPage(), colliders: (worldColliders[myMap()] || []).length, frozenMs: hitStopUntil - Date.now(), activeIsChat: document.activeElement === chatInput, activeTag: document.activeElement && document.activeElement.tagName + '#' + document.activeElement.id, wmUp: worldMapOpen(), mouseDown, moveSpd: moveSpd(), atkRange: atkRange(), atkCdMs: atkCdOf(), sinceAtk: Date.now() - lastAttackAt, mapFading, snapN: window.__snapN || 0, snapAgoMs: window.__snapT ? Date.now() - window.__snapT : null, lastDmg: window.__lastDmg || null, lastErr: window.__lastErr || null, dead: !!me.dead, paused, ready, sheets: Object.fromEntries(Object.entries(HERO_SHEETS).map(([k, v]) => [k, v.img ? 'ok' : v.failed ? 'failed' : 'loading'])), target: attackTargetSimId, hover: hoverSimId, dest: dest && { x: Math.round(dest.x), y: Math.round(dest.y) }, zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),
     me: { x: Math.round(me.x), y: Math.round(me.y), lv: me.lv, map: me.map, bag: me.bagSize, conq: JSON.stringify(me.conq || {}) },

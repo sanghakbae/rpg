@@ -99,6 +99,16 @@
            font-size: 12.5px; cursor: pointer; text-align: center; line-height: 1.25; overflow: hidden; padding: 0 4px; gap: 2px; }
   .eslot .slbl { font-size: 11px; color: #778; letter-spacing: 1px; }
   .eslot:hover { border-color: #ffd700; }
+  /* 세트 네온: 2개 이상 착용한 세트의 아이템 */
+  .setglow { border-color: var(--sc, #ffd700) !important; box-shadow: 0 0 10px var(--sc, #ffd700), inset 0 0 10px color-mix(in srgb, var(--sc, #ffd700) 35%, transparent); animation: setpulse 1.6s ease-in-out infinite; }
+  @keyframes setpulse { 0%, 100% { box-shadow: 0 0 8px var(--sc, #ffd700), inset 0 0 8px color-mix(in srgb, var(--sc, #ffd700) 30%, transparent); } 50% { box-shadow: 0 0 18px var(--sc, #ffd700), 0 0 34px color-mix(in srgb, var(--sc, #ffd700) 55%, transparent), inset 0 0 12px color-mix(in srgb, var(--sc, #ffd700) 45%, transparent); } }
+  /* 세트 현황판: 왼쪽 효과 · 오른쪽 세트명/착용 현황 */
+  .setline { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,.06); }
+  .setline:last-child { border-bottom: none; }
+  .seteff { flex: 1; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+  .seteff .on { color: #7fe3a0; } .seteff .off { color: #667; }
+  .setcnt { text-align: right; white-space: nowrap; }
+  .setworn { color: #889; font-size: 10.5px; white-space: normal; max-width: 260px; }
   #invGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 7px; }
   .islot { aspect-ratio: 1; background: rgba(255,255,255,.06); border: 1px solid #444; border-radius: 6px;
     display: flex; align-items: center; justify-content: center; cursor: pointer; position: relative; }
@@ -594,7 +604,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=111"
+<script type="module" src="game.js?v=113"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

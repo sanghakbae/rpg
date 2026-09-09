@@ -1911,6 +1911,7 @@ async function handleKill(sim) {
   if (sim.uniq) {
     sysMsg(`★ 유니크 ${d2.name} 처치!`, 'q');
     toast(`★ 유니크 몬스터 처치!`, 'sysq');
+    me.q = { ...(me.q || {}), uniq: ((me.q || {}).uniq || 0) + 1 }; updX(meRef, { 'q.uniq': inc(1) }).catch(() => {});
   }
   /* 도감 해금: 처음 잡은 종류를 기록 (맵 통째로 저장 — 이름에 공백이 있어 점 경로를 못 씀) */
   const dexKey = (sim.kind || d2.name || '').replace(/^★/, '');
@@ -2367,6 +2368,122 @@ function claimQuest(id) {
     }
   }).catch(() => {});
 }
+
+/* ================= 업적 · 칭호 ================= */
+const TITLES = {
+  novice:    { name: '초심자',       color: '#9aa' },
+  slayer:    { name: '학살자',       color: '#e74c3c' },
+  bosshunter:{ name: '보스 헌터',     color: '#c0392b' },
+  uniquehunter:{ name: '유니크 사냥꾼', color: '#ff4d4d' },
+  rich:      { name: '대부호',       color: '#ffd700' },
+  collector: { name: '수집가',       color: '#3498db' },
+  scholar:   { name: '박물학자',     color: '#1abc9c' },
+  conqueror: { name: '정복자',       color: '#9b59b6' },
+  legend:    { name: '살아있는 전설', color: '#f39c12' },
+  immortal:  { name: '불멸자',       color: '#e8e4d8' },
+  master:    { name: '무기 장인',     color: '#5dade2' },
+};
+/* stat: q 카운터/파생값. tiers: [목표, 골드, 보석, 칭호?] 여러 단계 */
+const ACHIEVEMENTS = [
+  { id: 'kills',  icon: '⚔️', name: '몬스터 사냥',   stat: 'total',        tiers: [[50,300,1],[500,1500,3,'slayer'],[5000,8000,10]] },
+  { id: 'boss',   icon: '👑', name: '보스 토벌',     stat: 'boss',         tiers: [[5,500,2],[30,3000,5,'bosshunter'],[100,12000,15]] },
+  { id: 'uniq',   icon: '★',  name: '유니크 처치',   stat: 'uniq',         tiers: [[3,600,3],[25,4000,8,'uniquehunter'],[100,15000,20]] },
+  { id: 'zones',  icon: '🗺️', name: '구역 정복',     stat: 'zones',        tiers: [[5,400,2],[30,4000,8,'conqueror'],[100,30000,40,'legend']] },
+  { id: 'level',  icon: '⭐', name: '성장',          stat: 'lv',           tiers: [[10,300,1],[50,5000,10],[100,20000,30,'immortal']] },
+  { id: 'gold',   icon: '💰', name: '재산 축적',     stat: 'gold_earned',  tiers: [[5000,300,1],[100000,3000,6,'rich'],[2000000,20000,25]] },
+  { id: 'dex',    icon: '📖', name: '몬스터 도감',   stat: 'dex',          tiers: [[20,500,2,'collector'],[100,4000,10],[300,25000,30,'scholar']] },
+  { id: 'items',  icon: '🎒', name: '아이템 수집',   stat: 'items',        tiers: [[50,300,1],[500,2500,6],[3000,12000,18]] },
+  { id: 'enh',    icon: '🔨', name: '장비 강화',     stat: 'enh',          tiers: [[10,400,2],[100,4000,10,'master'],[500,18000,22]] },
+  { id: 'skills', icon: '✦',  name: '스킬 연마',     stat: 'skills_bought',tiers: [[5,300,1],[30,3000,8],[100,12000,15]] },
+];
+const achvValue = stat => {
+  const q = me.q || {};
+  if (stat === 'lv') return me.lv || 1; /* q 카운터 외 파생값 */
+  if (stat === 'zones') return Object.keys(me.conq || {}).length;
+  if (stat === 'dex') return Object.keys(me.dex || {}).length;
+  return q[stat] || 0;
+};
+/* 다음 미수령 단계 인덱스 (0-based), 전 단계 수령했는지 기준 */
+function achvStage(a) {
+  const cl = (me.achv || {})[a.id] || 0; /* 수령한 단계 수 */
+  return cl;
+}
+function achvClaimable(a) {
+  const cl = achvStage(a);
+  if (cl >= a.tiers.length) return false;
+  return achvValue(a.stat) >= a.tiers[cl][0];
+}
+function achvClaimableCount() { return ACHIEVEMENTS.filter(achvClaimable).length; }
+function renderAchv() {
+  const body = $('achvBody'); if (!body) return;
+  const title = me.title || '';
+  let owned = ownedTitles();
+  const titleBar = `<div class="achvTitles"><div class="atHd">🎖️ 칭호 <span>이름 앞에 표시 · 클릭해 장착/해제</span></div><div class="atList">`
+    + `<button class="atChip ${!title ? 'on' : ''}" data-title="">없음</button>`
+    + owned.map(t => `<button class="atChip ${title === t ? 'on' : ''}" data-title="${t}" style="--tc:${TITLES[t].color}">${esc(TITLES[t].name)}</button>`).join('')
+    + (owned.length ? '' : '<span class="atNone">업적을 달성해 칭호를 획득하세요</span>') + `</div></div>`;
+  const rows = ACHIEVEMENTS.map(a => {
+    const cl = achvStage(a);
+    const done = cl >= a.tiers.length;
+    const stage = done ? a.tiers[a.tiers.length - 1] : a.tiers[cl];
+    const cur = achvValue(a.stat);
+    const goal = stage[0];
+    const pct = clampN(cur / goal * 100, 0, 100);
+    const claim = achvClaimable(a);
+    const rw = [`💰${stage[1]}`, stage[2] ? `💎${stage[2]}` : '', stage[3] ? `🎖️${TITLES[stage[3]].name}` : ''].filter(Boolean).join(' ');
+    return `<div class="srow ${done ? 'qdone' : ''}">
+      <div class="si">${a.icon}</div>
+      <div class="sm">
+        <div class="st">${esc(a.name)} <span class="astage">${done ? 'MAX' : (cl + 1) + '단계'}</span></div>
+        <div class="sd">${Math.min(cur, goal).toLocaleString()}/${goal.toLocaleString()}${done ? ' · 전 단계 달성!' : ' · 보상 ' + rw}</div>
+        <div class="qbar"><div style="width:${pct}%"></div></div>
+      </div>
+      ${done ? `<button class="claimBtn" disabled>완료</button>`
+        : `<button class="claimBtn ${claim ? 'ready' : ''}" data-achv="${a.id}" ${claim ? '' : 'disabled'}>수령</button>`}
+    </div>`;
+  }).join('');
+  body.innerHTML = titleBar + rows;
+  body.querySelectorAll('[data-achv]').forEach(b => b.onclick = () => claimAchv(b.dataset.achv));
+  body.querySelectorAll('[data-title]').forEach(b => b.onclick = () => setTitle(b.dataset.title));
+}
+function ownedTitles() {
+  const set = new Set();
+  for (const a of ACHIEVEMENTS) { const cl = (me.achv || {})[a.id] || 0; for (let i = 0; i < cl; i++) { const t = a.tiers[i][3]; if (t) set.add(t); } }
+  return [...set];
+}
+function setTitle(t) {
+  if (t && !ownedTitles().includes(t)) return;
+  me.title = t;
+  updX(meRef, { title: t }).catch(() => {});
+  sfx('click'); renderAchv();
+}
+function claimAchv(id) {
+  const a = ACHIEVEMENTS.find(x => x.id === id); if (!a) return;
+  runTx(db, async tx => {
+    const snap = await tx.get(meRef); if (!snap.exists()) return null;
+    const p = snap.data();
+    const cl = (p.achv || {})[id] || 0;
+    if (cl >= a.tiers.length) return null;
+    if (achvValue(a.stat) < a.tiers[cl][0]) return null; /* achvValue는 me(로컬) 기준 — 로컬 권위, 서버 카운터와 동일 */
+    const stage = a.tiers[cl];
+    const achv = { ...(p.achv || {}), [id]: cl + 1 };
+    const upd = { achv, gold: (p.gold || 0) + stage[1] };
+    if (stage[2]) upd.gem = (p.gem || 0) + stage[2];
+    tx.update(meRef, upd);
+    return stage;
+  }).then(stage => {
+    if (!stage) return;
+    /* me.achv/me.gem은 runTx(오프라인=localTx가 즉시 반영 / 온라인=meRef 스냅샷이 반영)가 갱신 — 여기서 또 더하면 이중 증가 */
+    sfx('levelup'); enhFxFx(true);
+    rings.push({ x: me.x, y: me.y, r: 90, t: 0, max: 600, color: '255,215,0' });
+    fxSparks(me.x, me.y - 10, 22, '#ffd700', 200);
+    toast(`🏆 업적 「${esc(a.name)}」 달성! 💰${stage[1]}${stage[2] ? ' 💎' + stage[2] : ''}${stage[3] ? ' · 칭호 <b>' + esc(TITLES[stage[3]].name) + '</b> 획득!' : ''}`, 'sysq');
+    if (stage[3]) sysMsg(`🎖️ ${myName}님이 칭호 「${TITLES[stage[3]].name}」을(를) 획득했습니다!`, 'q');
+    renderAchv();
+  }).catch(() => {});
+}
+/* 칭호 표시 문자열 */
+const titleTag = t => (t && TITLES[t]) ? `[${TITLES[t].name}] ` : '';
 
 /* ================= 인벤토리/루팅 ================= */
 function itemStat(it) {
@@ -2873,6 +2990,7 @@ function enhanceItem(itemId, grade = 'normal') {
     if (r === 'no') return;
     if (r === null) { toast('강화에 실패했습니다 — 다시 시도하세요'); return; }
     if (r.ok) {
+      me.q = { ...(me.q || {}), enh: ((me.q || {}).enh || 0) + 1 }; updX(meRef, { 'q.enh': inc(1) }).catch(() => {}); /* 업적: 강화 성공 카운트 */
       sfx('levelup');
       enhFxFx(true);
       toast(`🔨 강화 성공! <b style="color:${RARITY_COLOR[getItem(r.nid).rarity]}">${getItem(r.nid).name}</b>`, 'sysq');
@@ -5820,6 +5938,8 @@ function drawChar(o) {
   ctx.font = (o.isSelf ? 'bold ' : '') + '12px sans-serif';
   ctx.textAlign = 'center';
   ctx.fillStyle = o.isSelf ? '#fff' : (CLASSES[o.cls]?.color || '#eee');
+  const tt = o.title && TITLES[o.title];
+  if (tt) { ctx.font = '10px sans-serif'; ctx.fillStyle = tt.color; outlinedText(`[${tt.name}]`, o.x, headY - (!o.dead && o.hp < o.maxHp ? 30 : 20), 2.5); ctx.font = (o.isSelf ? 'bold ' : '') + '12px sans-serif'; ctx.fillStyle = o.isSelf ? '#fff' : (CLASSES[o.cls]?.color || '#eee'); }
   outlinedText(o.name, o.x, headY - (!o.dead && o.hp < o.maxHp ? 18 : 8));
 }
 
@@ -7423,9 +7543,9 @@ function draw(now) {
     else { pv.x += ddx * k2; pv.y += ddy * k2; }
     if (dd > 2.5) { pv.mvT = now; pv.f = angLerp(pv.f ?? Math.PI / 2, Math.atan2(ddy, ddx), .25); }
     const mv = now - (pv.mvT || 0) < 400; /* 600ms 쓰기 간격 사이 걷기 애니메이션 깜빡임 방지 */
-    drawChar({ x: pv.x, y: pv.y, color: o.color || colorOf(id), name: o.name, hp: o.hp, maxHp: o.maxHp, dead: o.dead, equipped: o.equipped, cls: o.cls || 'warrior', isSelf: false, face: pv.f, moving: mv });
+    drawChar({ x: pv.x, y: pv.y, color: o.color || colorOf(id), name: o.name, title: o.title, hp: o.hp, maxHp: o.maxHp, dead: o.dead, equipped: o.equipped, cls: o.cls || 'warrior', isSelf: false, face: pv.f, moving: mv });
   }
-  if (ready) drawChar({ x: me.x, y: me.y, color: '#fff', name: myName, hp: me.hp, maxHp: me.maxHp, dead: me.dead, equipped: me.equipped, cls: myCls, isSelf: true, face: me.face ?? Math.PI / 2, moving: meMovingNow, swing: lastAttackAt });
+  if (ready) drawChar({ x: me.x, y: me.y, color: '#fff', name: myName, title: me.title, hp: me.hp, maxHp: me.maxHp, dead: me.dead, equipped: me.equipped, cls: myCls, isSelf: true, face: me.face ?? Math.PI / 2, moving: meMovingNow, swing: lastAttackAt });
 
   /* ===== 스킬/투사체 FX — 가산 블렌딩으로 발광 ===== */
   ctx.save();
@@ -7574,6 +7694,8 @@ function updateHUD() {
   setTxt('uiCrit', String(Math.round(totalCrit() * 100)));
   setTxt('uiSpd', String(Math.round(moveSpd())));
   setTxt('uiGold', (me.gold || 0).toLocaleString());
+  { const gh = $('gemHud'); if (gh) gh.textContent = '💎 ' + (me.gem || 0).toLocaleString(); }
+  { const bd = $('achvBadge'); if (bd) { const n = achvClaimableCount(); if (n > 0) { bd.textContent = n; bd.hidden = false; } else bd.hidden = true; } }
   const pts = me.statPts || 0;
   const disp = pts > 0 ? 'flex' : 'none';
   if (domCache.ptsDisp !== disp) { domCache.ptsDisp = disp; $('statPtsRow').style.display = disp; uiInsetCache.t = 0; /* HUD 높이 변동 즉시 반영 */ }
@@ -7837,6 +7959,7 @@ function togglePanel(id) {
     if (id === 'questPanel') renderQuests();
     if (id === 'treePanel') renderTree();
     if (id === 'dexPanel') renderDex();
+    if (id === 'achvPanel') renderAchv();
   }
 }
 const rb2 = $('reviveBtn');
@@ -7985,6 +8108,7 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyQ') { sfx('click'); togglePanel('questPanel'); }
   if (e.code === 'KeyM') toggleMute();
   if (e.code === 'KeyV') { sfx('click'); toggleWorldMap(); }
+  if (e.code === 'KeyG') { sfx('click'); togglePanel('achvPanel'); }
   if (e.code === 'KeyC') { sfx('click'); toggleDex(); }
 });
 addEventListener('keyup', e => keys[e.code] = false);
@@ -8654,7 +8778,7 @@ async function init() {
       name: myName, cls: choice.cls, x: SPAWN.x, y: SPAWN.y,
       lv: 1, exp: 0, hp: c.hp, maxHp: c.hp, atk: c.atk,
       gold: 100, inv: {}, equipped: {}, skills: {}, q: {}, qc: {},
-      dead: false, color: colorOf(uid), map: 'p1', conq: {}, dex: {}, statPts: 0, lastSeen: Date.now(), mp: maxMpOf(),
+      dead: false, color: colorOf(uid), map: 'p1', conq: {}, dex: {}, statPts: 0, lastSeen: Date.now(), mp: maxMpOf(), gem: 0, achv: {}, title: '',
     });
     me = { ...me, cls: choice.cls, map: 'p1', gold: 100, hp: c.hp, maxHp: c.hp, atk: c.atk }; /* 스냅샷 도착 전 로컬 동기화 */
     await sysMsg(`${myName}(${c.name})님이 월드에 입장했습니다.`);
@@ -8707,7 +8831,7 @@ async function init() {
   window.__PING = () => Promise.race([updateDoc(meRef, { lastSeen: Date.now() }).then(() => 'write-ok'), new Promise(r => setTimeout(() => r('write-timeout'), 8000))]).catch(e => 'write-error:' + (e.code || e.message)); /* 진단: 쓰기 채널 상태 */
   window.__MOB = async id => { const g = await getDoc(doc(db, 'monsters', id)); return g.exists() ? g.data() : null; };
   window.__give = async (id, slot = 17) => { await updX(meRef, { ['inv.' + slot]: id }); return 'ok'; }; /* 진단: 가방 슬롯에 아이템 넣기 */
-  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__pageDef = pageDef; window.__view = () => ({ x: view.x, y: view.y, z: view.z, dpr }); window.__mkUniqAt = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; cam.x=s0.x; cam.y=s0.y; return {id:s0.id, kind:s0.kind, x:s0.x, y:s0.y}; }; window.__mkUniq = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; const me2=window.__me?me:me; me.x=s0.x; me.y=s0.y-80; cam.x=s0.x; cam.y=s0.y-40; return {id:s0.id, kind:s0.kind}; }; window.__useSkill = useSkill; window.__paused = () => ({ paused, ready, dead: me.dead, wm: worldMapOpen() }); window.__unpause = () => { paused = false; }; window.__cdUntil = id => skillCdUntil[id]||0; window.__bound = boundId; window.__skillDef = skillDef; window.__mpc = id => { const d=skillDef(id); return d&&d.mp?mpCostOf(skillMp(id,d)):0; }; window.__castTree = castTreeSkill; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
+  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__pageDef = pageDef; window.__view = () => ({ x: view.x, y: view.y, z: view.z, dpr }); window.__mkUniqAt = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; cam.x=s0.x; cam.y=s0.y; return {id:s0.id, kind:s0.kind, x:s0.x, y:s0.y}; }; window.__mkUniq = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; const me2=window.__me?me:me; me.x=s0.x; me.y=s0.y-80; cam.x=s0.x; cam.y=s0.y-40; return {id:s0.id, kind:s0.kind}; }; window.__useSkill = useSkill; window.__claimAchv = claimAchv; window.__ownedTitles = ownedTitles; window.__paused = () => ({ paused, ready, dead: me.dead, wm: worldMapOpen() }); window.__unpause = () => { paused = false; }; window.__cdUntil = id => skillCdUntil[id]||0; window.__bound = boundId; window.__skillDef = skillDef; window.__mpc = id => { const d=skillDef(id); return d&&d.mp?mpCostOf(skillMp(id,d)):0; }; window.__castTree = castTreeSkill; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
   window.__ITEMS = () => ({ items: Object.keys(ITEMS).length, sets: Object.keys(SETS).length, sample: Object.entries(ITEMS).filter(([k]) => /_b[0-9]$/.test(k)).slice(0, 3).map(([k, v]) => k + ':' + v.name) });
   window.__ZONETEX = n => { try { const t = getTex('p' + n); return { w: t.width, h: t.height, cols: (worldColliders['p' + n] || []).length }; } catch (e) { return { err: String(e && e.stack || e).slice(0, 300) }; } };
   window.__DBG = () => ({ page: myPage(), colliders: (worldColliders[myMap()] || []).length, frozenMs: hitStopUntil - Date.now(), activeIsChat: document.activeElement === chatInput, activeTag: document.activeElement && document.activeElement.tagName + '#' + document.activeElement.id, wmUp: worldMapOpen(), mouseDown, moveSpd: moveSpd(), atkRange: atkRange(), atkCdMs: atkCdOf(), sinceAtk: Date.now() - lastAttackAt, mapFading, snapN: window.__snapN || 0, snapAgoMs: window.__snapT ? Date.now() - window.__snapT : null, lastDmg: window.__lastDmg || null, lastErr: window.__lastErr || null, dead: !!me.dead, paused, ready, sheets: Object.fromEntries(Object.entries(HERO_SHEETS).map(([k, v]) => [k, v.img ? 'ok' : v.failed ? 'failed' : 'loading'])), target: attackTargetSimId, hover: hoverSimId, dest: dest && { x: Math.round(dest.x), y: Math.round(dest.y) }, zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),

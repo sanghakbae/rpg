@@ -422,7 +422,7 @@ setTimeout(() => { for (const n of ['broadsword','bow-arrow','plain-dagger','wiz
   for (const n of ['sword-brandish','whirlwind','muscle-up','shield','arrow-cluster','high-shot','eye-target','boots','ninja-mask','daggers','crescent-blade','sprint','fireball','ice-bolt','magic-swirl','shield-reflect','healing','crossed-swords','lightning-branches','heart-plus','punch-blast','bullseye']) glyphImg(`assets/icons/${n}.svg`); }, 0);
 /* 리치 호버 툴팁 */
 let tipEl = null, tipLastRaw = '', tipLastT = 0;
-function itemTipHtml(rawId) {
+function itemTipHtml(rawId, compare = false) {
   const [bid, cnt] = splitStack(rawId);
   const it = getItem(bid);
   const col = RARITY_COLOR[it.rarity] || '#aaa';
@@ -433,6 +433,29 @@ function itemTipHtml(rawId) {
     + `<div style="color:${col};font-size:11px;">${RARITY_KR[it.rarity] || '일반'} · 점수 <b style="color:#fff">${itemScore(rawId).toLocaleString()}</b></div></div></div>`;
   const st = itemStat(it);
   if (st) h += `<div style="color:#cdd;font-size:12px;margin-bottom:4px;">${esc(st)}</div>`;
+  /* 가방 아이템 호버: 같은 슬롯에 장착 중인 장비와 능력치 비교 */
+  if (compare && it.slot) {
+    const eqRaw = (me.equipped || {})[it.slot];
+    if (eqRaw && eqRaw !== rawId) {
+      const eq = getItem(eqRaw);
+      const F = [['atk', '공격', 1], ['def', '방어', 1], ['hp', 'HP', 1], ['mp', 'MP', 1], ['spd', '속도', 1], ['crit', '치명타', 100]];
+      const rows = F.map(([k, lbl, m]) => {
+        const a = (it[k] || 0) * m, b = (eq[k] || 0) * m;
+        if (!a && !b) return '';
+        const d = Math.round((a - b) * 10) / 10;
+        const c = d > 0 ? '#2ecc71' : d < 0 ? '#ff6b6b' : '#889';
+        const sign = d > 0 ? '+' : '';
+        return `<div style="display:flex;justify-content:space-between;gap:10px;"><span>${lbl}</span><span style="color:#aab">${Math.round(b * 10) / 10}${m === 100 ? '%' : ''} → ${Math.round(a * 10) / 10}${m === 100 ? '%' : ''}</span><b style="color:${c};min-width:44px;text-align:right;">${sign}${d}${m === 100 ? '%p' : ''}</b></div>`;
+      }).filter(Boolean).join('');
+      const ds = itemScore(rawId) - itemScore(eqRaw);
+      h += `<div style="margin:6px 0 4px;padding:6px 8px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;font-size:11.5px;line-height:1.7;">`
+        + `<div style="color:#9fd;font-size:11px;margin-bottom:2px;">장착 중: <b style="color:${RARITY_COLOR[eq.rarity] || '#aaa'}">${esc(eq.name)}</b></div>`
+        + (rows || '<div style="color:#889">비교할 능력치 없음</div>')
+        + `<div style="display:flex;justify-content:space-between;margin-top:2px;"><span>점수</span><b style="color:${ds > 0 ? '#2ecc71' : ds < 0 ? '#ff6b6b' : '#889'}">${ds > 0 ? '+' : ''}${ds.toLocaleString()}</b></div></div>`;
+    } else if (!eqRaw) {
+      h += `<div style="color:#9fd;font-size:11px;margin:4px 0;">해당 슬롯 비어 있음 — 장착 시 그대로 적용</div>`;
+    }
+  }
   if (it.heal) h += `<div style="color:#7fe3a0;font-size:12px;">사용: HP +${it.heal} 회복</div>`;
   if (it.mana) h += `<div style="color:#7fc7ff;font-size:12px;">사용: MP +${it.mana} 회복</div>`;
   if (it.scroll) h += `<div style="color:#9fd;font-size:12px;">장비에 끌어다 놓으면 강화 시도</div>`;
@@ -1077,7 +1100,7 @@ function shade(hex, f) {
 function sortInvMap(inv) {
   const stacks = {};
   const items = [];
-  for (let i = 0; i < MAX_BAG; i++) { /* 이전엔 40칸까지만 훑어 40~71번 슬롯 아이템이 정렬 시 소실됐다(가방은 최대 72칸) */
+  for (let i = 0; i < MAX_BAG; i++) { /* 이전엔 40칸까지만 훑어 뒤쪽 슬롯 아이템이 정렬 시 소실됐다(가방은 최대 MAX_BAG칸) */
     const id = inv[String(i)];
     if (!id) continue;
     const [bid, cnt] = splitStack(id);
@@ -2270,7 +2293,7 @@ const GEM_SHOP = [
   { id: 'sc_adv',   icon: '📜', name: '고급 강화 주문서',  desc: '가방에 지급 · 강화 성공률↑',            gem: 3, item: 'scroll_adv' },
   { id: 'sc_top',   icon: '📜', name: '최고급 강화 주문서', desc: '가방에 지급 · 최고 성공률',            gem: 8, item: 'scroll_top' },
   { id: 'potpack',  icon: '🧪', name: '상급 물약 꾸러미',   desc: '상급 체력 물약 ×5 + 상급 마나 ×5',      gem: 4, pack: [['potion_hi', 5], ['potion_mm', 5]] },
-  { id: 'baggem',   icon: '🎒', name: '가방 확장 (보석)',   desc: '가방 +6칸 (골드 대신 보석으로)',         gem: 6, bag: true },
+  { id: 'baggem',   icon: '🎒', name: '가방 확장 (보석)',   desc: '가방 확장 +6칸 (마지막 단계 +4, 골드 대신 보석으로)',         gem: 6, bag: true },
 ];
 function respecStats() {
   runTx(db, async tx => {
@@ -2398,7 +2421,7 @@ function renderShop() {
       <div class="si">🎒</div>
       <div class="sm">
         <div><span class="st">가방 확장</span><span class="slv">${bagSize()}칸 → ${Math.min(MAX_BAG, bagSize() + 6)}칸</span></div>
-        <div class="sd">가방 슬롯을 영구적으로 6칸 늘립니다${canExpand ? '' : ' · 최대치 도달'}</div>
+        <div class="sd">가방 슬롯을 영구적으로 ${Math.min(6, MAX_BAG - bagSize())}칸 늘립니다${canExpand ? '' : ' · 최대치 도달'}</div>
       </div>
       ${canExpand ? `<button class="buyBtn" id="buyBag" ${(me.gold || 0) >= upCost ? '' : 'disabled'}>${upCost} G</button>`
                   : `<button class="buyBtn" disabled>MAX</button>`}
@@ -2427,14 +2450,15 @@ function buyBag() {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return false;
     const p = snap.data();
-    const bs = p.bagSize || 18;
+    const bs = p.bagSize || BASE_BAG;
     if (bs >= MAX_BAG) return false;
     const cost = 500 * Math.pow(2, (bs - 18) / 6);
     if ((p.gold || 0) < cost) return false;
-    tx.update(meRef, { gold: p.gold - cost, bagSize: Math.min(MAX_BAG, bs + 6) });
-    return true;
+    const add = Math.min(6, MAX_BAG - bs);
+    tx.update(meRef, { gold: p.gold - cost, bagSize: bs + add });
+    return add;
   }).then(ok => {
-    if (ok) { sfx('buy'); toast('🎒 가방이 <b>6칸</b> 확장되었습니다!', 'sysq'); renderShop(); }
+    if (ok) { sfx('buy'); toast(`🎒 가방이 <b>${ok}칸</b> 확장되었습니다!`, 'sysq'); renderShop(); }
     else toast('💰 골드가 부족합니다');
   }).catch(() => {});
 }
@@ -2471,7 +2495,7 @@ function buyPotion(itemId = 'potion') {
     if (!snap.exists()) return false;
     const p = snap.data();
     if ((p.gold || 0) < pcost) return false;
-    const bs = p.bagSize || 18;
+    const bs = p.bagSize || BASE_BAG;
     if (Object.keys(p.inv || {}).length >= bs) return false;
     const inv = { ...(p.inv || {}) };
     for (let i = 0; i < bs; i++) {
@@ -2801,8 +2825,9 @@ async function pickup(lid, l) {
       /* 등급 자동 판매: 설정에 켠 등급의 장비는 가방에 담지 않고 즉시 판매(골드만) */
       if (gi.slot && !gi.scroll && !gi.heal && !gi.mana && !gi.book && settings.autoSell && settings.autoSell[gi.rarity]) {
         const price = sellPrice(giveId);
+        const pq = { ...(psnap.data().q || {}) }; pq.items = (pq.items || 0) + 1; /* 자동 판매도 '아이템 획득'으로 집계(업적·일일퀘) */
         tx.delete(ref);
-        tx.update(meRef, { gold: (psnap.data().gold || 0) + price });
+        tx.update(meRef, { gold: (psnap.data().gold || 0) + price, q: pq });
         item = { ...cand, itemId: giveId }; res = 'autosold'; soldG = price;
         return;
       }
@@ -2812,6 +2837,11 @@ async function pickup(lid, l) {
       tx.update(meRef, r.upd);
       item = { ...cand, itemId: giveId }; res = r.res; soldG = r.sold || 0;
     });
+    if (!item && res === null) { /* 루팅 문서가 이미 사라진 유령 항목: 자동 사냥이 그 자리에서 맴돌지 않게 건너뛰고, 로컬 항목이면 제거 */
+      lootSkip[lid] = Date.now() + 5000;
+      delete lootItems[lid]; /* 서버에 실제로 있으면 루팅 스냅샷이 다시 채운다 */
+      return;
+    }
     if (res === 'full') {
       bagFullUntil = Date.now() + 2500; /* 자동 루팅 재시도 폭주 방지 */
       lootSkip[lid] = Date.now() + 20000; /* 자동 사냥이 이 루팅 앞에 멈춰 서지 않게 */
@@ -2830,7 +2860,7 @@ async function pickup(lid, l) {
       for (let i = pickFx.length - 1; i >= 0; i--) if (pickFx[i].lid === lid) pickFx.splice(i, 1);
       if (myMap() !== map0) return; /* 날아오는 중 맵 이동 시 알림 생략 */
       sfx('pickup');
-      flashInv();
+      if (res !== 'autosold') flashInv();
       heroPickT = Date.now(); /* 줍기 숙이기 모션 */
       fxSparks(me.x, me.y - 22, 8, it.color || '#ffd700', 90);
       if (res === 'autosold') { toast(`💰 <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span> ${esc(it.name)} 자동 판매 <b style="color:#ffd700">+${soldG.toLocaleString()} G</b>`); float(me.x, me.y - 30, `+${soldG} G`, '#ffd700'); }
@@ -2838,14 +2868,17 @@ async function pickup(lid, l) {
       else if (res === 'swapped') toast(`${itemIconHtml(item.itemId, 22)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 → <b>자동 장착!</b> 기존 장비 자동판매 <b style="color:#ffd700">+${soldG.toLocaleString()} G</b>`, 'sysq');
       else if (res === 'stacked') toast(`${itemIconHtml(item.itemId, 22)} <b style="color:${it.color}">${esc(it.name)}</b> 보유 수량 +1 <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span>`);
       else toast(`${itemIconHtml(item.itemId, 22)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span> → 가방 <b>${Object.keys(me.inv || {}).length}/${bagSize()}</b>`);
-      float(me.x, me.y - 30, `+ ${it.name}`, it.color);
+      if (res !== 'autosold') float(me.x, me.y - 30, `+ ${it.name}`, it.color);
     }, PICK_MS);
+  } catch (e) {
+    lootSkip[lid] = Date.now() + 10000; /* 트랜잭션 오류 시 같은 루팅을 매 프레임 재시도하지 않게 */
+    window.__lastErr = { at: Date.now(), where: 'pickup', code: e && e.code, msg: String(e && e.message || e) };
   } finally { picking = false; }
 }
 
 /* 플레이어 데이터 p에 itemId를 추가했을 때의 갱신 계산 (순수 함수) — null이면 가방 가득 */
 function computeAddToInv(p, itemId) {
-  const bs = p.bagSize || 18;
+  const bs = p.bagSize || BASE_BAG;
   const inv = { ...(p.inv || {}) };
   const eq = { ...(p.equipped || {}) };
   const it = getItem(itemId);
@@ -3025,7 +3058,7 @@ function unequip(slot) {
     const eq = { ...(p.equipped || {}) };
     const itemId = eq[slot];
     if (!itemId) return;
-    const bs = p.bagSize || 18;
+    const bs = p.bagSize || BASE_BAG;
     const inv = { ...(p.inv || {}) };
     let placed = false;
     for (let i = 0; i < bs; i++) {
@@ -3286,7 +3319,7 @@ function enhanceItem(itemId, grade = 'normal') {
       else if (tcnt > 1) {
         inv[key] = splitStack(id)[0] + (tcnt - 1 > 1 ? '*' + (tcnt - 1) : '');
         let placed = false;
-        for (let i = 0; i < (p.bagSize || 18); i++) if (inv[String(i)] == null) { inv[String(i)] = nid; placed = true; break; }
+        for (let i = 0; i < (p.bagSize || BASE_BAG); i++) if (inv[String(i)] == null) { inv[String(i)] = nid; placed = true; break; }
         if (!placed) return 'full';
       } else inv[key] = nid;
       tx.update(meRef, { gold: p.gold - cost, inv: sortInvMap(inv), ...(eqSlot ? { equipped: eq } : {}) });
@@ -3334,7 +3367,7 @@ if (typeof $ !== 'undefined' && $('invPanel') && !$('invPanel')._tipBound) {
     const now = Date.now();
     if (t.dataset.raw !== tipLastRaw || now - tipLastT > 150) {
       tipLastRaw = t.dataset.raw; tipLastT = now;
-      showTip(itemTipHtml(t.dataset.raw), e.clientX, e.clientY, t);
+      showTip(itemTipHtml(t.dataset.raw, t.classList.contains('islot')), e.clientX, e.clientY, t);
     } else placeTip(e.clientX, e.clientY, t);
   });
   $('invPanel').addEventListener('mouseleave', hideTip);
@@ -8812,7 +8845,7 @@ function loopBody(t) {
     } else {
       if (autoHunt && !attackTargetSimId && !dest) { /* 자동 사냥: 주변 루팅 먼저 → 없으면 가장 가까운 몬스터 */
         const loot = now < bagFullUntil ? null : nearestLoot(280); /* 가방 가득이면 루팅 경로 생략 → 사냥 계속 */
-        if (loot) dest = { x: loot.x, y: loot.y, loot: loot.lid };
+        if (loot) dest = { x: loot.x, y: loot.y, loot: loot.lid, t0: now };
         else { const t = nearestSim(9999); if (t) attackTargetSimId = t.id; }
       }
       if (autoHunt) autoCombat(now);
@@ -8825,7 +8858,10 @@ function loopBody(t) {
       else { brake(dt); tryAttack(now, s); }
     } else if (dest) {
       const dd = Math.hypot(dest.x - me.x, dest.y - me.y);
-      if (dest.loot && (dd < 34 || !lootItems[dest.loot] || (lootSkip[dest.loot] || 0) > now)) { dest = null; brake(dt); } /* 루팅 목적지: 줍기 반경 안이거나 사라짐/건너뜀 */
+      if (dest.loot && (dd < 34 || !lootItems[dest.loot] || (lootSkip[dest.loot] || 0) > now || now - (dest.t0 || now) > 6000)) { /* 루팅 목적지: 줍기 반경 안 / 사라짐 / 건너뜀 / 6초 내 못 닿음(바위 속 등) */
+        if (now - (dest.t0 || now) > 6000) lootSkip[dest.loot] = now + 20000;
+        dest = null; brake(dt);
+      }
       else if (dd < 10 && !mouseDown) { dest = null; brake(dt); }
       else glideToward(dest.x, dest.y, maxSpd, dt, 1);
     } else brake(dt);
@@ -9095,7 +9131,7 @@ setInterval(() => {
   const el = $('ocN');
   if (el) el.textContent = n;
   /* 만료된 루팅 건너뛰기 기록 정리 (lid 키 누적 방지) */
-  { const nowT = Date.now(); for (const k in lootSkip) if (lootSkip[k] <= nowT || !lootItems[k]) delete lootSkip[k]; }
+  { const nowT = Date.now(); for (const k in lootSkip) if (lootSkip[k] <= nowT) delete lootSkip[k]; }
   /* 자정 넘김 감지: 장시간 접속 중에도 날짜가 바뀌면 일일 초기화 (이전엔 재접속/퀘스트창 열 때만) */
   if (ready && Date.now() - _dailyCheckT > 30000) { _dailyCheckT = Date.now(); try { if ((me.daily || {}).date && (me.daily || {}).date !== todayStr()) { checkDaily(); if ($('questPanel')?.classList.contains('open')) renderQuests(); } } catch (e) {} }
 }, 1000);

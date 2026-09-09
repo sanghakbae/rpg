@@ -660,7 +660,6 @@
     <label class="setrow"><span>⚔️ 자동 사냥 <em>(P)</em></span><input type="checkbox" id="setAuto"></label>
     <label class="setrow"><span>💥 데미지 숫자</span><input type="checkbox" id="setDmg"></label>
     <label class="setrow"><span>📳 화면 흔들림</span><input type="checkbox" id="setShake"></label>
-    <label class="setrow"><span>☁️ 서버 절약 모드 <em>(권장 · 20초마다 모아 저장)</em></span><input type="checkbox" id="setEco"></label>
     <div class="setrow"><span>🧪 자동 물약 HP <b id="setHpVal">45</b>%</span><input type="range" id="setHp" min="0" max="90" step="5"></div>
     <div class="setrow"><span>💧 자동 물약 MP <b id="setMpVal">20</b>%</span><input type="range" id="setMp" min="0" max="90" step="5"></div>
     <div class="setSellHd">💰 자동 판매 <em>(선택 등급은 주우면 즉시 판매)</em></div>
@@ -672,7 +671,7 @@
       <button data-rar="legend" style="--rc:#ffd700">전설</button>
       <button data-rar="unique" style="--rc:#ff4d4d">유니크</button>
     </div>
-    <div class="setNote">자동 사냥: 가장 가까운 몬스터를 찾아 이동·공격하고, 주변 아이템을 주우며, 스킬·물약을 자동 사용합니다. 이동 키를 누르면 해제됩니다.</div>
+    <div class="setNote">자동 사냥: 가장 가까운 몬스터를 찾아 이동·공격하고, 주변 아이템을 주우며, 스킬·물약을 자동 사용합니다. 이동 키를 누르면 해제됩니다.<br>저장: 진행은 기기에 즉시 기록되고 1분마다(레벨업·구역 이동·종료 시엔 즉시) 서버에 저장됩니다.</div>
   </div>
 </div>
 
@@ -763,7 +762,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=134"
+<script type="module" src="game.js?v=135"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

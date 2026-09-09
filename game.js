@@ -1190,7 +1190,7 @@ let othersPrev = {}, mePrev = { x: SPAWN.x, y: SPAWN.y }, meMovingNow = false;
 let mouseDown = false, dest = null, attackTargetSimId = null;
 /* 설정(로컬 저장) + 자동 사냥 */
 let autoHunt = false, autoSkillT = 0, autoPotT = 0;
-const settings = { autoPotHp: 45, autoPotMp: 20, dmgText: true, screenShake: true, autoSell: {}, ecoSave: true }; /* autoSell: 등급별 자동 판매 on/off · ecoSave: 서버 절약 모드(로컬 우선 + 주기 동기화) */
+const settings = { autoPotHp: 45, autoPotMp: 20, dmgText: true, screenShake: true, autoSell: {} }; /* autoSell: 등급별 자동 판매 on/off */
 try { const sv = JSON.parse(localStorage.getItem('settings') || '{}'); Object.assign(settings, sv); } catch (e) {}
 const saveSettings = () => { try { localStorage.setItem('settings', JSON.stringify(settings)); } catch (e) {} };
 const view = { x: 0, y: 0, z: 1 };
@@ -1230,11 +1230,11 @@ function onQuotaExceeded() {
 let offline = false, offlineSince = 0, lastProbe = 0, pendSaveT = 0, lastSyncAt = 0;
 const pendKeys = new Set();
 /* 서버 절약 모드: 온라인이어도 쓰기를 로컬에 모아 20초마다 한 번에 동기화 — Spark 일일 쓰기 한도(2만)를 수십 시간 플레이로 늘린다 */
-const ecoOn = () => !offline && settings.ecoSave !== false;
+const ecoOn = () => !offline; /* 항상 켜짐(설정 없음): 로컬 저장 후 1분마다 DB에 일괄 저장 */
 const isQuotaErr = e => !!e && (e.code === 'resource-exhausted' || e.code === 'timeout' || /quota|resource-exhausted/i.test(String(e.message || e)));
 /* Firestore SDK는 resource-exhausted 쓰기를 지수 백오프로 무한 재시도해 promise가 수십 초 매달린다 → 시간 제한을 걸어 로컬 모드로 넘긴다
    (네트워크 단절도 같은 경로로 로컬 모드가 된다) */
-const TX_TIMEOUT = 8000, UPD_TIMEOUT = 6000, OFFLINE_DWELL = 300000;
+const TX_TIMEOUT = 8000, UPD_TIMEOUT = 6000, OFFLINE_DWELL = 300000, ECO_SYNC_MS = 60000; /* 절약 모드 저장 주기 1분 */
 const PEND_VOLATILE = new Set(['x', 'y', 'hp', 'mp', 'dead', 'deadUntil', 'lastSeen', 'lastHurtAt', 'power', 'map']);
 function withTimeout(p, ms) {
   return new Promise((res, rej) => {
@@ -1365,7 +1365,7 @@ async function trySync(force) {
   if (!meRef || !uid || syncing) return false;
   const now = Date.now();
   if (offline && now - offlineSince < OFFLINE_DWELL) return false; /* 한 번 로컬 모드가 되면 최소 5분 유지 — 처치마다 8초씩 매달리는 왕복 방지 */
-  if (!force && now - lastProbe < (ecoOn() ? 20000 : 45000)) return false; /* 절약 모드: 20초 주기 */
+  if (!force && now - lastProbe < (ecoOn() ? ECO_SYNC_MS : 45000)) return false; /* 절약 모드: 1분 주기(레벨업·구역이동·종료 시엔 즉시) */
   lastProbe = now;
   syncing = true;
   try { return await trySyncInner(now); } finally { syncing = false; }
@@ -8473,7 +8473,6 @@ function openSettings() {
   $('setAuto').checked = autoHunt;
   $('setDmg').checked = settings.dmgText;
   $('setShake').checked = settings.screenShake;
-  { const el = $('setEco'); if (el) el.checked = settings.ecoSave !== false; }
   $('setHp').value = settings.autoPotHp; $('setHpVal').textContent = settings.autoPotHp;
   $('setMp').value = settings.autoPotMp; $('setMpVal').textContent = settings.autoPotMp;
   document.querySelectorAll('#setAutoSell [data-rar]').forEach(b => b.classList.toggle('on', !!(settings.autoSell || {})[b.dataset.rar]));
@@ -8486,7 +8485,6 @@ function openSettings() {
 { const el = $('setAuto'); if (el) el.onchange = () => { if (el.checked !== autoHunt) toggleAuto(); }; }
 { const el = $('setDmg'); if (el) el.onchange = () => { settings.dmgText = el.checked; saveSettings(); }; }
 { const el = $('setShake'); if (el) el.onchange = () => { settings.screenShake = el.checked; saveSettings(); }; }
-{ const el = $('setEco'); if (el) el.onchange = () => { settings.ecoSave = el.checked; saveSettings(); if (!el.checked && pendKeys.size) trySync(true); toast(el.checked ? '☁️ 서버 절약 모드 켜짐 — 진행을 20초마다 모아 저장' : '서버 절약 모드 꺼짐 — 즉시 저장(한도 소모 ↑)'); }; }
 { const el = $('setHp'); if (el) el.oninput = () => { settings.autoPotHp = +el.value; $('setHpVal').textContent = el.value; saveSettings(); }; }
 { const el = $('setMp'); if (el) el.oninput = () => { settings.autoPotMp = +el.value; $('setMpVal').textContent = el.value; saveSettings(); }; }
 document.querySelectorAll('#setAutoSell [data-rar]').forEach(b => b.onclick = () => { settings.autoSell = settings.autoSell || {}; settings.autoSell[b.dataset.rar] = !settings.autoSell[b.dataset.rar]; b.classList.toggle('on', settings.autoSell[b.dataset.rar]); saveSettings(); sfx('click'); });

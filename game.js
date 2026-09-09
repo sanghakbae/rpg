@@ -1077,7 +1077,7 @@ function shade(hex, f) {
 function sortInvMap(inv) {
   const stacks = {};
   const items = [];
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < MAX_BAG; i++) { /* 이전엔 40칸까지만 훑어 40~71번 슬롯 아이템이 정렬 시 소실됐다(가방은 최대 72칸) */
     const id = inv[String(i)];
     if (!id) continue;
     const [bid, cnt] = splitStack(id);
@@ -2188,6 +2188,87 @@ function useSkill(slot) {
 }
 
 /* ================= 스킬 샵 ================= */
+
+/* ================= 보석 상점 · 분해 · 스탯 리셋 ================= */
+const STAT_KEYS = ['stAtk','stHp','stDef','stSpd','stWis','stCrit','stAspd','stCritDmg','stLife','stRange','stMana','stRegen','stEvade'];
+const GEM_SHOP = [
+  { id: 'respec',   icon: '🌀', name: '스탯 리셋',        desc: '분배한 스탯 포인트를 전부 회수해 다시 분배', gem: 5 },
+  { id: 'sc_adv',   icon: '📜', name: '고급 강화 주문서',  desc: '가방에 지급 · 강화 성공률↑',            gem: 3, item: 'scroll_adv' },
+  { id: 'sc_top',   icon: '📜', name: '최고급 강화 주문서', desc: '가방에 지급 · 최고 성공률',            gem: 8, item: 'scroll_top' },
+  { id: 'potpack',  icon: '🧪', name: '상급 물약 꾸러미',   desc: '상급 체력 물약 ×5 + 상급 마나 ×5',      gem: 4, pack: [['potion_hi', 5], ['potion_mm', 5]] },
+  { id: 'baggem',   icon: '🎒', name: '가방 확장 (보석)',   desc: '가방 +6칸 (골드 대신 보석으로)',         gem: 6, bag: true },
+];
+function respecStats() {
+  runTx(db, async tx => {
+    const snap = await tx.get(meRef); if (!snap.exists()) return null;
+    const p = snap.data();
+    if ((p.gem || 0) < 5) return 'poor';
+    let refund = 0; const upd = { gem: (p.gem || 0) - 5 };
+    for (const k of STAT_KEYS) { refund += (p[k] || 0); upd[k] = 0; }
+    if (refund === 0) return 'none';
+    upd.statPts = (p.statPts || 0) + refund;
+    tx.update(meRef, upd);
+    return refund;
+  }).then(r => {
+    if (r === 'poor') { toast('💎 보석이 부족합니다 (5개 필요)'); return; }
+    if (r === 'none') { toast('회수할 스탯 포인트가 없습니다'); return; }
+    if (!r) return;
+    me.hp = Math.min(me.hp || 1, maxHpOf()); /* stHp 회수로 최대 HP가 줄면 현재 HP도 클램프 */
+    sfx('levelup'); toast(`🌀 스탯 리셋! 포인트 ${r}개를 회수했습니다`, 'sysq');
+    try { renderStatButtons(); updateHUD(); } catch (e) {}
+    renderShop();
+  }).catch(() => {});
+}
+function buyGem(id) {
+  const g = GEM_SHOP.find(x => x.id === id); if (!g) return;
+  if (id === 'respec') return respecStats();
+  runTx(db, async tx => {
+    const snap = await tx.get(meRef); if (!snap.exists()) return null;
+    const p = snap.data();
+    if ((p.gem || 0) < g.gem) return 'poor';
+    let upd = { gem: (p.gem || 0) - g.gem };
+    if (g.bag) { if ((p.bagSize || BASE_BAG) >= MAX_BAG) return 'maxbag'; upd.bagSize = Math.min(MAX_BAG, (p.bagSize || BASE_BAG) + 6); }
+    else if (g.item) { const r = computeAddToInv(p, g.item); if (!r) return 'full'; upd = { ...upd, ...r.upd }; }
+    else if (g.pack) {
+      let pp = { ...p };
+      for (const [iid, cnt] of g.pack) for (let i = 0; i < cnt; i++) { const r = computeAddToInv(pp, iid); if (!r) return 'full'; pp = { ...pp, inv: r.upd.inv || pp.inv, equipped: r.upd.equipped || pp.equipped, q: r.upd.q || pp.q }; }
+      upd.inv = pp.inv; upd.q = pp.q;
+    }
+    tx.update(meRef, upd);
+    return true;
+  }).then(r => {
+    if (r === 'poor') { toast('💎 보석이 부족합니다'); return; }
+    if (r === 'full') { toast('🎒 가방에 빈 칸이 없습니다'); return; }
+    if (r === 'maxbag') { toast('가방이 이미 최대치입니다'); return; }
+    if (!r) return;
+    sfx('buy'); toast(`💎 「${esc(g.name)}」 구매 완료!`, 'sysq'); renderShop(); renderInvUI();
+  }).catch(() => {});
+}
+/* 장비 일괄 분해: 미장착 장비 중 선택 등급 이하를 골드+보석(희귀 이상)으로 분해 */
+const SALVAGE_GEM = { rare: 1, epic: 2, legend: 4, unique: 8 };
+function salvageBulk(maxRank) {
+  runTx(db, async tx => {
+    const snap = await tx.get(meRef); if (!snap.exists()) return null;
+    const p = snap.data();
+    const inv = { ...(p.inv || {}) };
+    let gold = 0, gem = 0, n = 0;
+    for (const [k, v] of Object.entries(inv)) {
+      const it = getItem(v);
+      if (!it.slot || it.scroll || it.heal || it.mana || it.book) continue; /* 장비만 */
+      if ((RARITY_RANK[it.rarity] ?? 0) > maxRank) continue;
+      gold += Math.round(sellPrice(v) * 0.8); gem += SALVAGE_GEM[it.rarity] || 0; n++; delete inv[k];
+    }
+    if (!n) return { n: 0 };
+    tx.update(meRef, { inv: sortInvMap(inv), gold: (p.gold || 0) + gold, gem: (p.gem || 0) + gem });
+    return { n, gold, gem };
+  }).then(r => {
+    if (!r) return;
+    if (!r.n) { toast('분해할 장비가 없습니다'); return; }
+    sfx('coin'); toast(`🔨 장비 ${r.n}개 분해 → 💰${r.gold.toLocaleString()}${r.gem ? ' 💎' + r.gem : ''}`, 'sysq');
+    renderInvUI();
+  }).catch(() => {});
+}
+
 function renderShop() {
   const body = $('shopBody');
   const sg = $('shopGold'); if (sg) sg.textContent = `💰 ${(me.gold || 0).toLocaleString()} G`;
@@ -2248,7 +2329,17 @@ function renderShop() {
       ${canExpand ? `<button class="buyBtn" id="buyBag" ${(me.gold || 0) >= upCost ? '' : 'disabled'}>${upCost} G</button>`
                   : `<button class="buyBtn" disabled>MAX</button>`}
     </div>`;
+  html += `<div class="colHd">💎 보석 상점 <span style="color:#778;font-weight:normal;font-size:10.5px">보유 💎 ${(me.gem || 0).toLocaleString()} · 업적·일일·분해로 획득</span></div>`;
+  for (const g of GEM_SHOP) {
+    const afford = (me.gem || 0) >= g.gem;
+    html += `<div class="srow">
+      <div class="si">${g.icon}</div>
+      <div class="sm"><div><span class="st">${esc(g.name)}</span></div><div class="sd">${esc(g.desc)}</div></div>
+      <button class="buyBtn gembuy" data-gem="${g.id}" ${afford ? '' : 'disabled'}>💎 ${g.gem}</button>
+    </div>`;
+  }
   body.innerHTML = html;
+  body.querySelectorAll('[data-gem]').forEach(b => b.onclick = () => buyGem(b.dataset.gem));
   body.querySelectorAll('[data-buy]').forEach(b => b.onclick = () => buySkill(b.dataset.buy));
   body.querySelectorAll('[data-enh]').forEach(b => b.onclick = () => enhanceSkill(b.dataset.enh));
   body.querySelectorAll('[data-bind]').forEach(b => b.onclick = () => { const [s, id] = b.dataset.bind.split(':'); bindSet(s, id); renderShop(); });
@@ -2866,6 +2957,28 @@ function unequip(slot) {
   }).catch(() => {});
 }
 
+let salvArmed = -1, salvAway = null;
+function toggleSalvageMenu() {
+  const ex = $('salvMenu'); if (ex) { ex.remove(); salvArmed = -1; return; }
+  const opts = [[0, '일반 이하'], [1, '고급 이하'], [2, '희귀 이하']];
+  const count = rank => Object.values(me.inv || {}).filter(v => { const it = getItem(v); return it.slot && !it.scroll && !it.heal && !it.mana && !it.book && (RARITY_RANK[it.rarity] ?? 0) <= rank; }).length;
+  const m = document.createElement('div'); m.id = 'salvMenu';
+  m.style.cssText = 'position:fixed;z-index:9999;background:#141a26;border:1px solid #3a4a66;border-radius:8px;padding:8px;min-width:220px;box-shadow:0 8px 24px rgba(0,0,0,.6);';
+  m.innerHTML = `<div style="color:#5dade2;font-size:12px;font-weight:bold;margin-bottom:6px;">🔨 장비 분해 (장착 제외)</div>`
+    + opts.map(([r, lbl]) => `<button data-salv="${r}" style="display:flex;justify-content:space-between;gap:12px;width:100%;padding:7px 10px;font-size:12px;background:#1c2536;color:#cde;border:1px solid #2b3547;border-radius:6px;margin-bottom:4px;"><span>■ ${lbl} ${count(r)}개</span><span style="color:#5dade2">💰+💎</span></button>`).join('')
+    + `<div style="color:#667;font-size:10.5px;margin-top:2px;">같은 항목을 한 번 더 누르면 분해 · 희귀+는 보석 지급</div>`;
+  const btn = $('salvageBtn'); const br = btn ? btn.getBoundingClientRect() : { left: 100, bottom: 100 };
+  m.style.left = Math.min(br.left, innerWidth - 240) + 'px'; m.style.top = (br.bottom + 6) + 'px';
+  document.body.appendChild(m);
+  m.querySelectorAll('[data-salv]').forEach(b => b.onclick = ev => {
+    ev.stopPropagation(); const r = +b.dataset.salv;
+    if (salvArmed === r) { salvArmed = -1; m.remove(); salvageBulk(r); }
+    else { salvArmed = r; m.querySelectorAll('[data-salv]').forEach(x => x.style.borderColor = '#2b3547'); b.style.borderColor = '#ff6b6b'; setTimeout(() => { if (salvArmed === r && document.body.contains(b)) { salvArmed = -1; b.style.borderColor = '#2b3547'; } }, 3000); }
+  });
+  if (salvAway) document.removeEventListener('pointerdown', salvAway);
+  salvAway = e => { const mm = $('salvMenu'); if (mm && !mm.contains(e.target) && e.target.id !== 'salvageBtn') { mm.remove(); salvArmed = -1; } };
+  setTimeout(() => document.addEventListener('pointerdown', salvAway), 0);
+}
 function openEnhModal(scrollRaw, targetRaw) {
   closeEnhModal();
   const [sb] = splitStack(scrollRaw);
@@ -8183,6 +8296,7 @@ for (const [hbId, kind] of [['hbHp', 'hp'], ['hbMp', 'mp']]) {
   };
 }
 $('bulkSellBtn').onclick = e => { e.stopPropagation(); sfx('click'); toggleBulkMenu(); };
+{ const sb = $('salvageBtn'); if (sb) sb.onclick = e => { e.stopPropagation(); sfx('click'); toggleSalvageMenu(); }; }
 document.querySelectorAll('#dockL [data-p]').forEach(b => b.onclick = () => {
   sfx('click');
   const k = b.dataset.p;
@@ -8952,7 +9066,7 @@ async function init() {
   window.__PING = () => Promise.race([updateDoc(meRef, { lastSeen: Date.now() }).then(() => 'write-ok'), new Promise(r => setTimeout(() => r('write-timeout'), 8000))]).catch(e => 'write-error:' + (e.code || e.message)); /* 진단: 쓰기 채널 상태 */
   window.__MOB = async id => { const g = await getDoc(doc(db, 'monsters', id)); return g.exists() ? g.data() : null; };
   window.__give = async (id, slot = 17) => { await updX(meRef, { ['inv.' + slot]: id }); return 'ok'; }; /* 진단: 가방 슬롯에 아이템 넣기 */
-  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__pageDef = pageDef; window.__view = () => ({ x: view.x, y: view.y, z: view.z, dpr }); window.__mkUniqAt = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; cam.x=s0.x; cam.y=s0.y; return {id:s0.id, kind:s0.kind, x:s0.x, y:s0.y}; }; window.__mkUniq = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; const me2=window.__me?me:me; me.x=s0.x; me.y=s0.y-80; cam.x=s0.x; cam.y=s0.y-40; return {id:s0.id, kind:s0.kind}; }; window.__useSkill = useSkill; window.__claimAchv = claimAchv; window.__ownedTitles = ownedTitles; window.__paused = () => ({ paused, ready, dead: me.dead, wm: worldMapOpen() }); window.__unpause = () => { paused = false; }; window.__cdUntil = id => skillCdUntil[id]||0; window.__bound = boundId; window.__skillDef = skillDef; window.__mpc = id => { const d=skillDef(id); return d&&d.mp?mpCostOf(skillMp(id,d)):0; }; window.__castTree = castTreeSkill; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
+  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__pageDef = pageDef; window.__view = () => ({ x: view.x, y: view.y, z: view.z, dpr }); window.__mkUniqAt = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; cam.x=s0.x; cam.y=s0.y; return {id:s0.id, kind:s0.kind, x:s0.x, y:s0.y}; }; window.__mkUniq = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; const me2=window.__me?me:me; me.x=s0.x; me.y=s0.y-80; cam.x=s0.x; cam.y=s0.y-40; return {id:s0.id, kind:s0.kind}; }; window.__useSkill = useSkill; window.__salvage = salvageBulk; window.__invRar = () => Object.entries(me.inv||{}).map(([k,v])=>({k, id:String(v).split(/[*~+]/)[0], rar:getItem(v).rarity, rank:RARITY_RANK[getItem(v).rarity]??0, slot:getItem(v).slot||'-'})); window.__claimAchv = claimAchv; window.__ownedTitles = ownedTitles; window.__paused = () => ({ paused, ready, dead: me.dead, wm: worldMapOpen() }); window.__unpause = () => { paused = false; }; window.__cdUntil = id => skillCdUntil[id]||0; window.__bound = boundId; window.__skillDef = skillDef; window.__mpc = id => { const d=skillDef(id); return d&&d.mp?mpCostOf(skillMp(id,d)):0; }; window.__castTree = castTreeSkill; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
   window.__ITEMS = () => ({ items: Object.keys(ITEMS).length, sets: Object.keys(SETS).length, sample: Object.entries(ITEMS).filter(([k]) => /_b[0-9]$/.test(k)).slice(0, 3).map(([k, v]) => k + ':' + v.name) });
   window.__ZONETEX = n => { try { const t = getTex('p' + n); return { w: t.width, h: t.height, cols: (worldColliders['p' + n] || []).length }; } catch (e) { return { err: String(e && e.stack || e).slice(0, 300) }; } };
   window.__DBG = () => ({ page: myPage(), colliders: (worldColliders[myMap()] || []).length, frozenMs: hitStopUntil - Date.now(), activeIsChat: document.activeElement === chatInput, activeTag: document.activeElement && document.activeElement.tagName + '#' + document.activeElement.id, wmUp: worldMapOpen(), mouseDown, moveSpd: moveSpd(), atkRange: atkRange(), atkCdMs: atkCdOf(), sinceAtk: Date.now() - lastAttackAt, mapFading, snapN: window.__snapN || 0, snapAgoMs: window.__snapT ? Date.now() - window.__snapT : null, lastDmg: window.__lastDmg || null, lastErr: window.__lastErr || null, dead: !!me.dead, paused, ready, sheets: Object.fromEntries(Object.entries(HERO_SHEETS).map(([k, v]) => [k, v.img ? 'ok' : v.failed ? 'failed' : 'loading'])), target: attackTargetSimId, hover: hoverSimId, dest: dest && { x: Math.round(dest.x), y: Math.round(dest.y) }, zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),

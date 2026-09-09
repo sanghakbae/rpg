@@ -871,7 +871,7 @@ function buyTreeNode(id) {
   const cost = treeCost(d.tier), req = treeTierReq(d.tier);
   if ((me.lv || 1) < req.lv) { toast(`🔒 Lv ${req.lv}부터 해금`); return; }
   if (treeOwnedCount(d.cls) < req.pts) { toast(`🔒 같은 계열 ${req.pts}개 선행 습득 필요`); return; }
-  runTransaction(db, async tx => {
+  runTx(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return false;
     const p = snap.data();
@@ -981,7 +981,7 @@ function castTreeSkill(id) {
   if (d.arch === 'heal') {
     const amt = Math.round(maxHpOf() * d.healPct * skillPow());
     me.hp = Math.min(maxHpOf(), (me.hp || 0) + amt);
-    updateDoc(meRef, { hp: me.hp }).catch(() => {});
+    updX(meRef, { hp: me.hp }).catch(() => {});
     float(me.x, me.y - 34, `+${amt} HP`, '#2ecc71');
     rings.push({ x: me.x, y: me.y, r: 70, t: 0, max: 450, color: '46,204,113' });
     fxSparks(me.x, me.y - 10, 12, '#7fe3a0', 110);
@@ -1132,7 +1132,7 @@ function sfx(kind) {
 }
 function toggleMute() {
   muted = !muted;
-  if (meRef) updateDoc(meRef, { muted }).catch(() => {});
+  if (meRef) updX(meRef, { muted }).catch(() => {});
   toast(muted ? '🔇 소리 끔' : '🔊 소리 켬');
 }
 
@@ -1173,8 +1173,190 @@ function onQuotaExceeded() {
   let el = document.getElementById('quotaBar');
   if (!el) { el = document.createElement('div'); el.id = 'quotaBar'; el.title = '탭하면 닫힘'; el.onclick = () => { el.style.display = 'none'; }; document.body.appendChild(el); }
   if (el.style.display === 'none' && Date.now() - quotaHitAt < 300000) { quotaHitAt = Date.now(); return; } /* 닫은 뒤 5분간은 다시 띄우지 않음 */
-  el.textContent = '⚠️ 서버 일일 저장 한도 초과(Firestore 무료 할당량) — 전투 결과·진행이 저장되지 않습니다. 매일 16~17시(KST)경 초기화';
+  el.textContent = '⚠️ 서버 저장 한도 초과 — 로컬 모드로 계속 플레이합니다. 진행은 이 기기에 저장되고, 한도가 풀리면(매일 16~17시 KST) 자동으로 서버에 동기화됩니다.';
   el.style.display = 'block';
+}
+
+/* ================= 저장 계층: 온라인 쓰기 ↔ 한도 초과 시 로컬 폴백 =================
+   Spark 플랜 일일 쓰기 한도(2만)를 넘으면 모든 쓰기가 resource-exhausted로 실패해 '피가 안 달고 아이템을 못 먹는' 상태가 됐다.
+   → 쓰기 실패를 감지하면 '로컬 모드'로 전환: 내 문서(me)·몬스터·루팅에 대한 트랜잭션/업데이트를 로컬 상태에 그대로 적용하고,
+     바뀐 최상위 필드 이름을 기억(localStorage)해 두었다가 쓰기가 다시 통하는 시점에 그 필드들을 한 번에 서버로 밀어 넣는다.
+   몬스터 HP는 평시에도 클라이언트가 권위(서버 쓰기는 처치·리스폰 1회) → 쓰기량 자체가 이전의 1/5 이하 */
+let offline = false, offlineSince = 0, lastProbe = 0, pendSaveT = 0;
+const pendKeys = new Set();
+const isQuotaErr = e => !!e && (e.code === 'resource-exhausted' || e.code === 'timeout' || /quota|resource-exhausted/i.test(String(e.message || e)));
+/* Firestore SDK는 resource-exhausted 쓰기를 지수 백오프로 무한 재시도해 promise가 수십 초 매달린다 → 시간 제한을 걸어 로컬 모드로 넘긴다
+   (네트워크 단절도 같은 경로로 로컬 모드가 된다) */
+const TX_TIMEOUT = 8000, UPD_TIMEOUT = 6000, OFFLINE_DWELL = 300000;
+const PEND_VOLATILE = new Set(['x', 'y', 'hp', 'mp', 'dead', 'deadUntil', 'lastSeen', 'lastHurtAt', 'power', 'map']);
+function withTimeout(p, ms) {
+  return new Promise((res, rej) => {
+    const t = setTimeout(() => rej(Object.assign(new Error('write-timeout'), { code: 'timeout' })), ms);
+    p.then(v => { clearTimeout(t); res(v); }, e => { clearTimeout(t); rej(e); });
+  });
+}
+const inc = n => ({ __inc: n }); /* increment() 대체 — 로컬 적용이 가능해야 해서 자체 표식 사용 */
+const PEND_KEY = () => 'pend_' + uid;
+function getPath(o, k) { return k.split('.').reduce((a, p) => (a == null ? undefined : a[p]), o); }
+/* 점 경로·증분 표식을 지원하는 로컬 업데이트 적용 */
+function applyUpd(target, upd) {
+  for (const [k, raw] of Object.entries(upd)) {
+    const v = (raw && typeof raw === 'object' && '__inc' in raw) ? ((+getPath(target, k) || 0) + raw.__inc) : raw;
+    if (k.includes('.')) {
+      const parts = k.split('.');
+      let o = target;
+      for (let i = 0; i < parts.length - 1; i++) {
+        o[parts[i]] = (o[parts[i]] && typeof o[parts[i]] === 'object') ? { ...o[parts[i]] } : {};
+        o = o[parts[i]];
+      }
+      o[parts[parts.length - 1]] = v;
+    } else target[k] = v;
+  }
+}
+function toServerUpd(upd) { const o = {}; for (const [k, v] of Object.entries(upd)) o[k] = (v && typeof v === 'object' && '__inc' in v) ? increment(v.__inc) : v; return o; }
+function savePend() {
+  clearTimeout(pendSaveT);
+  pendSaveT = setTimeout(() => {
+    try {
+      if (!uid) return;
+      if (!pendKeys.size) { localStorage.removeItem(PEND_KEY()); return; }
+      const snap = {}; for (const k of pendKeys) if (me[k] !== undefined) snap[k] = me[k];
+      snap.x = me.x; snap.y = me.y; snap.hp = me.hp; if (me.mp != null) snap.mp = Math.round(me.mp);
+      localStorage.setItem(PEND_KEY(), JSON.stringify({ keys: [...pendKeys], me: snap, ts: Date.now() }));
+    } catch (e) {}
+  }, 150);
+}
+function enterOffline(err) {
+  if (!offline) {
+    offline = true; offlineSince = Date.now();
+    toast('☁️ 서버 저장 한도 초과 → <b>로컬 모드</b>로 전환. 계속 플레이할 수 있고, 진행은 한도가 풀리면 자동 동기화됩니다.', 'sysq');
+  }
+  onQuotaExceeded();
+  window.__lastErr = { at: Date.now(), where: 'enterOffline', code: err && err.code, msg: String(err && err.message || err) };
+}
+/* 로컬 적용: 내 문서 */
+let invRerenderT = 0, syncSoonT = 0;
+function applyLocalMe(upd) {
+  applyUpd(me, upd);
+  for (const k of Object.keys(upd)) { const top = k.split('.')[0]; if (!PEND_VOLATILE.has(top)) pendKeys.add(top); } /* 위치·HP·생사 같은 휘발 필드는 동기화 때 현재값으로 실린다 */
+  savePend();
+  if (!offline) { clearTimeout(syncSoonT); syncSoonT = setTimeout(() => trySync(true), 1200); } /* 온라인인데 로컬 적용(로컬 루팅 등)이면 곧 동기화 */
+  clearTimeout(invRerenderT);
+  invRerenderT = setTimeout(() => { try { renderInvUI(); if ($('shopPanel')?.classList.contains('open')) renderShop(); if ($('treePanel')?.classList.contains('open')) renderTree(); } catch (e) {} }, 30);
+}
+const simDoc = s => ({ alive: !!s.alive, hp: s.hp, maxHp: s.maxHp, page: s.page, kind: s.kind, uniq: !!s.uniq, boss: !!s.boss, respawnAt: s.respawnAt || 0, homeX: s.homeX, homeY: s.homeY });
+function applyLocalSim(id, upd) {
+  const s = sims.find(x => x.id === id);
+  if (!s) return;
+  if ('alive' in upd) {
+    if (upd.alive && !s.alive) { s.x = s.homeX; s.y = s.homeY; if (s.boss) bossAlert(true); }
+    if (!upd.alive && s.alive) { spawnPoof(s); s.deadT = Date.now(); if (s.boss) bossAlert(false); }
+    s.alive = !!upd.alive;
+  }
+  if ('uniq' in upd) { s.uniq = !!upd.uniq; s._ud = null; }
+  if ('maxHp' in upd) s.maxHp = upd.maxHp;
+  if ('hp' in upd) s.hp = upd.hp;
+  if ('respawnAt' in upd) s.respawnAt = upd.respawnAt;
+  s.srvHp = s.hp;
+}
+const snapOf = (data, id) => ({ id, exists: () => data != null, data: () => data == null ? undefined : JSON.parse(JSON.stringify(data)) });
+/* 가짜 트랜잭션: 읽기는 로컬 상태, 쓰기는 콜백이 끝난 뒤 로컬에 반영 */
+function localTx(fn) {
+  const ops = [];
+  const pathOf = ref => ref.path || (ref._key && ref._key.path && ref._key.path.canonicalString()) || '';
+  const tx = {
+    get: async ref => {
+      const p = pathOf(ref);
+      if (meRef && p === pathOf(meRef)) return snapOf(me, uid);
+      const [col, id] = p.split('/');
+      if (col === 'monsters') { const sm = sims.find(x => x.id === id); return snapOf(sm ? simDoc(sm) : null, id); }
+      if (col === 'loot') return snapOf(lootItems[id] || null, id);
+      return snapOf(null, id);
+    },
+    update: (ref, upd) => ops.push(['update', pathOf(ref), upd]),
+    set: (ref, data) => ops.push(['set', pathOf(ref), data]),
+    delete: ref => ops.push(['delete', pathOf(ref)]),
+  };
+  return Promise.resolve().then(() => fn(tx)).then(r => {
+    for (const [op, p, data] of ops) {
+      const [col, id] = p.split('/');
+      if (meRef && p === pathOf(meRef)) { if (op !== 'delete') applyLocalMe(data); }
+      else if (col === 'monsters') { if (op !== 'delete') applyLocalSim(id, data); }
+      else if (col === 'loot') { if (op === 'delete') delete lootItems[id]; else lootItems[id] = data; }
+    }
+    return r;
+  });
+}
+/* 트랜잭션 진입점: 온라인이면 서버, 한도 초과면 로컬 */
+function runTx(dbArg, fn) {
+  if (offline) return localTx(fn);
+  return withTimeout(runTransaction(dbArg, fn), TX_TIMEOUT).catch(err => {
+    if (!isQuotaErr(err)) throw err;
+    enterOffline(err);
+    return localTx(fn);
+  });
+}
+/* 내 문서 단순 업데이트 */
+function updX(ref, upd) {
+  if (offline) { applyLocalMe(upd); return Promise.resolve(); }
+  return withTimeout(updateDoc(ref, toServerUpd(upd)), UPD_TIMEOUT).catch(err => {
+    if (!isQuotaErr(err)) throw err;
+    enterOffline(err);
+    applyLocalMe(upd);
+  });
+}
+/* 바닥 루팅 생성 */
+let localLootN = 0;
+function addLoot(data) {
+  const local = () => { lootItems['local_' + Date.now().toString(36) + '_' + (localLootN++)] = data; };
+  if (offline) { local(); return Promise.resolve(); }
+  return withTimeout(addDoc(collection(db, 'loot'), data), UPD_TIMEOUT).catch(err => { if (isQuotaErr(err)) { enterOffline(err); local(); } });
+}
+/* 보류분 동기화 시도 — 로컬 모드이거나 보류 필드가 있으면 45초마다 (실패한 쓰기는 한도를 소비하지 않음) */
+let syncing = false;
+async function trySync(force) {
+  if (!meRef || !uid || syncing) return false;
+  const now = Date.now();
+  if (offline && now - offlineSince < OFFLINE_DWELL) return false; /* 한 번 로컬 모드가 되면 최소 5분 유지 — 처치마다 8초씩 매달리는 왕복 방지 */
+  if (!force && now - lastProbe < 45000) return false;
+  lastProbe = now;
+  syncing = true;
+  try { return await trySyncInner(now); } finally { syncing = false; }
+}
+async function trySyncInner(now) {
+  if (!offline && !pendKeys.size) return true;
+  const payload = {};
+  for (const k of pendKeys) if (me[k] !== undefined) payload[k] = me[k];
+  payload.x = me.x; payload.y = me.y; payload.hp = me.hp; if (me.mp != null) payload.mp = Math.round(me.mp);
+  payload.dead = !!me.dead; if (me.map) payload.map = me.map;
+  payload.lastSeen = now;
+  try {
+    /* 실패했던 것과 같은 종류(트랜잭션)로 시험 — 단순 update만 통하는 상태에서 온라인으로 오판하면 다음 처치가 또 8초 매달린다 */
+    await withTimeout(runTransaction(db, async tx => { await tx.get(meRef); tx.update(meRef, payload); }), 12000);
+    const was = offline;
+    offline = false; pendKeys.clear(); savePend();
+    const el = document.getElementById('quotaBar'); if (el) el.style.display = 'none';
+    if (was) toast('☁️ 서버 연결 복구 — 로컬 진행분을 동기화했습니다.', 'sysq');
+    return true;
+  } catch (err) {
+    if (isQuotaErr(err)) { if (!offline) enterOffline(err); }
+    else window.__lastErr = { at: now, where: 'trySync', code: err && err.code, msg: String(err && err.message || err) };
+    return false;
+  }
+}
+/* 시작 시: 이전 세션의 보류분 복원 (서버 문서 위에 덧씌움) */
+function restorePend() {
+  try {
+    const raw = localStorage.getItem(PEND_KEY());
+    if (!raw) return;
+    const st = JSON.parse(raw);
+    if (!st || !st.keys || !st.me) return;
+    for (const k of st.keys) { if (st.me[k] !== undefined) { me[k] = st.me[k]; pendKeys.add(k); } }
+    if (Number.isFinite(st.me.x) && Number.isFinite(st.me.y)) { me.x = st.me.x; me.y = st.me.y; }
+    if (Number.isFinite(st.me.hp) && st.me.hp > 0) me.hp = st.me.hp;
+    if (Number.isFinite(st.me.mp)) me.mp = st.me.mp;
+    toast(`💾 저장되지 않은 진행분(${st.keys.length}항목)을 복원했습니다 — 서버 동기화 대기 중`, 'sysq');
+  } catch (e) {}
 }
 const skillCdUntil = {};
 
@@ -1208,7 +1390,7 @@ const classActiveId = () => Object.keys(SKILLS).find(k => SKILLS[k].cls === myCl
 const classActiveIds = () => Object.keys(SKILLS).filter(k => SKILLS[k].cls === myCls && SKILLS[k].type === 'active');
 
 function float(x, y, text, color = '#fff', big = false) { floats.push({ x, y, text, color, t: 0, big }); }
-async function sysMsg(text, k = '') { await addDoc(collection(db, 'chat'), { from: '', text, ts: Date.now(), k }).catch(() => {}); }
+async function sysMsg(text, k = '') { if (offline) return; await addDoc(collection(db, 'chat'), { from: '', text, ts: Date.now(), k }).catch(e => { if (isQuotaErr(e)) enterOffline(e); }); }
 
 function toast(html, kind = '') {
   const box = $('toasts');
@@ -1252,6 +1434,7 @@ async function ensureWorld() {
 }
 
 async function ensurePage(n) {
+  if (offline) return;
   const pid = pageId(n);
   const flag = doc(db, 'world', 'init_' + pid);
   const probe = await getDoc(doc(db, 'monsters', pid + '_z0_0'));
@@ -1452,9 +1635,15 @@ function watchMonsters() {
       }
       if (!d.alive && s.alive && dc.id === 'boss') bossAlert(false);
       if (s.alive && !d.alive) s.deadT = Date.now(); /* 사망 애니메이션 시작 시각 */
+      const aliveChanged = s.alive !== !!d.alive;
       s.alive = !!d.alive;
       s.uniq = !!d.uniq;
-      s.hp = Math.min(sdef(s).maxHp || sdef(s).hp, typeof d.hp === 'number' ? d.hp : sdef(s).hp); /* 변형 도입 전 문서의 큰 hp 클램프 */
+      /* 몬스터 HP는 클라이언트가 권위(서버 쓰기는 처치/리스폰만) — 서버 hp 값이 실제로 바뀌었거나 생사 전환일 때만 덮어쓴다.
+         (매 스냅샷마다 덮어쓰면 다른 문서 변경 때문에 내가 깎아 둔 HP가 만피로 되돌아간다) */
+      if (aliveChanged || s.srvHp !== d.hp || s.srvHp === undefined) {
+        s.srvHp = d.hp;
+        s.hp = Math.min(sdef(s).maxHp || sdef(s).hp, typeof d.hp === 'number' ? d.hp : sdef(s).hp); /* 변형 도입 전 문서의 큰 hp 클램프 */
+      }
       s.respawnAt = d.respawnAt || 0;
     });
     sims = sims.filter(s => seenIds.has(s.id)); /* 문서가 삭제된 유령 몬스터 제거(불사신+실피해 방지) */
@@ -1485,7 +1674,8 @@ function watchLoot() {
   if (unsubLoot) unsubLoot();
   lootItems = {};
   const sub = () => unsubLoot = onSnapshot(query(collection(db, 'loot'), where('map', '==', myPage())), snap => {
-    lootItems = {};
+    const keep = {}; for (const [k, v] of Object.entries(lootItems)) if (k.startsWith('local_')) keep[k] = v; /* 로컬 모드에서 떨어진 루팅 유지 */
+    lootItems = keep;
     snap.forEach(dc => lootItems[dc.id] = dc.data());
   }, err => { console.error('[loot]', err); noteErr(err); setTimeout(() => { if (unsubLoot) watchLoot(); }, 5000); });
   sub();
@@ -1547,7 +1737,7 @@ async function gainExp(expGain, kill = null) {
   const gb = setBonus().b;
   if (gb.expMul) expGain = Math.round(expGain * (1 + gb.expMul));       /* 세트: 경험치 증폭 */
   if (kill && gb.goldMul) kill = { ...kill, gold: Math.round((kill.gold || 0) * (1 + gb.goldMul)) }; /* 세트: 골드 증폭 */
-  await runTransaction(db, async tx => {
+  await runTx(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return;
     const p = snap.data();
@@ -1632,25 +1822,22 @@ async function dropLoot(type, x, y) {
       const roll = 85 + Math.floor(Math.random() * 31); /* 85~115% 랜덤롤 (장비만, 소모품은 스택 유지) */
       if (roll !== 100) gid = `${itemId}~${roll}`;
     }
-    await addDoc(collection(db, 'loot'), { itemId: gid, x: x + rand(-24, 24), y: y + rand(-24, 24), map: myMap(), ts: Date.now() }).catch(() => {});
+    await addLoot({ itemId: gid, x: x + rand(-24, 24), y: y + rand(-24, 24), map: myMap(), ts: Date.now() }).catch(() => {});
   }
 }
 
 /* ================= 전투 ================= */
-function dealDamage(sim, dmg) {
-  return runTransaction(db, async tx => {
+function dealDamage(sim, dmg, kill) {
+  /* 처치 확정만 서버에 쓴다. 중간 피해는 로컬 HP(attackResult)가 권위 */
+  if (!kill) return Promise.resolve(false);
+  return runTx(db, async tx => {
     const ref = doc(db, 'monsters', sim.id);
     const g = await tx.get(ref);
     if (!g.exists()) return null;
     const m = g.data();
     if (!m.alive) return null;
-    const nhp = (typeof m.hp === 'number' ? m.hp : m.maxHp) - dmg;
-    if (nhp <= 0) {
-      tx.update(ref, { hp: 0, alive: false, killedBy: uid, respawnAt: Date.now() + sdef(sim).respawn });
-      return true;
-    }
-    tx.update(ref, { hp: nhp });
-    return false;
+    tx.update(ref, { hp: 0, alive: false, killedBy: uid, respawnAt: Date.now() + sdef(sim).respawn });
+    return true;
   }).catch(err => {
     /* 쓰기 실패가 조용히 묻히면 '공격은 되는데 피가 안 단다'로 보인다 — 화면에 1회 알리고 진단 훅에 남긴다 */
     window.__lastErr = { at: Date.now(), where: 'dealDamage', code: err && err.code, msg: String(err && err.message || err) };
@@ -1672,7 +1859,7 @@ async function handleKill(sim) {
   if (sim.boss && sim.page && sim.page.startsWith('p')) {
     const pn2 = +sim.page.slice(1);
     if (!(me.conq || {})[pn2]) {
-      runTransaction(db, async tx => {
+      runTx(db, async tx => {
         const snap = await tx.get(meRef);
         if (!snap.exists()) return false;
         const p = snap.data();
@@ -1686,7 +1873,7 @@ async function handleKill(sim) {
       }).then(applied => {
         if (!applied) return;
         me.hp = maxHpOf();
-        updateDoc(meRef, { hp: me.hp }).catch(() => {});
+        updX(meRef, { hp: me.hp }).catch(() => {});
         toast(`👑 ${pn2}구역 정복! <b>레벨 +1</b> · 스탯 포인트 +3${pn2 < MAX_PAGE ? ' · ' + (pn2 + 1) + '구역 개방' : ' · 전 지역 정복 완료!'}`, 'sysq');
         sysMsg(`👑 ${myName}님이 ${pn2}구역을 정복했습니다! (Lv +1)`, 'q');
         sfx('levelup');
@@ -1704,7 +1891,7 @@ async function handleKill(sim) {
   const dexKey = (sim.kind || d2.name || '').replace(/^★/, '');
   if (dexKey && !(me.dex || {})[dexKey]) {
     me.dex = { ...(me.dex || {}), [dexKey]: true };
-    updateDoc(meRef, { dex: me.dex }).catch(() => {});
+    updX(meRef, { dex: me.dex }).catch(() => {});
     if ($('dexPanel')?.classList.contains('open')) renderDex();
   }
   sysMsg(`${myName}님이 ${d2.name}을(를) 처치했습니다!${sim.type === 'boss' || sim.type === 'lich' ? ' 👑👑👑' : ''}`);
@@ -1747,10 +1934,11 @@ async function flushDamage(id) {
   const q = dmgQueue.get(id);
   if (!q) return;
   dmgQueue.delete(id); clearTimeout(q.timer);
-  const r = await dealDamage(q.sim, q.total);
-  window.__lastDmg = { id, dmg: q.total, r, at: Date.now() }; /* 진단: null=문서없음/죽음/쓰기실패, false=피해, true=처치 */
+  const kill = q.sim.hp <= 0 && q.sim.alive;
+  if (!kill) { window.__lastDmg = { id, dmg: q.total, r: 'local', at: Date.now() }; return; } /* 중간 피해: 서버 쓰기 없음 */
+  const r = await dealDamage(q.sim, q.total, true); /* 처치 확정(서버 1회 쓰기 / 로컬 모드면 즉시) */
+  window.__lastDmg = { id, dmg: q.total, r, at: Date.now() }; /* 진단: null=문서없음/이미 죽음, true=처치 */
   if (r === true) { hitStopUntil = Math.max(hitStopUntil, Date.now() + 72); doShake(9); await handleKill(q.sim); }
-  /* r===null(이미 죽음/쓰기 실패)이면 스냅샷이 서버 값으로 되돌린다 */
 }
 
 function nearestSim(maxD) {
@@ -1851,7 +2039,7 @@ function useSkill(slot) {
     fxFlash('120,255,170', 380, .24);
     const amt = Math.round(maxHpOf() * .4 * sLv('heal') * skillPow()); /* me.maxHp는 생성 시점 값이라 낡음 */
     me.hp = Math.min(maxHpOf(), (me.hp || 0) + amt);
-    updateDoc(meRef, { hp: me.hp }).catch(() => {});
+    updX(meRef, { hp: me.hp }).catch(() => {});
     float(me.x, me.y - 34, `+${amt} HP`, '#2ecc71');
     rings.push({ x: me.x, y: me.y, r: 70, t: 0, max: 450, color: '46,204,113' });
     fxSparks(me.x, me.y - 10, 12, '#7fe3a0', 110);
@@ -2041,7 +2229,7 @@ function renderShop() {
 }
 
 function buyBag() {
-  runTransaction(db, async tx => {
+  runTx(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return false;
     const p = snap.data();
@@ -2058,7 +2246,7 @@ function buyBag() {
 }
 
 function buySkill(id) {
-  runTransaction(db, async tx => {
+  runTx(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return 'err';
     const p = snap.data();
@@ -2084,7 +2272,7 @@ function buySkill(id) {
 
 function buyPotion(itemId = 'potion') {
   const pcost = (POTION_SHOP.find(([p]) => p === itemId) || [])[2] || 0;
-  runTransaction(db, async tx => {
+  runTx(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return false;
     const p = snap.data();
@@ -2132,7 +2320,7 @@ function renderQuests() {
 function claimQuest(id) {
   const qdef = QUESTS.find(q => q.id === id);
   if (!qdef) return;
-  runTransaction(db, async tx => {
+  runTx(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return false;
     const p = snap.data();
@@ -2171,7 +2359,7 @@ async function pickup(lid, l) {
     let item = null, res = null, soldG = 0;
     /* 루팅 삭제와 인벤토리 추가를 한 트랜잭션으로 — 가방이 가득이면 삭제하지 않고 바닥에 남김
        (이전엔 먼저 삭제 후 추가 실패 시 아이템이 영구 소실) */
-    await runTransaction(db, async tx => {
+    await (lid.startsWith('local_') ? localTx : fn => runTx(db, fn))(async tx => {
       item = null; res = null;
       const ref = doc(db, 'loot', lid);
       const lsnap = await tx.get(ref);
@@ -2269,7 +2457,7 @@ function computeAddToInv(p, itemId) {
 }
 
 function addToInv(itemId) {
-  return runTransaction(db, async tx => {
+  return runTx(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return null;
     const r = computeAddToInv(snap.data(), itemId);
@@ -2281,7 +2469,7 @@ function addToInv(itemId) {
 
 let selPotKey = null, selPotT = 0;
 function slotClick(rawId) {
-  runTransaction(db, async tx => {
+  runTx(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return;
     const p = snap.data();
@@ -2352,7 +2540,7 @@ function useSkillBook(rawId) {
   const d = skillDef(sid);
   if (!d) return;
   if (d.cls && d.cls !== 'all' && d.cls !== myCls) { toast(`⚠️ ${CLASSES[d.cls]?.name || '타 직업'} 전용 스킬서입니다`); return Promise.resolve('cls'); }
-  return runTransaction(db, async tx => {
+  return runTx(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return null;
     const p = snap.data();
@@ -2391,7 +2579,7 @@ function useSkillBook(rawId) {
   }).catch(err => { window.__lastErr = { at: Date.now(), where: 'useSkillBook', code: err && err.code, msg: String(err && err.message || err) }; if (err && err.code === 'resource-exhausted') onQuotaExceeded(); });
 }
 function unequip(slot) {
-  runTransaction(db, async tx => {
+  runTx(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return;
     const p = snap.data();
@@ -2460,7 +2648,7 @@ function findInvKey(inv, rawId) {
 /* 등급별 일괄판매 */
 let bulkArmed = '', bulkAway = null;
 function sellByGrade(grade) {
-  runTransaction(db, async tx => {
+  runTx(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return null;
     const p = snap.data();
@@ -2522,7 +2710,7 @@ function toggleBulkMenu() {
   setTimeout(() => document.addEventListener('pointerdown', bulkAway), 0);
 }
 function sellItem(itemId) {
-  runTransaction(db, async tx => {
+  runTx(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return null;
     const p = snap.data();
@@ -2599,7 +2787,7 @@ function showEnhMenu(x, y, rawId) {
 }
 
 function enhanceItem(itemId, grade = 'normal') {
-  runTransaction(db, async tx => {
+  runTx(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return null;
     const p = snap.data();
@@ -2700,7 +2888,7 @@ function boundId(slot) {
 function bindSet(slot, id) {
   if (!meRef) return;
   me.binds = { ...(me.binds || {}), [slot]: id }; /* 즉시 반영 */
-  updateDoc(meRef, { [`binds.${slot}`]: id }).catch(() => {});
+  updX(meRef, { [`binds.${slot}`]: id }).catch(() => {});
   toast(`⌨️ ${slot}번에 ${skillDef(id).name} 등록`);
 }
 function bindBtns(id) {
@@ -2723,7 +2911,7 @@ function usePotion(kind) {
   const ids = kind === 'hp' ? ['potion', 'potion_hi'] : ['potion_mp', 'potion_mm'];
   const pref = (me.potPref || {})[kind];
   const order = pref ? [pref, ...ids.filter(x => normId(x) !== normId(pref))] : ids;
-  runTransaction(db, async tx => {
+  runTx(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return;
     const p = snap.data();
@@ -2794,7 +2982,7 @@ function enhanceSkill(id) {
   if (enh >= 5) { toast('강화 최대치입니다'); return; }
   const grade = enh < 2 ? 'normal' : enh < 4 ? 'adv' : 'top';
   const cost = Math.round(def.cost * 2 * (1 + enh));
-  runTransaction(db, async tx => {
+  runTx(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return null;
     const p = snap.data();
@@ -2986,9 +3174,10 @@ function updateSims(now, dt) {
 
   for (const s of sims) {
     if (!s.alive) {
+      if (!s.respawnAt && s.deadT) s.respawnAt = s.deadT + (sdef(s).respawn || 15000); /* 로컬 처치 후 서버 확정 전이라도 리스폰 예약 */
       if (s.respawnAt > 0 && now > s.respawnAt) {
         s.respawnAt = now + 5000;
-        runTransaction(db, async tx => {
+        runTx(db, async tx => {
           const ref = doc(db, 'monsters', s.id);
           const g = await tx.get(ref);
           if (!g.exists() || g.data().alive) return;
@@ -3097,13 +3286,13 @@ function monsterHitMe(s, now) {
   const nhp = (me.hp || 0) - dmg;
   if (nhp <= 0 && !me.dead) {
     me.dead = true; me.hp = 0; me.deadUntil = now + 1800000;
-    updateDoc(meRef, { dead: true, deadUntil: me.deadUntil, hp: 0, 'q.deaths': increment(1) }).catch(() => {});
+    updX(meRef, { dead: true, deadUntil: me.deadUntil, hp: 0, 'q.deaths': inc(1) }).catch(() => {});
     sfx('die');
     sysMsg(`${myName}님이 ${d2(s).name}에게 쓰러졌습니다...`);
   } else {
     me.hp = nhp;
     hpDirty = true;
-    updateDoc(meRef, { hp: nhp }).catch(() => {});
+    updX(meRef, { hp: nhp }).catch(() => {});
   }
 }
 
@@ -4177,7 +4366,7 @@ function gotoPage(n) {
     dest = null; attackTargetSimId = null;
     pickFx.length = 0; pickHide.clear(); /* 비행 중 연출 정리 */
     cam.x = sp.x; cam.y = sp.y;
-    updateDoc(meRef, { map: pageId(n), x: sp.x, y: sp.y }).catch(() => {});
+    updX(meRef, { map: pageId(n), x: sp.x, y: sp.y }).catch(() => {});
     const mn = $('mapName');
     if (mn) mn.textContent = pageDef(n).name;
     watchMonsters();
@@ -7331,7 +7520,7 @@ chatInput.addEventListener('keydown', e => {
     const text = chatInput.value.trim();
     chatInput.value = '';
     chatInput.blur();
-    if (text) addDoc(collection(db, 'chat'), { from: myName, text, ts: Date.now() }).catch(() => {});
+    if (text) { if (offline) toast('☁️ 로컬 모드 — 채팅은 서버 복구 후 가능합니다'); else addDoc(collection(db, 'chat'), { from: myName, text, ts: Date.now() }).catch(e => { if (isQuotaErr(e)) enterOffline(e); }); }
     e.preventDefault();
   }
 });
@@ -7557,7 +7746,7 @@ for (const [hbId, kind] of [['hbHp', 'hp'], ['hbMp', 'mp']]) {
     const [bid] = splitStack(src);
     const it = getItem(bid);
     if ((kind === 'hp' && !it.heal) || (kind === 'mp' && !it.mana) || it.scroll) { toast('🧪 여기에 둘 수 없는 아이템입니다'); return; }
-    updateDoc(meRef, { [`potPref.${kind}`]: bid }).catch(() => {});
+    updX(meRef, { [`potPref.${kind}`]: bid }).catch(() => {});
     me.potPref = { ...(me.potPref || {}), [kind]: bid };
     toast(`${kind === 'hp' ? '🧪' : '💧'} 퀵슬롯 지정: ${it.name}`);
     sfx('click');
@@ -7981,12 +8170,13 @@ function loopBody(t) {
   if (me.mp != null && !Number.isFinite(me.mp)) me.mp = maxMpOf();
   const movedFar = Math.abs(me.x - sentX) + Math.abs(me.y - sentY) > 16; /* 2px→16px: 미세 이동은 보내지 않음 */
   const mpChanged = me.mp != null && (Math.abs(Math.round(me.mp) - (sentMp ?? 0)) >= 5 || (Math.round(me.mp) !== sentMp && me.mp >= maxMpOf()));
-  const quotaBackoff = now - quotaHitAt < 60000; /* 한도 초과 직후 1분은 쓰기 중단 */
+  const quotaBackoff = offline || now - quotaHitAt < 60000; /* 로컬 모드/한도 초과 직후엔 위치 심박 중단 (동기화 때 한 번에 실림) */
+  if (offline || pendKeys.size) trySync(false);
   if (!quotaBackoff && ((now - lastPosWrite > 1500 && (movedFar || hpDirty || mpChanged)) || now - lastPosWrite > 20000)) { /* 600ms→1.5s, 심박 8s→20s: 쓰기 1/3 */
     lastPosWrite = now;
     hpDirty = false;
     sentX = me.x; sentY = me.y; sentHp = Math.round(me.hp || 0); sentMp = me.mp != null ? Math.round(me.mp) : null;
-if (meRef) updateDoc(meRef, { x: me.x, y: me.y, hp: me.hp, ...(me.mp != null ? { mp: Math.round(me.mp) } : {}), ...(me.lastHurtAt ? { lastHurtAt: Math.round(me.lastHurtAt) } : {}), power: Math.round(totalAtk() * (1 + totalCrit()) * skillPow()), lastSeen: now }).catch(() => {});
+if (meRef) updX(meRef, { x: me.x, y: me.y, hp: me.hp, ...(me.mp != null ? { mp: Math.round(me.mp) } : {}), ...(me.lastHurtAt ? { lastHurtAt: Math.round(me.lastHurtAt) } : {}), power: Math.round(totalAtk() * (1 + totalCrit()) * skillPow()), lastSeen: now }).catch(() => {});
   }
 
   if (!me.dead && (me.mp ?? 0) < maxMpOf()) {
@@ -8004,7 +8194,7 @@ if (meRef) updateDoc(meRef, { x: me.x, y: me.y, hp: me.hp, ...(me.mp != null ? {
   if (me.dead && me.deadUntil && now > me.deadUntil) {
     me.dead = false; me.hp = maxHpOf();
     me.x = SPAWN.x; me.y = SPAWN.y;
-    updateDoc(meRef, { dead: false, hp: me.hp, x: me.x, y: me.y, lastSeen: now }).catch(() => {});
+    updX(meRef, { dead: false, hp: me.hp, x: me.x, y: me.y, lastSeen: now }).catch(() => {});
     $('deadOv').style.display = 'none';
     float(me.x, me.y - 40, '부활!', '#2ecc71');
     rings.push({ x: me.x, y: me.y, r: 80, t: 0, max: 500, color: '46,204,113' });
@@ -8074,7 +8264,7 @@ function reviveNow() {
   if ((me.gold || 0) < cost) { toast('💰 골드가 부족합니다'); return; }
   reviving = true;
   const nhp = maxHpOf(); /* me.maxHp는 생성 시점 값이라 낡음 */
-  runTransaction(db, async tx => {
+  runTx(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return false;
     const p = snap.data();
@@ -8097,7 +8287,7 @@ function reviveNow() {
 
 function addStat(k) {
   if (!(me.statPts > 0)) return;
-  runTransaction(db, async tx => {
+  runTx(db, async tx => {
     const snap = await tx.get(meRef);
     if (!snap.exists()) return false;
     const p = snap.data();
@@ -8110,7 +8300,7 @@ function addStat(k) {
     me[k] = (me[k] || 0) + 1; /* 스냅샷 도착 전 낙관적 반영 — maxHpOf/maxMpOf 즉시 정확 */
     if (k === 'stHp') {
       me.hp = Math.min(maxHpOf(), (me.hp || 0) + 15);
-      updateDoc(meRef, { hp: me.hp }).catch(() => {});
+      updX(meRef, { hp: me.hp }).catch(() => {});
     }
     float(me.x, me.y - 30, `${STAT_DEFS[k]?.n || k} +1`, '#7fe3a0');
   }).catch(() => {});
@@ -8281,7 +8471,7 @@ async function init() {
     myName = d.name;
     myCls = d.cls || 'warrior';
     muted = !!d.muted;
-    if (!d.cls) await updateDoc(meRef, { cls: 'warrior' });
+    if (!d.cls) await updX(meRef, { cls: 'warrior' }).catch(() => {});
     /* 문서 전체를 지금 병합해야 아래 ensurePage/watchMonsters가 올바른 구역(me.map)을 본다
        — onSnapshot 병합만 믿으면 p2+에서 재접속 시 p1 몬스터를 구독해 현재 구역이 텅 빔 */
     const { x: _x, y: _y, hp: _hp, ...rest } = d;
@@ -8291,15 +8481,16 @@ async function init() {
     me.y = Number.isFinite(d.y) ? d.y : SPAWN.y;
     me.hp = Number.isFinite(d.hp) ? clampN(d.hp, 1, maxHpOf()) : maxHpOf(); /* 저장된 HP 복원(이전엔 항상 기본값 100) */
     cam.x = me.x; cam.y = me.y;
-    await updateDoc(meRef, { lastSeen: Date.now(), dead: false, ...(d.mp == null ? { mp: maxMpOf() } : {}) });
+    restorePend(); /* 이전 세션에서 서버에 못 올린 진행분 */
+    await updX(meRef, { lastSeen: Date.now(), dead: false, ...(d.mp == null ? { mp: maxMpOf() } : {}) }).catch(() => {}); /* 한도 초과여도 로그인은 계속 */
+    if (pendKeys.size) trySync(true);
   }
 
-  await ensureWorld();
-  await ensureWorldM2();
-  await ensurePage(pageNum());
+  try { await ensureWorld(); await ensureWorldM2(); await ensurePage(pageNum()); } catch (e) { noteErr && noteErr(e); }
 
   onSnapshot(meRef, s => {
     if (!s.exists()) return;
+    if (offline || pendKeys.size) return; /* 로컬 모드: 로컬 상태가 권위 — 서버 에코가 진행분을 되돌리지 않게 */
     const d = s.data();
     /* x/y/hp/mp/lastHurtAt는 로컬이 권위 — 자기 쓰기 에코가 이동/재생을 되돌리는 것 방지
        (이전의 '장착템=가방템 중복 제거' 클리너는 정당한 동일 아이템 사본까지 파괴해 제거함) */
@@ -8323,8 +8514,8 @@ async function init() {
   window.__DD = async id => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; const t0 = performance.now(); const r = await Promise.race([dealDamage(sm, 1), new Promise(rs => setTimeout(() => rs('dd-timeout'), 8000))]); return { r, ms: Math.round(performance.now() - t0) }; };
   window.__PING = () => Promise.race([updateDoc(meRef, { lastSeen: Date.now() }).then(() => 'write-ok'), new Promise(r => setTimeout(() => r('write-timeout'), 8000))]).catch(e => 'write-error:' + (e.code || e.message)); /* 진단: 쓰기 채널 상태 */
   window.__MOB = async id => { const g = await getDoc(doc(db, 'monsters', id)); return g.exists() ? g.data() : null; };
-  window.__give = async (id, slot = 17) => { await updateDoc(meRef, { ['inv.' + slot]: id }); return 'ok'; }; /* 진단: 가방 슬롯에 아이템 넣기 */
-  window.__useBook = useSkillBook; window.__me = () => me; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
+  window.__give = async (id, slot = 17) => { await updX(meRef, { ['inv.' + slot]: id }); return 'ok'; }; /* 진단: 가방 슬롯에 아이템 넣기 */
+  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
   window.__ITEMS = () => ({ items: Object.keys(ITEMS).length, sets: Object.keys(SETS).length, sample: Object.entries(ITEMS).filter(([k]) => /_b[0-9]$/.test(k)).slice(0, 3).map(([k, v]) => k + ':' + v.name) });
   window.__ZONETEX = n => { try { const t = getTex('p' + n); return { w: t.width, h: t.height, cols: (worldColliders['p' + n] || []).length }; } catch (e) { return { err: String(e && e.stack || e).slice(0, 300) }; } };
   window.__DBG = () => ({ page: myPage(), colliders: (worldColliders[myMap()] || []).length, frozenMs: hitStopUntil - Date.now(), activeIsChat: document.activeElement === chatInput, activeTag: document.activeElement && document.activeElement.tagName + '#' + document.activeElement.id, wmUp: worldMapOpen(), mouseDown, moveSpd: moveSpd(), atkRange: atkRange(), atkCdMs: atkCdOf(), sinceAtk: Date.now() - lastAttackAt, mapFading, snapN: window.__snapN || 0, snapAgoMs: window.__snapT ? Date.now() - window.__snapT : null, lastDmg: window.__lastDmg || null, lastErr: window.__lastErr || null, dead: !!me.dead, paused, ready, sheets: Object.fromEntries(Object.entries(HERO_SHEETS).map(([k, v]) => [k, v.img ? 'ok' : v.failed ? 'failed' : 'loading'])), target: attackTargetSimId, hover: hoverSimId, dest: dest && { x: Math.round(dest.x), y: Math.round(dest.y) }, zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),

@@ -1,0 +1,10 @@
+{
+ "fr": 256,
+ "dirs": 1,
+ "top": 87,
+ "feet": 225,
+ "elev": 26,
+ "yawFix": 0,
+ "name": "prop_statue_obelisk",
+ "src": "statue_obelisk.glb"
+}

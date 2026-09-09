@@ -1,0 +1,10 @@
+{
+ "fr": 256,
+ "dirs": 1,
+ "top": 86,
+ "feet": 217,
+ "elev": 26,
+ "yawFix": 0,
+ "name": "prop_tree_default_fall",
+ "src": "tree_default_fall.glb"
+}

@@ -1,0 +1,10 @@
+{
+ "fr": 256,
+ "dirs": 1,
+ "top": 75,
+ "feet": 216,
+ "elev": 26,
+ "yawFix": 0,
+ "name": "prop_tree_palm",
+ "src": "tree_palm.glb"
+}

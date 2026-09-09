@@ -4600,6 +4600,7 @@ function buildZoneWorld(n) {
   const cols = []; /* 충돌체 */
   const blocked = []; /* 장식 배치 금지 영역 {x,y,r} */
   const pid = pageId(n);
+  const waters = zoneWaters[pid] = [];
   const spawn = n === 1 ? { x: 800, y: 600 } : { x: 170, y: 600 };
   const mobZones = [{ x: 540, y: 430 }, { x: 1060, y: 770 }, { x: 800, y: 1000 }];
   const gates = [{ x: 110, y: 600 }, { x: 1490, y: 600 }];
@@ -4609,16 +4610,8 @@ function buildZoneWorld(n) {
 
   /* 1) 땅 */
   c.fillStyle = P.ground; c.fillRect(0, 0, WORLD.w, WORLD.h);
-  for (let i = 0; i < 90; i++) {
-    const x = rng() * WORLD.w, y = rng() * WORLD.h, r = 70 + rng() * 190;
-    const g = c.createRadialGradient(x, y, 0, x, y, r);
-    g.addColorStop(0, P.tints[i % 4] + '66'); g.addColorStop(1, 'transparent');
-    c.fillStyle = g; c.fillRect(x - r, y - r, r * 2, r * 2);
-  }
-  for (let y = 0; y < WORLD.h; y += 64) for (let x = 0; x < WORLD.w; x += 64) {
-    if ((x / 64 + y / 64) % 2 === 0) continue;
-    c.fillStyle = P.style === 'snow' || P.style === 'sky' ? 'rgba(0,0,0,.025)' : 'rgba(0,0,0,.045)'; c.fillRect(x, y, 64, 64);
-  }
+  paintGround(c, P, rng, P.style); /* 노이즈 지면 + 바이옴별 미세 질감 (예전: 방사형 얼룩 90개 + 체커보드) */
+  const PS = PROP_SETS[P.style] || PROP_SETS.meadow, pick = arr => arr[Math.floor(rng() * arr.length)];
   if (P.dunes) for (let i = 0; i < P.dunes; i++) { /* 사막 사구: 밝은 호 */
     const x = rng() * WORLD.w, y = rng() * WORLD.h, w = 120 + rng() * 260;
     c.strokeStyle = 'rgba(255,240,200,.22)'; c.lineWidth = 10 + rng() * 14; c.lineCap = 'round';
@@ -4636,6 +4629,7 @@ function buildZoneWorld(n) {
 
   /* 2) 물/용암/구름틈 — 구역 고유 요소 */
   const water = (x, y, rx, ry, rot, lava) => {
+    waters.push({ x, y, rx, ry, rot, lava: !!lava });
     const [deep, mid, light] = lava ? P.water : P.water;
     c.save(); c.translate(x, y); c.rotate(rot);
     /* 물가 (모래/진흙/얼음 테두리) */
@@ -4670,6 +4664,7 @@ function buildZoneWorld(n) {
     c.fillStyle = '#4a3524'; c.fillRect(-46, -60, 6, 120); c.fillRect(40, -60, 6, 120); c.restore();
     for (const p of pts) { if (Math.hypot(p.x - bridgeAt.x, p.y - bridgeAt.y) < 70) continue; cols.push({ x: p.x, y: p.y, r: 30 }); blocked.push({ x: p.x, y: p.y, r: 80 }); }
     blocked.push({ x: bridgeAt.x, y: bridgeAt.y, r: 90 });
+    for (let i = 1; i < pts.length - 1; i += 2) { const a = pts[i - 1], b = pts[i + 1]; if (Math.hypot(pts[i].x - bridgeAt.x, pts[i].y - bridgeAt.y) < 70) continue; waters.push({ x: pts[i].x, y: pts[i].y, rx: 46, ry: 18, rot: Math.atan2(b.y - a.y, b.x - a.x), lava: false }); } /* 강 물결 하이라이트 등록 */
   };
   const waterfall = () => { /* 상단 절벽에서 떨어지는 폭포 + 웅덩이 */
     const x = R(500, 1100), cliffY = 120;
@@ -4685,20 +4680,24 @@ function buildZoneWorld(n) {
     for (let cx = x - 210; cx <= x + 210; cx += 40) cols.push({ x: cx, y: 60 + cliffY / 2, r: cliffY / 2 });
     blocked.push({ x, y: 60 + cliffY / 2, r: 300 });
   };
+  const pond = (rx0, rx1, ry0, ry1, pad, tries = 8) => { for (let t = 0; t < tries; t++) { const x = R(300, 1300), y = R(250, 1000); if (!isBlocked(x, y, pad)) { water(x, y, R(rx0, rx1), R(ry0, ry1), R(0, 3), false); return true; } } return false; };
   const feat = rng();
   if (P.lava) { for (let i = 0; i < 3 + (tier % 3); i++) { const x = R(200, 1400), y = R(200, 1050); if (!isBlocked(x, y, 120)) water(x, y, R(60, 130), R(40, 80), R(0, 3), true); } }
   else if (P.gaps) { for (let i = 0; i < P.gaps; i++) { const x = R(150, 1450), y = R(150, 1050); if (!isBlocked(x, y, 140)) { /* 구름 사이 틈(낙하 불가 영역) */ const rx = R(70, 140), ry = rx * R(.5, .8); c.save(); c.translate(x, y); const g = c.createRadialGradient(0, 0, 4, 0, 0, rx); g.addColorStop(0, '#1a2a4a'); g.addColorStop(.85, '#2a4a7a'); g.addColorStop(1, 'rgba(255,255,255,.9)'); c.fillStyle = g; c.beginPath(); c.ellipse(0, 0, rx, ry, 0, 0, 7); c.fill(); c.restore(); const steps = 10; for (let k = 0; k < steps; k++) { const a = k / steps * 6.283; cols.push({ x: x + Math.cos(a) * rx * .8, y: y + Math.sin(a) * ry * .8, r: 18 }); } cols.push({ x, y, r: Math.min(rx, ry) * .7 }); blocked.push({ x, y, r: rx + 40 }); } } }
-  else if (P.style === 'cave') { /* 동굴: 지하 호수 가끔 */ if (feat < .5) { const x = R(300, 1300), y = R(250, 1000); if (!isBlocked(x, y, 140)) water(x, y, R(90, 150), R(60, 100), R(0, 3), false); } }
-  else if (feat < .30) { const x = R(300, 1300), y = R(250, 1000); if (!isBlocked(x, y, 140)) water(x, y, R(90, 170), R(60, 110), R(0, 3), false); }
+  else if (P.style === 'cave') { /* 동굴: 지하 호수 */ pond(feat < .5 ? 90 : 55, feat < .5 ? 150 : 95, feat < .5 ? 60 : 38, feat < .5 ? 100 : 62, 120); }
+  else if (feat < .30) { if (!pond(90, 170, 60, 110, 130)) pond(55, 95, 38, 62, 110); }
   else if (feat < .58) river(rng() < .5);
   else if (feat < .72 && P.style !== 'desert') waterfall();
-  else if (P.style === 'swamp' || P.murk) { for (let i = 0; i < 3; i++) { const x = R(250, 1350), y = R(250, 1000); if (!isBlocked(x, y, 110)) water(x, y, R(50, 100), R(35, 70), R(0, 3), false); } }
+  else if (P.style === 'swamp' || P.murk) { for (let i = 0; i < 3; i++) pond(50, 100, 35, 70, 100, 4); }
+  else if (P.style !== 'desert' || feat > .9) pond(55, 95, 38, 62, 110); /* 나머지: 작은 연못(사막은 10% 오아시스) */
 
   /* 3) 길 (스폰 → 관문/보스) */
   const pathTo = (sx, sy, tx, ty) => {
     const mx = (sx + tx) / 2 + (rng() - .5) * 260, my = (sy + ty) / 2 + (rng() - .5) * 200;
     c.strokeStyle = P.path[0]; c.lineWidth = 44; c.lineCap = 'round'; c.beginPath(); c.moveTo(sx, sy); c.quadraticCurveTo(mx, my, tx, ty); c.stroke();
     c.strokeStyle = P.path[1]; c.lineWidth = 36; c.beginPath(); c.moveTo(sx, sy); c.quadraticCurveTo(mx, my, tx, ty); c.stroke();
+    c.strokeStyle = 'rgba(0,0,0,.10)'; c.lineWidth = 46; c.setLineDash([3, 9]); c.beginPath(); c.moveTo(sx, sy); c.quadraticCurveTo(mx, my, tx, ty); c.stroke(); c.setLineDash([]); /* 가장자리 결 */
+    for (let i = 0; i < 70; i++) { const t = rng(), px = (1 - t) * (1 - t) * sx + 2 * (1 - t) * t * mx + t * t * tx, py = (1 - t) * (1 - t) * sy + 2 * (1 - t) * t * my + t * t * ty; c.fillStyle = i % 2 ? 'rgba(255,255,255,.14)' : 'rgba(0,0,0,.16)'; c.beginPath(); c.arc(px + (rng() - .5) * 26, py + (rng() - .5) * 26, 1.2 + rng() * 1.8, 0, 7); c.fill(); } /* 자갈 */
     for (let i = 0; i <= 24; i++) { const t = i / 24; const px = (1 - t) * (1 - t) * sx + 2 * (1 - t) * t * mx + t * t * tx, py = (1 - t) * (1 - t) * sy + 2 * (1 - t) * t * my + t * t * ty; blocked.push({ x: px, y: py, r: 34 }); c.fillStyle = 'rgba(0,0,0,.18)'; c.beginPath(); c.ellipse(px + R(-12, 12), py + R(-12, 12), R(2, 4.5), R(1.5, 3), R(0, 3), 0, 7); c.fill(); }
   };
   pathTo(spawn.x, spawn.y, 540, 430); pathTo(spawn.x, spawn.y, 1060, 770); pathTo(spawn.x, spawn.y, 800, 1000); pathTo(spawn.x, spawn.y, 1490, 600); if (n !== 1) pathTo(spawn.x, spawn.y, 110, 600);
@@ -4716,36 +4715,188 @@ function buildZoneWorld(n) {
   /* 5) 장식 오브젝트 (충돌체 포함) */
   const tree = (x, y, s, pine) => {
     cols.push({ x, y: y + 2, r: 13 * s });
+    if (drawPropTex(c, pick(PS.trees), x, y + 2, 74 * s, PS.tint, rng() < .5)) return; /* 스프라이트 프롭(로드 전엔 벡터 폴백) */
     c.fillStyle = 'rgba(0,0,0,.3)'; c.beginPath(); c.ellipse(x + 9 * s, y + 16 * s, 28 * s, 10 * s, 0, 0, 7); c.fill();
     c.fillStyle = P.trunk; c.beginPath(); c.moveTo(x - 6.5 * s, y + 15 * s); c.quadraticCurveTo(x - 4 * s, y, x - 3.5 * s, y - 16 * s); c.lineTo(x + 3.5 * s, y - 16 * s); c.quadraticCurveTo(x + 4 * s, y, x + 6.5 * s, y + 15 * s); c.closePath(); c.fill();
     if (pine) { for (let L = 2; L >= 0; L--) { const ly = y - 14 * s - L * 15 * s, lw = (26 - L * 6.5) * s; c.fillStyle = P.leaf[L]; c.beginPath(); c.moveTo(x - lw, ly + 14 * s); c.quadraticCurveTo(x, ly - 4 * s, x + lw, ly + 14 * s); c.quadraticCurveTo(x, ly + 8 * s, x - lw, ly + 14 * s); c.closePath(); c.fill(); c.strokeStyle = 'rgba(0,0,0,.22)'; c.lineWidth = 1.4; c.stroke(); } }
     else { const cy = y - 32 * s; const blob = (bx, by, br, col) => { c.fillStyle = col; c.beginPath(); c.arc(bx, by, br, 0, 7); c.fill(); }; blob(x - 16 * s, cy + 7 * s, 18 * s, P.leaf[0]); blob(x + 16 * s, cy + 7 * s, 18 * s, P.leaf[0]); blob(x, cy + 10 * s, 19 * s, P.leaf[1]); blob(x, cy - 4 * s, 22 * s, P.leaf[2]); blob(x - 12 * s, cy - 12 * s, 14 * s, P.leaf[3]); blob(x + 12 * s, cy - 10 * s, 13 * s, P.leaf[3]); blob(x - 2 * s, cy - 16 * s, 12 * s, P.leaf[4]); for (let L2 = 0; L2 < 10; L2++) { const a = rng() * 6.283, rr2 = 10 + rng() * 16; blob(x + Math.cos(a) * rr2 * s * 1.15, cy - 4 * s + Math.sin(a) * rr2 * s * .6, 2.6 * s, 'rgba(255,255,255,.18)'); } }
   };
-  const rock = (x, y, s) => { cols.push({ x, y, r: 10 * s }); c.fillStyle = 'rgba(0,0,0,.28)'; c.beginPath(); c.ellipse(x + 3, y + 8 * s, 14 * s, 6 * s, 0, 0, 7); c.fill(); const g = c.createLinearGradient(x - 11 * s, y - 12 * s, x + 11 * s, y + 8 * s); g.addColorStop(0, P.rock[2]); g.addColorStop(.5, P.rock[0]); g.addColorStop(1, P.rock[1]); c.fillStyle = g; c.beginPath(); c.moveTo(x - 12 * s, y + 6 * s); c.lineTo(x - 9 * s, y - 8 * s); c.lineTo(x - 1 * s, y - 13 * s); c.lineTo(x + 9 * s, y - 7 * s); c.lineTo(x + 13 * s, y + 4 * s); c.lineTo(x + 6 * s, y + 9 * s); c.closePath(); c.fill(); c.strokeStyle = 'rgba(0,0,0,.45)'; c.lineWidth = 1.2; c.stroke(); };
-  const bush = (x, y, s) => { cols.push({ x, y, r: 8 * s }); c.fillStyle = 'rgba(0,0,0,.22)'; c.beginPath(); c.ellipse(x + 3 * s, y + 7 * s, 13 * s, 5 * s, 0, 0, 7); c.fill(); c.fillStyle = P.leaf[2]; c.beginPath(); c.arc(x - 6 * s, y, 8 * s, 0, 7); c.arc(x + 6 * s, y - 1 * s, 9 * s, 0, 7); c.arc(x, y - 6 * s, 8 * s, 0, 7); c.fill(); c.fillStyle = P.leaf[4]; c.beginPath(); c.arc(x - 2 * s, y - 5 * s, 5.5 * s, 0, 7); c.fill(); if (rng() < .5) { c.fillStyle = P.flowers[0]; c.beginPath(); c.arc(x + 4 * s, y - 7 * s, 1.6 * s, 0, 7); c.arc(x - 5 * s, y - 3 * s, 1.6 * s, 0, 7); c.fill(); } };
-  const cactus = (x, y, s) => { cols.push({ x, y, r: 9 * s }); c.fillStyle = 'rgba(0,0,0,.25)'; c.beginPath(); c.ellipse(x + 3, y + 6 * s, 12 * s, 5 * s, 0, 0, 7); c.fill(); c.fillStyle = '#5d8a41'; c.strokeStyle = '#3f5c33'; c.lineWidth = 1.2; roundRect(c, x - 6 * s, y - 34 * s, 12 * s, 40 * s, 6 * s); c.fill(); c.stroke(); roundRect(c, x - 20 * s, y - 22 * s, 10 * s, 18 * s, 5 * s); c.fill(); c.stroke(); c.fillRect(x - 15 * s, y - 10 * s, 12 * s, 6 * s); roundRect(c, x + 10 * s, y - 28 * s, 10 * s, 20 * s, 5 * s); c.fill(); c.stroke(); c.fillRect(x + 4 * s, y - 12 * s, 10 * s, 6 * s); c.fillStyle = 'rgba(255,255,255,.35)'; for (let k = 0; k < 6; k++) c.fillRect(x - 1, y - 30 * s + k * 6 * s, 2, 2); };
+  const rock = (x, y, s) => { cols.push({ x, y, r: 10 * s }); if (drawPropTex(c, pick(PS.rocks), x, y + 6 * s, 26 * s, PS.tint, rng() < .5)) return; c.fillStyle = 'rgba(0,0,0,.28)'; c.beginPath(); c.ellipse(x + 3, y + 8 * s, 14 * s, 6 * s, 0, 0, 7); c.fill(); const g = c.createLinearGradient(x - 11 * s, y - 12 * s, x + 11 * s, y + 8 * s); g.addColorStop(0, P.rock[2]); g.addColorStop(.5, P.rock[0]); g.addColorStop(1, P.rock[1]); c.fillStyle = g; c.beginPath(); c.moveTo(x - 12 * s, y + 6 * s); c.lineTo(x - 9 * s, y - 8 * s); c.lineTo(x - 1 * s, y - 13 * s); c.lineTo(x + 9 * s, y - 7 * s); c.lineTo(x + 13 * s, y + 4 * s); c.lineTo(x + 6 * s, y + 9 * s); c.closePath(); c.fill(); c.strokeStyle = 'rgba(0,0,0,.45)'; c.lineWidth = 1.2; c.stroke(); };
+  const bush = (x, y, s) => { cols.push({ x, y, r: 8 * s }); if (drawPropTex(c, pick(PS.bushes), x, y + 5 * s, 22 * s, PS.tint, rng() < .5)) return; c.fillStyle = 'rgba(0,0,0,.22)'; c.beginPath(); c.ellipse(x + 3 * s, y + 7 * s, 13 * s, 5 * s, 0, 0, 7); c.fill(); c.fillStyle = P.leaf[2]; c.beginPath(); c.arc(x - 6 * s, y, 8 * s, 0, 7); c.arc(x + 6 * s, y - 1 * s, 9 * s, 0, 7); c.arc(x, y - 6 * s, 8 * s, 0, 7); c.fill(); c.fillStyle = P.leaf[4]; c.beginPath(); c.arc(x - 2 * s, y - 5 * s, 5.5 * s, 0, 7); c.fill(); if (rng() < .5) { c.fillStyle = P.flowers[0]; c.beginPath(); c.arc(x + 4 * s, y - 7 * s, 1.6 * s, 0, 7); c.arc(x - 5 * s, y - 3 * s, 1.6 * s, 0, 7); c.fill(); } };
+  const cactus = (x, y, s) => { cols.push({ x, y, r: 9 * s }); if (drawPropTex(c, pick(['cactus_short', 'cactus_tall']), x, y + 4 * s, 36 * s, PS.tint, rng() < .5)) return; c.fillStyle = 'rgba(0,0,0,.25)'; c.beginPath(); c.ellipse(x + 3, y + 6 * s, 12 * s, 5 * s, 0, 0, 7); c.fill(); c.fillStyle = '#5d8a41'; c.strokeStyle = '#3f5c33'; c.lineWidth = 1.2; roundRect(c, x - 6 * s, y - 34 * s, 12 * s, 40 * s, 6 * s); c.fill(); c.stroke(); roundRect(c, x - 20 * s, y - 22 * s, 10 * s, 18 * s, 5 * s); c.fill(); c.stroke(); c.fillRect(x - 15 * s, y - 10 * s, 12 * s, 6 * s); roundRect(c, x + 10 * s, y - 28 * s, 10 * s, 20 * s, 5 * s); c.fill(); c.stroke(); c.fillRect(x + 4 * s, y - 12 * s, 10 * s, 6 * s); c.fillStyle = 'rgba(255,255,255,.35)'; for (let k = 0; k < 6; k++) c.fillRect(x - 1, y - 30 * s + k * 6 * s, 2, 2); };
   const stalagmite = (x, y, s) => { cols.push({ x, y, r: 8 * s }); c.fillStyle = 'rgba(0,0,0,.35)'; c.beginPath(); c.ellipse(x + 2, y + 5 * s, 11 * s, 4 * s, 0, 0, 7); c.fill(); const g = c.createLinearGradient(x - 8 * s, y, x + 8 * s, y); g.addColorStop(0, P.rock[1]); g.addColorStop(.5, P.rock[2]); g.addColorStop(1, P.rock[1]); c.fillStyle = g; c.beginPath(); c.moveTo(x - 9 * s, y + 4 * s); c.lineTo(x - 3 * s, y - 30 * s); c.lineTo(x + 2 * s, y - 36 * s); c.lineTo(x + 5 * s, y - 28 * s); c.lineTo(x + 10 * s, y + 4 * s); c.closePath(); c.fill(); c.strokeStyle = 'rgba(0,0,0,.4)'; c.lineWidth = 1; c.stroke(); };
   const crystal = (x, y, s) => { c.fillStyle = P.flowers[i2 % 4]; c.shadowColor = P.flowers[0]; c.shadowBlur = 10; c.beginPath(); c.moveTo(x, y - 18 * s); c.lineTo(x + 5 * s, y - 4 * s); c.lineTo(x + 2 * s, y + 4 * s); c.lineTo(x - 3 * s, y + 4 * s); c.lineTo(x - 6 * s, y - 6 * s); c.closePath(); c.fill(); c.shadowBlur = 0; c.fillStyle = 'rgba(255,255,255,.5)'; c.beginPath(); c.moveTo(x, y - 16 * s); c.lineTo(x + 2 * s, y - 6 * s); c.lineTo(x - 1 * s, y - 6 * s); c.closePath(); c.fill(); };
-  const pillar = (x, y, s, broken) => { cols.push({ x, y, r: 9 * s }); c.fillStyle = 'rgba(0,0,0,.3)'; c.beginPath(); c.ellipse(x + 4, y + 6 * s, 14 * s, 5 * s, 0, 0, 7); c.fill(); const h = (broken ? 22 : 46) * s; c.fillStyle = P.rock[0]; c.fillRect(x - 7 * s, y - h, 14 * s, h); c.fillStyle = P.rock[2]; c.fillRect(x - 7 * s, y - h, 4 * s, h); c.fillStyle = P.rock[1]; c.fillRect(x + 3 * s, y - h, 4 * s, h); c.fillStyle = P.rock[2]; c.fillRect(x - 9 * s, y - 4 * s, 18 * s, 5 * s); if (!broken) c.fillRect(x - 9 * s, y - h - 4 * s, 18 * s, 5 * s); else { c.fillStyle = P.rock[1]; c.beginPath(); c.moveTo(x - 7 * s, y - h); c.lineTo(x - 2 * s, y - h - 8 * s); c.lineTo(x + 3 * s, y - h - 3 * s); c.lineTo(x + 7 * s, y - h); c.closePath(); c.fill(); } };
+  const pillar = (x, y, s, broken) => { cols.push({ x, y, r: 9 * s }); if (drawPropTex(c, broken ? 'statue_columnDamaged' : 'statue_column', x, y + 4 * s, 52 * s, PS.tint, false)) return; c.fillStyle = 'rgba(0,0,0,.3)'; c.beginPath(); c.ellipse(x + 4, y + 6 * s, 14 * s, 5 * s, 0, 0, 7); c.fill(); const h = (broken ? 22 : 46) * s; c.fillStyle = P.rock[0]; c.fillRect(x - 7 * s, y - h, 14 * s, h); c.fillStyle = P.rock[2]; c.fillRect(x - 7 * s, y - h, 4 * s, h); c.fillStyle = P.rock[1]; c.fillRect(x + 3 * s, y - h, 4 * s, h); c.fillStyle = P.rock[2]; c.fillRect(x - 9 * s, y - 4 * s, 18 * s, 5 * s); if (!broken) c.fillRect(x - 9 * s, y - h - 4 * s, 18 * s, 5 * s); else { c.fillStyle = P.rock[1]; c.beginPath(); c.moveTo(x - 7 * s, y - h); c.lineTo(x - 2 * s, y - h - 8 * s); c.lineTo(x + 3 * s, y - h - 3 * s); c.lineTo(x + 7 * s, y - h); c.closePath(); c.fill(); } };
   let i2 = 0;
   const place = (count, fn, pad, sMin, sMax) => { let tries = 0; for (let k = 0; k < count && tries < count * 6; tries++) { const x = 70 + rng() * (WORLD.w - 140), y = 90 + rng() * (WORLD.h - 180); if (isBlocked(x, y, pad)) continue; if (cols.some(o => Math.hypot(o.x - x, o.y - y) < 36)) continue; i2++; fn(x, y, sMin + rng() * (sMax - sMin)); k++; } };
   if (P.walls) { /* 동굴/폐허: 가장자리 벽 덩이 */
     for (let k = 0; k < 26; k++) { const side = k % 4, t = rng(); const x = side === 0 ? 40 + rng() * 60 : side === 1 ? WORLD.w - 40 - rng() * 60 : 60 + t * (WORLD.w - 120), y = side === 2 ? 40 + rng() * 50 : side === 3 ? WORLD.h - 40 - rng() * 50 : 60 + t * (WORLD.h - 120); if (isBlocked(x, y, 40)) continue; const r = 26 + rng() * 30; c.fillStyle = P.rock[1]; c.beginPath(); c.arc(x, y, r, 0, 7); c.fill(); c.fillStyle = P.rock[0]; c.beginPath(); c.arc(x - r * .2, y - r * .25, r * .6, 0, 7); c.fill(); cols.push({ x, y, r: r * .85 }); }
   }
-  place(P.trees, (x, y, s) => tree(x, y, s, P.style === 'snow' ? rng() < .7 : rng() < .38), 20, .95, 1.6);
-  place(P.rocks, rock, 0, .8, 1.5);
-  place(P.bushes, bush, -20, .8, 1.3);
+  place(Math.round(P.trees * 1.7), (x, y, s) => tree(x, y, s, P.style === 'snow' ? rng() < .7 : rng() < .38), 16, 1.05, 1.9); /* 밀도 1.7배·크기 상향 — 스프라이트 프롭 기준 */
+  place(Math.round(P.rocks * 1.4), rock, 0, .9, 1.7);
+  place(Math.round(P.bushes * 1.6), bush, -20, .9, 1.5);
+  /* 가장자리 숲 벨트: 지도 테두리를 따라 큰 나무를 촘촘히 — 세계 끝이 허전하지 않게 (관문 근처 제외) */
+  for (let k = 0, tries = 0; k < 70 && tries < 420; tries++) {
+    const side = tries % 4; let x, y;
+    if (side === 0) { x = 40 + rng() * 110; y = 60 + rng() * (WORLD.h - 120); }
+    else if (side === 1) { x = WORLD.w - 40 - rng() * 110; y = 60 + rng() * (WORLD.h - 120); }
+    else if (side === 2) { x = 60 + rng() * (WORLD.w - 120); y = 40 + rng() * 90; }
+    else { x = 60 + rng() * (WORLD.w - 120); y = WORLD.h - 40 - rng() * 90; }
+    if (isBlocked(x, y, 30) || gates.some(g2 => Math.hypot(g2.x - x, g2.y - y) < 150)) continue;
+    if (P.style === 'desert' && rng() < .6) { rock(x, y, 1.2 + rng() * .8); k++; continue; }
+    tree(x, y, 1.3 + rng() * .8, P.style === 'snow' ? rng() < .7 : rng() < .38); k++;
+  }
   if (P.cacti) place(P.cacti, cactus, 0, .8, 1.3);
   if (P.stalagmites) place(P.stalagmites, stalagmite, 0, .8, 1.5);
   if (P.crystals) place(P.crystals, crystal, -40, .8, 1.4);
   if (P.pillars) place(P.pillars, (x, y, s) => pillar(x, y, s, rng() < .55), 0, .9, 1.3);
   if (P.ice) for (let k = 0; k < P.ice; k++) { const x = R(200, 1400), y = R(200, 1050); if (isBlocked(x, y, 60)) continue; c.fillStyle = 'rgba(200,235,255,.55)'; c.beginPath(); c.ellipse(x, y, R(50, 100), R(30, 60), R(0, 3), 0, 7); c.fill(); c.strokeStyle = 'rgba(255,255,255,.7)'; c.lineWidth = 1.5; c.beginPath(); c.moveTo(x - 30, y - 10); c.lineTo(x + 10, y + 5); c.lineTo(x + 35, y - 12); c.stroke(); }
+  /* 5b) 세트 드레싱: 소품(꽃·버섯·통나무…) + 스폰 캠프 + 관문 표지판 + 길가 울타리 */
+  { const extras = 10 + (tier % 4) * 3;
+    for (let k = 0, tries = 0; k < extras && tries < extras * 5; tries++) { const x = 70 + rng() * (WORLD.w - 140), y = 70 + rng() * (WORLD.h - 140); if (isBlocked(x, y, -30)) continue; const ek = pick(PS.extra); const eh = ek === 'log' ? 9 + rng() * 4 : 16 + rng() * 12; /* 통나무는 납작·넓어 작게 */ if (drawPropTex(c, ek, x, y, eh, PS.tint, rng() < .5)) k++; else break; }
+    if (PS.dress.includes('campfire_logs')) { /* 스폰 캠프: 모닥불 + 통나무 + 그루터기 (텐트 모델은 정면이 벽처럼 구워져 제외) */
+      drawPropTex(c, 'campfire_logs', spawn.x - 90, spawn.y + 30, 20, null, false);
+      drawPropTex(c, 'log', spawn.x - 130, spawn.y + 56, 12, PS.tint, false);
+      drawPropTex(c, 'stump_round', spawn.x - 52, spawn.y + 62, 16, PS.tint, true);
+    }
+    for (const g2 of gates) if (PS.dress.includes('sign')) drawPropTex(c, 'sign', g2.x + (g2.x < 800 ? 46 : -46), g2.y - 40, 30, PS.tint, g2.x > 800);
+    const fenceKey = PS.dress.find(k => k.startsWith('fence'));
+    if (fenceKey) for (let k = 0; k < 6; k++) { const x = 300 + k * 44, y = 130 + Math.sin(k) * 4; if (!isBlocked(x, y, 0)) drawPropTex(c, fenceKey, x, y, 22, PS.tint, false); }
+    for (const dk of PS.dress.filter(k => !/tent|campfire|sign|fence/.test(k)).slice(0, 2)) { const x = 200 + rng() * 1200, y = 180 + rng() * 800; if (!isBlocked(x, y, 40)) { const dh0 = dk === 'log' ? 13 : dk.startsWith('stump') ? 18 : 40; /* 통나무·그루터기는 납작해 작게 */ if (drawPropTex(c, dk, x, y, dh0, PS.tint, false)) cols.push({ x, y: y - 6, r: dh0 < 20 ? 10 : 16 }); } }
+  }
   /* 6) 테두리 */
   try { drawBrickBorder(c, P.style === 'volcano' ? 15 : P.style === 'abyss' ? 280 : P.style === 'snow' ? 205 : P.style === 'desert' ? 40 : 30, P.style === 'cave' ? .15 : .35); } catch (e) {}
   worldColliders[pid] = cols;
   return cv2;
 }
 const bioTexCache = new Map(); /* 바이옴 텍스처는 크므로(데스크톱 3200x2400) 최근 2개만 보관 */
+const zoneWaters = {}; /* pid → 물/용암 웅덩이 목록(런타임 반짝임용) */
+/* ===== 런타임 배경 연출: 물 반짝임 · 바이옴 입자 ===== */
+function drawWaterFx(now) {
+  const ws = zoneWaters[myMap()]; if (!ws || !ws.length) return;
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  for (const w of ws) {
+    if (w.lava) { const p = .5 + Math.sin(now / 420 + w.x) * .5; const g = ctx.createRadialGradient(w.x, w.y, 2, w.x, w.y, Math.max(w.rx, w.ry) * 1.4); g.addColorStop(0, `rgba(255,150,60,${.10 + p * .12})`); g.addColorStop(1, 'rgba(255,90,0,0)'); ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(w.x, w.y, w.rx * 1.4, w.ry * 1.4, w.rot, 0, 7); ctx.fill(); continue; }
+    for (let i = 0; i < 3; i++) { /* 흘러가는 하이라이트 3줄 */
+      const t = ((now / 2600) + i / 3 + w.x * .001) % 1, a = Math.sin(t * Math.PI) * .32;
+      const ox = (t - .5) * w.rx * 1.2, len = w.rx * (.35 + .25 * Math.sin(now / 900 + i));
+      ctx.save(); ctx.translate(w.x, w.y); ctx.rotate(w.rot);
+      ctx.strokeStyle = `rgba(255,255,255,${a})`; ctx.lineWidth = 1.6; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(ox - len / 2, (i - 1) * w.ry * .35); ctx.lineTo(ox + len / 2, (i - 1) * w.ry * .35); ctx.stroke(); ctx.restore();
+    }
+  }
+  ctx.restore();
+}
+/* 바이옴 입자: 낙엽/눈/불씨/포자/먼지/반짝이/물방울 — 뷰포트 주변 월드 좌표에서 순환 */
+const AMB_N = innerWidth <= 640 ? 18 : 40; let ambient = [], ambStyle = '';
+function ambientKind(style) { return { meadow: 'leaf', jungle: 'leaf', swamp: 'spore', snow: 'snow', volcano: 'ember', desert: 'dust', cave: 'drip', ruin: 'dust', abyss: 'spark', sky: 'spark' }[style] || 'leaf'; }
+function updateAmbient(now, dt) {
+  const pn = pageNum(), style = (BIOME_PAL[Math.min(9, Math.floor((pn - 1) / 10))] || BIOME_PAL[0]).style; const kind = ambientKind(style); /* 팔레트 스타일 기준(BIOMES.style은 구형 meadow/grave 2종) */
+  const vw = cvW / view.z, vh = cvH / view.z, x0 = view.x - 60, y0 = view.y - 80;
+  if (ambStyle !== style) { ambStyle = style; ambient = []; }
+  const spawnOne = () => ({ x: x0 + Math.random() * (vw + 120), y: kind === 'ember' ? y0 + vh + Math.random() * 60 : y0 - Math.random() * 60, vx: (Math.random() - .5) * 30 + (kind === 'leaf' ? 22 : kind === 'dust' ? 60 : 0), vy: kind === 'ember' ? -(30 + Math.random() * 40) : kind === 'spark' ? (Math.random() - .5) * 12 : (18 + Math.random() * 30) * (kind === 'snow' ? .8 : kind === 'drip' ? 3 : 1), r: kind === 'spark' ? 1.2 + Math.random() * 1.6 : 1.5 + Math.random() * 2.2, ph: Math.random() * 7, life: 0, col: kind === 'leaf' ? (Math.random() < .5 ? '#c9803a' : '#7fa34a') : kind === 'spore' ? '#a8e070' : kind === 'ember' ? '#ff9a3a' : kind === 'dust' ? '#e8d8b0' : kind === 'drip' ? '#9fd8ff' : kind === 'spark' ? (style === 'abyss' ? '#d9a3ff' : '#ffffff') : '#ffffff' });
+  while (ambient.length < AMB_N) ambient.push(spawnOne());
+  for (const p of ambient) {
+    p.life += dt; p.x += (p.vx + Math.sin(now / 700 + p.ph) * (kind === 'snow' || kind === 'leaf' ? 18 : 6)) * dt / 1000; p.y += p.vy * dt / 1000;
+    if (kind === 'spark') { p.x += Math.sin(now / 500 + p.ph) * 10 * dt / 1000; }
+    if (p.x < x0 - 80 || p.x > x0 + vw + 200 || p.y > y0 + vh + 120 || p.y < y0 - 120 || p.life > 14000) Object.assign(p, spawnOne(), { life: 0 });
+  }
+}
+function drawAmbient(now) {
+  if (!ambient.length) return;
+  const kind = ambientKind(ambStyle);
+  ctx.save();
+  if (kind === 'ember' || kind === 'spark' || kind === 'spore') ctx.globalCompositeOperation = 'lighter';
+  for (const p of ambient) {
+    const a = kind === 'spark' ? .35 + .65 * Math.abs(Math.sin(now / 300 + p.ph)) : kind === 'dust' ? .22 : .75;
+    ctx.globalAlpha = a; ctx.fillStyle = p.col;
+    if (kind === 'leaf') { ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(now / 600 + p.ph); ctx.fillRect(-p.r * 1.4, -p.r * .6, p.r * 2.8, p.r * 1.2); ctx.restore(); }
+    else if (kind === 'dust') { ctx.fillRect(p.x, p.y, p.r * 3, 1); }
+    else if (kind === 'drip') { ctx.fillRect(p.x, p.y, 1, p.r * 3); }
+    else { ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7); ctx.fill(); }
+  }
+  ctx.restore(); ctx.globalAlpha = 1;
+}
+/* ===== 배경 프롭 스프라이트(Kenney CC0 GLB → 256px 베이크) ===== */
+const PROP_KEYS = ['tree_default','tree_default_dark','tree_default_fall','tree_detailed','tree_detailed_dark','tree_detailed_fall','tree_cone','tree_cone_dark','tree_pineDefaultA','tree_pineTallA','tree_pineRoundA','tree_palm','tree_palmTall','tree_oak','tree_tall','tree_thin','tree_plateau','rock_largeA','rock_largeC','rock_smallA','rock_smallC','stone_largeA','stone_smallA','plant_bush','plant_bushLarge','plant_bushSmall','mushroom_redGroup','mushroom_tanGroup','flower_purpleA','flower_redA','flower_yellowA','fence_simple','fence_planks','tent_detailedClosed','campfire_logs','log','stump_round','statue_column','statue_columnDamaged','statue_obelisk','cactus_short','cactus_tall','lily_large','grass_leafs','sign','hanging_moss'];
+const propSheet = k => heroSheet('prop_' + k.toLowerCase()); /* 베이크 서버가 파일명을 소문자로 저장하므로 키도 소문자로. 매니페스트 게이트·LRU는 heroSheet 공용 */
+let propRebuildT = 0;
+function onPropLoaded() { /* 프롭이 로드되면 현재 구역 지형을 다시 구워 벡터 폴백을 스프라이트로 교체 */
+  clearTimeout(propRebuildT);
+  propRebuildT = setTimeout(() => { try { bioTexCache.delete(pageNum()); worldColliders[myMap()] = null; } catch (e) {} }, 400);
+}
+/* 바이옴별 프롭 세트 */
+const PROP_SETS = {
+  meadow:  { trees: ['tree_default', 'tree_detailed', 'tree_oak', 'tree_tall', 'tree_default_fall'], bushes: ['plant_bush', 'plant_bushLarge', 'plant_bushSmall'], rocks: ['rock_smallA', 'rock_smallC', 'stone_smallA', 'rock_largeA'], extra: ['flower_purpleA', 'flower_redA', 'flower_yellowA', 'grass_leafs', 'stump_round', 'log'], dress: ['campfire_logs', 'fence_simple', 'sign'], tint: 'rgba(160,230,110,.16)' },
+  jungle:  { trees: ['tree_default_dark', 'tree_detailed_dark', 'tree_detailed', 'tree_palm', 'tree_oak'], bushes: ['plant_bush', 'plant_bushSmall'], rocks: ['rock_largeC', 'stone_largeA', 'rock_smallC'], extra: ['mushroom_redGroup', 'mushroom_tanGroup', 'hanging_moss', 'stump_round', 'log'], dress: ['fence_planks', 'sign', 'sign'], tint: 'rgba(20,40,60,.28)' },
+  desert:  { trees: ['tree_palm', 'tree_palmTall'], bushes: ['cactus_short', 'cactus_tall', 'plant_bushSmall'], rocks: ['rock_largeA', 'rock_largeC', 'stone_largeA', 'stone_smallA'], extra: ['cactus_short', 'rock_smallA', 'grass_leafs'], dress: ['log', 'sign'], tint: 'rgba(255,200,120,.18)' },
+  snow:    { trees: ['tree_pineDefaultA', 'tree_pineTallA', 'tree_pineRoundA', 'tree_cone'], bushes: ['plant_bushSmall', 'stump_round'], rocks: ['rock_largeA', 'stone_largeA', 'rock_smallA'], extra: ['log', 'stump_round'], dress: ['campfire_logs', 'fence_simple', 'sign'], tint: 'rgba(200,225,255,.30)' },
+  swamp:   { trees: ['tree_default_dark', 'tree_thin', 'tree_detailed_dark'], bushes: ['plant_bushLarge', 'grass_leafs', 'lily_large'], rocks: ['stone_largeA', 'rock_smallC'], extra: ['mushroom_tanGroup', 'lily_large', 'log', 'hanging_moss'], dress: ['fence_planks', 'sign'], tint: 'rgba(60,90,40,.22)' },
+  volcano: { trees: ['tree_default_fall', 'tree_thin', 'tree_thin'], bushes: ['rock_smallC', 'stone_smallA'], rocks: ['rock_largeA', 'rock_largeC', 'stone_largeA'], extra: ['campfire_logs', 'rock_smallA', 'log'], dress: ['statue_obelisk', 'statue_obelisk'], tint: 'rgba(120,30,10,.38)' },
+  cave:    { trees: ['tree_thin', 'tree_thin'], bushes: ['mushroom_tanGroup', 'mushroom_redGroup'], rocks: ['rock_largeA', 'rock_largeC', 'stone_largeA', 'stone_smallA', 'rock_smallC'], extra: ['mushroom_tanGroup', 'stone_smallA'], dress: ['statue_columnDamaged', 'sign'], tint: 'rgba(30,40,70,.40)' },
+  ruin:    { trees: ['tree_thin', 'tree_default_fall', 'tree_thin'], bushes: ['plant_bushSmall', 'grass_leafs'], rocks: ['stone_largeA', 'stone_smallA', 'rock_largeC'], extra: ['statue_columnDamaged', 'statue_column', 'log', 'log'], dress: ['statue_column', 'statue_obelisk', 'fence_planks', 'statue_obelisk', 'sign'], tint: 'rgba(80,80,60,.25)' },
+  abyss:   { trees: ['tree_thin', 'tree_thin', 'tree_cone_dark'], bushes: ['mushroom_redGroup', 'stone_smallA'], rocks: ['rock_largeC', 'stone_largeA', 'rock_smallC'], extra: ['statue_obelisk', 'statue_obelisk', 'hanging_moss'], dress: ['statue_obelisk', 'statue_obelisk', 'statue_column'], tint: 'rgba(120,30,180,.42)' },
+  sky:     { trees: ['tree_plateau', 'tree_cone', 'tree_default', 'tree_pineRoundA'], bushes: ['plant_bushSmall', 'flower_purpleA'], rocks: ['stone_smallA', 'rock_smallA'], extra: ['flower_yellowA', 'flower_purpleA', 'grass_leafs', 'sign'], dress: ['sign', 'sign', 'fence_simple'], tint: 'rgba(220,240,255,.22)' },
+};
+/* 프롭 1개를 지형 텍스처에 그림: (x,y)=발밑, h=원하는 월드 높이. 그림자 + 바이옴 틴트. 시트 미로드면 false */
+const propTintCv = document.createElement('canvas');
+function drawPropTex(c, key, x, y, h, tint, flip) {
+  const sh = propSheet(key); if (!sh) return false;
+  const m = sh.meta, F = m.fr, vis = Math.max(1, m.feet - m.top), k = h / vis;
+  const dw = F * k, dh = F * k, dx = x - dw / 2, dy = y - m.feet * k;
+  c.save();
+  c.fillStyle = 'rgba(0,0,0,.28)'; c.beginPath(); c.ellipse(x + h * .08, y + 2, h * .30, h * .11, 0, 0, 7); c.fill();
+  if (flip) { c.translate(x * 2, 0); c.scale(-1, 1); }
+  if (tint) { /* 바이옴 색조: 스프라이트 알파에만 틴트 */
+    propTintCv.width = F; propTintCv.height = F; const g = propTintCv.getContext('2d');
+    g.clearRect(0, 0, F, F); g.drawImage(sh.img, 0, 0, F, F, 0, 0, F, F); g.globalCompositeOperation = 'source-atop'; g.fillStyle = tint; g.fillRect(0, 0, F, F);
+    c.drawImage(propTintCv, dx, dy, dw, dh);
+  } else c.drawImage(sh.img, 0, 0, F, F, dx, dy, dw, dh);
+  c.restore();
+  return true;
+}
+/* ===== 노이즈 지면: 저해상 값-노이즈 → 확대 보간으로 자연스러운 얼룩 + 미세 질감 ===== */
+function paintGround(c, P, rng, style) {
+  const W = WORLD.w, H = WORLD.h, cw = 80, ch = 60;
+  const small = document.createElement('canvas'); small.width = cw; small.height = ch;
+  const g = small.getContext('2d'); const img = g.createImageData(cw, ch); const d = img.data;
+  const grid = 8, gx = Math.ceil(cw / grid) + 2, gy = Math.ceil(ch / grid) + 2;
+  const lat = []; for (let i = 0; i < gx * gy; i++) lat.push(rng());
+  const lat2 = []; for (let i = 0; i < gx * gy * 4; i++) lat2.push(rng());
+  const sm = t => t * t * (3 - 2 * t);
+  const vn = (arr, x, y, sz, stride) => { const x0 = Math.floor(x / sz), y0 = Math.floor(y / sz), fx = sm(x / sz - x0), fy = sm(y / sz - y0); const a = arr[(y0 * stride + x0) % arr.length], b = arr[(y0 * stride + x0 + 1) % arr.length], c2 = arr[((y0 + 1) * stride + x0) % arr.length], d2 = arr[((y0 + 1) * stride + x0 + 1) % arr.length]; return (a * (1 - fx) + b * fx) * (1 - fy) + (c2 * (1 - fx) + d2 * fx) * fy; };
+  const hex = h => { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+  const cols = [hex(P.ground), ...P.tints.map(hex)];
+  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+    const n1 = vn(lat, x, y, grid, gx), n2 = vn(lat2, x * 2.3, y * 2.3, grid, gx * 2);
+    const t = Math.min(.999, Math.max(0, n1 * .7 + n2 * .3));
+    const fi = t * (cols.length - 1), i0 = Math.floor(fi), f = fi - i0, ca = cols[i0], cb = cols[Math.min(cols.length - 1, i0 + 1)];
+    const o = (y * cw + x) * 4; d[o] = ca[0] * (1 - f) + cb[0] * f; d[o + 1] = ca[1] * (1 - f) + cb[1] * f; d[o + 2] = ca[2] * (1 - f) + cb[2] * f; d[o + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  c.imageSmoothingEnabled = true; c.imageSmoothingQuality = 'high';
+  c.drawImage(small, 0, 0, W, H);
+  /* 미세 질감: 스타일별 */
+  const R = (a, b) => a + rng() * (b - a);
+  if (style === 'meadow' || style === 'jungle' || style === 'swamp' || style === 'sky') { /* 잔디 결 */
+    for (let i = 0; i < 2000; i++) { const x = rng() * W, y = rng() * H; c.strokeStyle = i % 2 ? P.grass[0] : P.grass[1]; c.lineWidth = 1.1; c.globalAlpha = .55; c.beginPath(); c.moveTo(x, y); c.lineTo(x + R(-2, 2), y - R(4, 9)); c.stroke(); } c.globalAlpha = 1;
+  } else if (style === 'desert') { /* 모래 알갱이 + 물결 */
+    for (let i = 0; i < 2200; i++) { c.fillStyle = i % 3 ? 'rgba(255,245,215,.35)' : 'rgba(120,90,50,.25)'; c.fillRect(rng() * W, rng() * H, 1.5, 1.5); }
+    for (let i = 0; i < 160; i++) { const x = rng() * W, y = rng() * H, w = R(60, 160); c.strokeStyle = 'rgba(255,240,200,.14)'; c.lineWidth = 3; c.beginPath(); c.moveTo(x, y); c.quadraticCurveTo(x + w / 2, y - 6, x + w, y); c.stroke(); }
+  } else if (style === 'snow') { /* 눈 결정 반짝임 + 바람결 */
+    for (let i = 0; i < 1600; i++) { c.fillStyle = 'rgba(255,255,255,.55)'; c.fillRect(rng() * W, rng() * H, 1.4, 1.4); }
+    for (let i = 0; i < 120; i++) { const x = rng() * W, y = rng() * H, w = R(80, 220); c.strokeStyle = 'rgba(160,185,205,.18)'; c.lineWidth = 4; c.beginPath(); c.moveTo(x, y); c.quadraticCurveTo(x + w / 2, y + 5, x + w, y); c.stroke(); }
+  } else if (style === 'cave' || style === 'ruin') { /* 돌바닥 균열·자갈 */
+    for (let i = 0; i < 260; i++) { let x = rng() * W, y = rng() * H; c.strokeStyle = 'rgba(0,0,0,.22)'; c.lineWidth = 1.2; c.beginPath(); c.moveTo(x, y); for (let k = 0; k < 4; k++) { x += R(-16, 16); y += R(-12, 12); c.lineTo(x, y); } c.stroke(); }
+    for (let i = 0; i < 1400; i++) { c.fillStyle = i % 2 ? 'rgba(255,255,255,.07)' : 'rgba(0,0,0,.14)'; c.beginPath(); c.arc(rng() * W, rng() * H, R(1, 2.6), 0, 7); c.fill(); }
+  } else if (style === 'volcano') { /* 흑요석 균열 + 잔열 */
+    for (let i = 0; i < 220; i++) { let x = rng() * W, y = rng() * H; c.strokeStyle = 'rgba(255,110,40,.30)'; c.lineWidth = 1.4; c.shadowColor = '#ff7f27'; c.shadowBlur = 6; c.beginPath(); c.moveTo(x, y); for (let k = 0; k < 4; k++) { x += R(-18, 18); y += R(-14, 14); c.lineTo(x, y); } c.stroke(); }
+    c.shadowBlur = 0; for (let i = 0; i < 1600; i++) { c.fillStyle = 'rgba(0,0,0,.18)'; c.fillRect(rng() * W, rng() * H, 2, 2); }
+  } else if (style === 'abyss') { /* 공허 줄무늬 + 룬 점 */
+    for (let i = 0; i < 140; i++) { const x = rng() * W, y = rng() * H, w = R(80, 240); c.strokeStyle = 'rgba(150,80,220,.12)'; c.lineWidth = R(2, 6); c.beginPath(); c.moveTo(x, y); c.quadraticCurveTo(x + w / 2, y + R(-30, 30), x + w, y); c.stroke(); }
+    for (let i = 0; i < 700; i++) { c.fillStyle = 'rgba(220,160,255,.35)'; c.fillRect(rng() * W, rng() * H, 1.5, 1.5); }
+  }
+}
 function gradeWorld(src, gr) {
   const c = document.createElement('canvas');
   c.width = src.width; c.height = src.height;
@@ -5497,7 +5648,7 @@ const PORTRAIT_GEAR = {
 /* ===== VARCO 베이크 시트 (tools/bake.html → assets/sprites/<key>.png/.json) =====
    8방향 × 1프레임 정적 시트. 걷기/공격/피격/사망 연출은 drawChar의 캔버스 변환(바운스·스웨이·런지·회전)으로 처리.
    시트가 없거나 아직 로드 전이면 null → 기존 벡터 20프레임으로 폴백 */
-const HERO_SHEETS = {}, SHEET_VER = 4;
+const HERO_SHEETS = {}, SHEET_VER = 6; /* v6: 배경 프롭 재베이크(넓은 모델 정규화 수정) */
 const HERO_SHEET_H = 118; /* 시트 알파 박스(치켜든 무기 끝 포함)의 화면 높이(px). 몸통만 치면 ≈ 75~95px — 벡터 영웅(≈58px)보다 큼 */
 /* 매니페스트(있는 시트 키 목록)를 먼저 읽어, 없는 키(스켈레톤·오크 등)는 요청하지 않는다 — 404 소음·모바일 요청 낭비 제거.
    매니페스트가 없으면(구버전 배포) 예전처럼 직접 시도 */
@@ -5505,6 +5656,7 @@ let sheetManifest = null; /* null=로딩 전, Set=목록, false=없음 */
 const sheetManifestP = fetch(`assets/sprites/manifest.json?v=${SHEET_VER}`).then(r => r.ok ? r.json() : Promise.reject())
   .then(list => { sheetManifest = new Set(list); }).catch(() => { sheetManifest = false; })
   .finally(() => { try {
+    if (sheetManifest) for (const k of PROP_KEYS) propSheet(k); /* 배경 프롭 프리로드(52개·총 0.4MB) */
     for (const k of ['warrior', 'archer', 'rogue', 'mage']) { if (sheetManifest && sheetManifest.has(k)) heroSheet(k); /* 시트 로드 → 로드 완료 시 초상화 교체 */
       else { const el = document.querySelector(`#loginScreen .lp[data-cls="${k}"] img`); if (el) el.src = heroPortrait(k); } }
   } catch (e) {} });
@@ -5522,6 +5674,7 @@ function loadSheet(key, e) {
         } catch (err) { e.img = img; e.meta = meta; }
       } else { e.img = img; e.meta = meta; }
       if (key.startsWith('mob_')) { try { evictSheets(); } catch (e2) {} if ($('dexPanel')?.classList.contains('open')) { try { renderDex(); } catch (err) {} } } /* 로드 후 상한 초과분 제거 + 열린 도감 갱신 */
+      if (key.startsWith('prop_')) { try { onPropLoaded(); } catch (e3) {} } /* 배경 프롭 도착 → 현재 구역 지형 재구움 */
       if (!key.startsWith('mob_')) { /* 로그인 초상화가 벡터로 먼저 그려졌으면 시트로 교체 */
         delete portraitCache[key];
         const pel = document.querySelector(`#loginScreen .lp[data-cls="${key}"] img`);
@@ -7869,6 +8022,7 @@ function draw(now) {
   ctx.scale(z, z);
   ctx.translate(-cx + shx / z, -cy + shy / z);
   ctx.drawImage(getTex(myMap()), 0, 0, WORLD.w, WORLD.h);
+  drawWaterFx(now); /* 물/용암 반짝임 */
 
   drawLootItems(now);
   drawPickFlights(now);
@@ -8012,6 +8166,7 @@ function draw(now) {
   ctx.restore();
   ctx.globalAlpha = 1;
 
+  drawAmbient(now); /* 바이옴 입자(낙엽·눈·불씨…) */
   ctx.save(); ctx.globalCompositeOperation = 'lighter';
   for (const p of poofs) {
     ctx.globalAlpha = clampN(1 - p.t / 600, 0, 1);
@@ -8993,6 +9148,7 @@ if (meRef) updX(meRef, { x: me.x, y: me.y, hp: me.hp, ...(me.mp != null ? { mp: 
   }
 
   floats = floats.filter(f => (f.t += dt) < 1000);
+  if (ready) { try { updateAmbient(now, dt); } catch (e) {} }
   slashes = slashes.filter(s => (s.t += dt) < 180);
   bolts = bolts.filter(b => (b.t += dt) < b.max);
   meteors = meteors.filter(m => { m.t += dt; if (m.t >= m.max * .8 && !m.landed) { m.landed = true; try { m.onLand && m.onLand(); } catch (e) {} } return m.t < m.max * .8; });
@@ -9287,7 +9443,7 @@ async function init() {
   window.__PING = () => Promise.race([updateDoc(meRef, { lastSeen: Date.now() }).then(() => 'write-ok'), new Promise(r => setTimeout(() => r('write-timeout'), 8000))]).catch(e => 'write-error:' + (e.code || e.message)); /* 진단: 쓰기 채널 상태 */
   window.__MOB = async id => { const g = await getDoc(doc(db, 'monsters', id)); return g.exists() ? g.data() : null; };
   window.__give = async (id, slot = 17) => { await updX(meRef, { ['inv.' + slot]: id }); return 'ok'; }; /* 진단: 가방 슬롯에 아이템 넣기 */
-  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__pageDef = pageDef; window.__view = () => ({ x: view.x, y: view.y, z: view.z, dpr }); window.__mkUniqAt = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; cam.x=s0.x; cam.y=s0.y; return {id:s0.id, kind:s0.kind, x:s0.x, y:s0.y}; }; window.__mkUniq = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; const me2=window.__me?me:me; me.x=s0.x; me.y=s0.y-80; cam.x=s0.x; cam.y=s0.y-40; return {id:s0.id, kind:s0.kind}; }; window.__useSkill = useSkill; window.__sheets2 = () => ({ total: Object.keys(HERO_SHEETS).length, mob: Object.keys(HERO_SHEETS).filter(k=>k.startsWith('mob_')&&HERO_SHEETS[k].img).length, wss: WSS, bioTex: bioTexCache.size }); window.__loadMob = base => heroSheet('mob_'+base); window.__openStats = openStats; window.__sortBag = sortBag; window.__toggleAuto = toggleAuto; window.__autoState = () => ({ auto: autoHunt, target: attackTargetSimId, dest, map: me.map, myMap: myMap(), nearLoot: (l => l ? { x: Math.round(l.x), y: Math.round(l.y), d: Math.round(Math.hypot(l.x - me.x, l.y - me.y)) } : null)(nearestLoot(280)) }); window.__clearTarget = () => { attackTargetSimId = null; dest = null; }; window.__auto = () => autoHunt; window.__settings = () => settings; window.__salvage = salvageBulk; window.__invRar = () => Object.entries(me.inv||{}).map(([k,v])=>({k, id:String(v).split(/[*~+]/)[0], rar:getItem(v).rarity, rank:RARITY_RANK[getItem(v).rarity]??0, slot:getItem(v).slot||'-'})); window.__claimAchv = claimAchv; window.__ownedTitles = ownedTitles; window.__paused = () => ({ paused, ready, dead: me.dead, wm: worldMapOpen() }); window.__unpause = () => { paused = false; }; window.__cdUntil = id => skillCdUntil[id]||0; window.__bound = boundId; window.__skillDef = skillDef; window.__mpc = id => { const d=skillDef(id); return d&&d.mp?mpCostOf(skillMp(id,d)):0; }; window.__castTree = castTreeSkill; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
+  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__tex = n => getTex(pageId(n)); window.__waters = () => zoneWaters; window.__pageDef = pageDef; window.__view = () => ({ x: view.x, y: view.y, z: view.z, dpr }); window.__mkUniqAt = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; cam.x=s0.x; cam.y=s0.y; return {id:s0.id, kind:s0.kind, x:s0.x, y:s0.y}; }; window.__mkUniq = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; const me2=window.__me?me:me; me.x=s0.x; me.y=s0.y-80; cam.x=s0.x; cam.y=s0.y-40; return {id:s0.id, kind:s0.kind}; }; window.__useSkill = useSkill; window.__sheets2 = () => ({ total: Object.keys(HERO_SHEETS).length, mob: Object.keys(HERO_SHEETS).filter(k=>k.startsWith('mob_')&&HERO_SHEETS[k].img).length, wss: WSS, bioTex: bioTexCache.size }); window.__loadMob = base => heroSheet('mob_'+base); window.__openStats = openStats; window.__sortBag = sortBag; window.__toggleAuto = toggleAuto; window.__autoState = () => ({ auto: autoHunt, target: attackTargetSimId, dest, map: me.map, myMap: myMap(), nearLoot: (l => l ? { x: Math.round(l.x), y: Math.round(l.y), d: Math.round(Math.hypot(l.x - me.x, l.y - me.y)) } : null)(nearestLoot(280)) }); window.__clearTarget = () => { attackTargetSimId = null; dest = null; }; window.__auto = () => autoHunt; window.__settings = () => settings; window.__salvage = salvageBulk; window.__invRar = () => Object.entries(me.inv||{}).map(([k,v])=>({k, id:String(v).split(/[*~+]/)[0], rar:getItem(v).rarity, rank:RARITY_RANK[getItem(v).rarity]??0, slot:getItem(v).slot||'-'})); window.__claimAchv = claimAchv; window.__ownedTitles = ownedTitles; window.__paused = () => ({ paused, ready, dead: me.dead, wm: worldMapOpen() }); window.__unpause = () => { paused = false; }; window.__cdUntil = id => skillCdUntil[id]||0; window.__bound = boundId; window.__skillDef = skillDef; window.__mpc = id => { const d=skillDef(id); return d&&d.mp?mpCostOf(skillMp(id,d)):0; }; window.__castTree = castTreeSkill; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
   window.__ITEMS = () => ({ items: Object.keys(ITEMS).length, sets: Object.keys(SETS).length, sample: Object.entries(ITEMS).filter(([k]) => /_b[0-9]$/.test(k)).slice(0, 3).map(([k, v]) => k + ':' + v.name) });
   window.__ZONETEX = n => { try { const t = getTex('p' + n); return { w: t.width, h: t.height, cols: (worldColliders['p' + n] || []).length }; } catch (e) { return { err: String(e && e.stack || e).slice(0, 300) }; } };
   window.__DBG = () => ({ page: myPage(), colliders: (worldColliders[myMap()] || []).length, frozenMs: hitStopUntil - Date.now(), activeIsChat: document.activeElement === chatInput, activeTag: document.activeElement && document.activeElement.tagName + '#' + document.activeElement.id, wmUp: worldMapOpen(), mouseDown, moveSpd: moveSpd(), atkRange: atkRange(), atkCdMs: atkCdOf(), sinceAtk: Date.now() - lastAttackAt, mapFading, snapN: window.__snapN || 0, snapAgoMs: window.__snapT ? Date.now() - window.__snapT : null, lastDmg: window.__lastDmg || null, lastErr: window.__lastErr || null, dead: !!me.dead, paused, ready, sheets: Object.fromEntries(Object.entries(HERO_SHEETS).map(([k, v]) => [k, v.img ? 'ok' : v.failed ? 'failed' : 'loading'])), target: attackTargetSimId, hover: hoverSimId, dest: dest && { x: Math.round(dest.x), y: Math.round(dest.y) }, zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),

@@ -1,0 +1,10 @@
+{
+ "fr": 256,
+ "dirs": 1,
+ "top": 123,
+ "feet": 242,
+ "elev": 26,
+ "yawFix": 0,
+ "name": "prop_stump_round",
+ "src": "stump_round.glb"
+}

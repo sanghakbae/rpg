@@ -1,0 +1,10 @@
+{
+ "fr": 256,
+ "dirs": 1,
+ "top": 168,
+ "feet": 255,
+ "elev": 26,
+ "yawFix": 0,
+ "name": "prop_fence_simple",
+ "src": "fence_simple.glb"
+}

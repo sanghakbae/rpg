@@ -1,0 +1,10 @@
+{
+ "fr": 256,
+ "dirs": 1,
+ "top": 79,
+ "feet": 224,
+ "elev": 26,
+ "yawFix": 0,
+ "name": "prop_statue_column",
+ "src": "statue_column.glb"
+}

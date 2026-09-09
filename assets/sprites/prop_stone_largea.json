@@ -1,0 +1,10 @@
+{
+ "fr": 256,
+ "dirs": 1,
+ "top": 165,
+ "feet": 233,
+ "elev": 26,
+ "yawFix": 0,
+ "name": "prop_stone_largeA",
+ "src": "stone_largeA.glb"
+}

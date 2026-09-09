@@ -1,0 +1,10 @@
+{
+ "fr": 256,
+ "dirs": 1,
+ "top": 159,
+ "feet": 245,
+ "elev": 26,
+ "yawFix": 0,
+ "name": "prop_rock_smallC",
+ "src": "rock_smallC.glb"
+}

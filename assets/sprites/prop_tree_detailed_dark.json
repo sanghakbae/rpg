@@ -1,0 +1,10 @@
+{
+ "fr": 256,
+ "dirs": 1,
+ "top": 78,
+ "feet": 217,
+ "elev": 26,
+ "yawFix": 0,
+ "name": "prop_tree_detailed_dark",
+ "src": "tree_detailed_dark.glb"
+}

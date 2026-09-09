@@ -1,0 +1,10 @@
+{
+ "fr": 256,
+ "dirs": 1,
+ "top": 131,
+ "feet": 246,
+ "elev": 26,
+ "yawFix": 0,
+ "name": "prop_tent_detailedClosed",
+ "src": "tent_detailedClosed.glb"
+}

@@ -1,0 +1,10 @@
+{
+ "fr": 256,
+ "dirs": 1,
+ "top": 173,
+ "feet": 255,
+ "elev": 26,
+ "yawFix": 0,
+ "name": "prop_fence_planks",
+ "src": "fence_planks.glb"
+}

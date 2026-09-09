@@ -1,0 +1,10 @@
+{
+ "fr": 256,
+ "dirs": 1,
+ "top": 108,
+ "feet": 214,
+ "elev": 26,
+ "yawFix": 0,
+ "name": "prop_plant_bush",
+ "src": "plant_bush.glb"
+}

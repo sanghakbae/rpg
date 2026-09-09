@@ -1,0 +1,10 @@
+{
+ "fr": 256,
+ "dirs": 1,
+ "top": 82,
+ "feet": 222,
+ "elev": 26,
+ "yawFix": 0,
+ "name": "prop_flower_redA",
+ "src": "flower_redA.glb"
+}

@@ -1,0 +1,10 @@
+{
+ "fr": 256,
+ "dirs": 1,
+ "top": 178,
+ "feet": 219,
+ "elev": 26,
+ "yawFix": 0,
+ "name": "prop_log",
+ "src": "log.glb"
+}

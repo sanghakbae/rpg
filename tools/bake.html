@@ -100,13 +100,13 @@ function makeCamera(elevDeg) {
   cam.updateProjectionMatrix();
   return cam;
 }
-function bakeOne(root, FR, elev, yawFix) {
+function bakeOne(root, FR, elev, yawFix, dirs = 8) {
   renderer.setSize(FR, FR, false);
   const cam = makeCamera(elev);
-  const sheet = document.createElement('canvas'); sheet.width = FR * 8; sheet.height = FR;
+  const sheet = document.createElement('canvas'); sheet.width = FR * dirs; sheet.height = FR;
   const sc = sheet.getContext('2d');
   let topMin = FR, botMax = 0;
-  for (let d = 0; d < 8; d++) {
+  for (let d = 0; d < dirs; d++) {
     /* 게임의 face 각도 φ(0=오른쪽, π/2=아래(화면 앞)) → 모델 전방(-Z)이 그 화면 방향을 보도록 yaw */
     const phi = d * Math.PI / 4;
     root.rotation.y = Math.atan2(-Math.cos(phi), -Math.sin(phi)) + yawFix * Math.PI / 180;
@@ -117,7 +117,7 @@ function bakeOne(root, FR, elev, yawFix) {
     outer: for (let y = 0; y < FR; y++) for (let x = 0; x < FR; x += 2) if (px[(y * FR + x) * 4 + 3] > 30) { topMin = Math.min(topMin, y); break outer; }
     outer2: for (let y = FR - 1; y >= 0; y--) for (let x = 0; x < FR; x += 2) if (px[(y * FR + x) * 4 + 3] > 30) { botMax = Math.max(botMax, y); break outer2; }
   }
-  return { sheet, meta: { fr: FR, dirs: 8, top: topMin, feet: botMax, elev, yawFix } };
+  return { sheet, meta: { fr: FR, dirs, top: topMin, feet: botMax, elev, yawFix } };
 }
 async function loadGlb(url) {
   return new Promise((res, rej) => loader.load(url, g => res({ scene: g.scene, animations: g.animations || [] }), undefined, rej));
@@ -162,11 +162,16 @@ function bakeAnimated(root, animations, FR, elev, yawFix, animMap) {
   mixer.stopAllAction();
   return { sheet, meta: { fr: FR, dirs: 8, rows, top: topMin, feet: botMax, elev, yawFix, states: Object.fromEntries(Object.entries(states).map(([k, v]) => [k, { row: v.row, n: v.n, clip: v.clip }])) } };
 }
+const PROP_FILES = ['tree_default','tree_default_dark','tree_default_fall','tree_detailed','tree_detailed_dark','tree_detailed_fall','tree_cone','tree_cone_dark','tree_pineDefaultA','tree_pineTallA','tree_pineRoundA','tree_palm','tree_palmTall','tree_oak','tree_tall','tree_thin','tree_plateau','rock_largeA','rock_largeC','rock_smallA','rock_smallC','stone_largeA','stone_smallA','plant_bush','plant_bushLarge','plant_bushSmall','mushroom_redGroup','mushroom_tanGroup','flower_purpleA','flower_redA','flower_yellowA','fence_simple','fence_planks','tent_detailedClosed','campfire_logs','log','stump_round','statue_column','statue_columnDamaged','statue_obelisk','cactus_short','cactus_tall','lily_large','grass_leafs','sign','hanging_moss'];
+/* 프롭(정적 배경 오브젝트): 1방향·256px — 지형 텍스처에 한 번만 찍히므로 작게 */
+const PROP_JOBS = PROP_FILES.map(f => ({ url: '../assets/glb/props/' + f + '.glb', key: 'prop_' + f.replace(/-/g, '_'), fr: 256, dirs: 1, yaw: 0 }));
 async function run(onlyFirst) {
-  const FR = +$('fr').value || 512, elev = +$('elev').value || 26, yawFix = +$('yawFix').value || 0, hs = +$('hscale').value || 1;
+  const propsMode = new URLSearchParams(location.search).get('props') === '1';
+  const FR = +$('fr').value || 512, elev = +$('elev').value || 26, yawFix = propsMode ? 0 : (+$('yawFix').value || 0), hs = +$('hscale').value || 1;
   $('out').innerHTML = '';
   const onlyKeys = (new URLSearchParams(location.search).get('only') || '').split(',').filter(Boolean);
-  for (const job of (onlyFirst ? JOBS.slice(0, 1) : JOBS).filter(j => !onlyKeys.length || onlyKeys.includes(Array.isArray(j) ? j[1] : j.key))) {
+  const LIST = propsMode ? PROP_JOBS : JOBS;
+  for (const job of (onlyFirst ? LIST.slice(0, 1) : LIST).filter(j => !onlyKeys.length || onlyKeys.includes(Array.isArray(j) ? j[1] : j.key))) {
     const isObj = !Array.isArray(job);
     const url = isObj ? job.url : job[0], name = isObj ? job.key : job[1], yawExtra = isObj ? (job.yaw || 0) : (job[2] || 0);
     const frJob = isObj && job.fr ? job.fr : FR, hsJob = isObj && job.hscale ? job.hscale : hs;
@@ -183,9 +188,14 @@ async function run(onlyFirst) {
       const sN = (1 / size.y) * hsJob;
       root.scale.setScalar(sN); root.position.set(-ctr.x * sN, -box.min.y * sN, -ctr.z * sN); root.updateMatrixWorld(true);
       mx.stopAllAction();
+    } else if (propsMode) { /* 프롭: 가장 긴 변 기준 정규화(통나무·울타리 등 넓은 모델이 셀을 넘치지 않게) */
+      root.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(root, true), size = box.getSize(new THREE.Vector3()), ctr = box.getCenter(new THREE.Vector3());
+      const sN = (0.9 / Math.max(size.x, size.y, size.z)) * hsJob;
+      root.scale.setScalar(sN); root.position.set(-ctr.x * sN, -box.min.y * sN, -ctr.z * sN); root.updateMatrixWorld(true);
     } else normalize(root, hsJob);
     scene.add(root);
-    const { sheet, meta } = (isObj && job.anim) ? bakeAnimated(root, g.animations, frJob, elev, yawFix + yawExtra, job.anim) : bakeOne(root, frJob, elev, yawFix + yawExtra);
+    const { sheet, meta } = (isObj && job.anim) ? bakeAnimated(root, g.animations, frJob, elev, yawFix + yawExtra, job.anim) : bakeOne(root, frJob, elev, yawFix + yawExtra, (isObj && job.dirs) || 8);
     scene.remove(root);
     root.traverse(o => { if (o.geometry) o.geometry.dispose(); });
     meta.name = name; meta.src = url.split('/').pop();

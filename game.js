@@ -2217,6 +2217,41 @@ function useSkill(slot) {
 
 /* ================= 스킬 샵 ================= */
 
+/* ================= 종합 스탯 창 · 가방 정렬 ================= */
+function openStats() {
+  let m = $('statsModal');
+  if (!m) { m = document.createElement('div'); m.id = 'statsModal'; m.className = 'modalWrap'; m.onclick = e => { if (e.target === m) m.hidden = true; }; document.body.appendChild(m); }
+  const dps = Math.round(totalAtk() / (atkCdOf() / 1000) * (1 + totalCrit() * (critDmgMul() - 1)));
+  const row = (k, v, c) => `<div class="strow2"><span>${k}</span><b style="color:${c || '#fff'}">${v}</b></div>`;
+  const sb = setBonus();
+  let setHtml = '';
+  for (const [sid, n] of Object.entries(sb.counts)) { const st = SETS[sid]; setHtml += `<div class="stset">${esc(st.name)} (${n}/${st.pieces.length})</div>`; }
+  m.innerHTML = `<div class="modalBox"><div class="modalHd">📊 상세 능력치 <button onclick="this.closest('.modalWrap').hidden=true">✕</button></div>
+    ${row('⚔️ 초당 피해(DPS)', dps.toLocaleString(), '#ffd700')}
+    ${row('공격력', totalAtk().toLocaleString())}
+    ${row('방어력', totalDef().toLocaleString())}
+    ${row('최대 HP', maxHpOf().toLocaleString(), '#e74c3c')}
+    ${row('최대 MP', maxMpOf().toLocaleString(), '#3498db')}
+    ${row('치명타 확률', Math.round(totalCrit() * 100) + '%')}
+    ${row('치명타 피해', Math.round(critDmgMul() * 100) + '%')}
+    ${row('공격 속도', (1000 / atkCdOf()).toFixed(2) + '/s')}
+    ${row('이동 속도', Math.round(moveSpd()))}
+    ${row('공격 사거리', Math.round(atkRange()))}
+    ${row('회피 확률', Math.round(evadeChance() * 100) + '%')}
+    ${(me.stLife ? row('흡혈', me.stLife + '%', '#e74c3c') : '')}
+    ${(me.stRegen ? row('재생 강화', '+' + (me.stRegen * 15) + '%', '#2ecc71') : '')}
+    ${(me.stMana ? row('마나 절약', Math.min(60, me.stMana * 2) + '%', '#3498db') : '')}
+    ${(Object.keys(sb.counts).length ? '<div class="stsetHd">🔥 세트 효과</div>' + setHtml + `<div class="strow2"><span>세트 종합</span><b style="color:#9fd">${esc(bonusText(sb.b)) || '-'}</b></div>` : '')}
+    <div class="setNote">스탯 포인트는 좌측 상단 HUD에서 분배 · 리셋은 스킬샵 보석 상점</div></div>`;
+  m.hidden = false;
+}
+function sortBag() {
+  runTx(db, async tx => {
+    const snap = await tx.get(meRef); if (!snap.exists()) return null;
+    tx.update(meRef, { inv: sortInvMap(snap.data().inv || {}) });
+    return true;
+  }).then(r => { if (r) { sfx('click'); toast('🎒 가방을 정렬했습니다'); renderInvUI(); } }).catch(() => {});
+}
 /* ================= 보석 상점 · 분해 · 스탯 리셋 ================= */
 const STAT_KEYS = ['stAtk','stHp','stDef','stSpd','stWis','stCrit','stAspd','stCritDmg','stLife','stRange','stMana','stRegen','stEvade'];
 const GEM_SHOP = [
@@ -8345,6 +8380,8 @@ function openSettings() {
 { const el = $('setHp'); if (el) el.oninput = () => { settings.autoPotHp = +el.value; $('setHpVal').textContent = el.value; saveSettings(); }; }
 { const el = $('setMp'); if (el) el.oninput = () => { settings.autoPotMp = +el.value; $('setMpVal').textContent = el.value; saveSettings(); }; }
 { const sb = $('salvageBtn'); if (sb) sb.onclick = e => { e.stopPropagation(); sfx('click'); toggleSalvageMenu(); }; }
+{ const st = $('sortBtn'); if (st) st.onclick = e => { e.stopPropagation(); sortBag(); }; }
+{ const sb2 = $('statsBtn'); if (sb2) sb2.onclick = e => { e.stopPropagation(); openStats(); }; }
 document.querySelectorAll('#dockL [data-p]').forEach(b => b.onclick = () => {
   sfx('click');
   const k = b.dataset.p;
@@ -9124,7 +9161,7 @@ async function init() {
   window.__PING = () => Promise.race([updateDoc(meRef, { lastSeen: Date.now() }).then(() => 'write-ok'), new Promise(r => setTimeout(() => r('write-timeout'), 8000))]).catch(e => 'write-error:' + (e.code || e.message)); /* 진단: 쓰기 채널 상태 */
   window.__MOB = async id => { const g = await getDoc(doc(db, 'monsters', id)); return g.exists() ? g.data() : null; };
   window.__give = async (id, slot = 17) => { await updX(meRef, { ['inv.' + slot]: id }); return 'ok'; }; /* 진단: 가방 슬롯에 아이템 넣기 */
-  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__pageDef = pageDef; window.__view = () => ({ x: view.x, y: view.y, z: view.z, dpr }); window.__mkUniqAt = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; cam.x=s0.x; cam.y=s0.y; return {id:s0.id, kind:s0.kind, x:s0.x, y:s0.y}; }; window.__mkUniq = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; const me2=window.__me?me:me; me.x=s0.x; me.y=s0.y-80; cam.x=s0.x; cam.y=s0.y-40; return {id:s0.id, kind:s0.kind}; }; window.__useSkill = useSkill; window.__toggleAuto = toggleAuto; window.__auto = () => autoHunt; window.__settings = () => settings; window.__salvage = salvageBulk; window.__invRar = () => Object.entries(me.inv||{}).map(([k,v])=>({k, id:String(v).split(/[*~+]/)[0], rar:getItem(v).rarity, rank:RARITY_RANK[getItem(v).rarity]??0, slot:getItem(v).slot||'-'})); window.__claimAchv = claimAchv; window.__ownedTitles = ownedTitles; window.__paused = () => ({ paused, ready, dead: me.dead, wm: worldMapOpen() }); window.__unpause = () => { paused = false; }; window.__cdUntil = id => skillCdUntil[id]||0; window.__bound = boundId; window.__skillDef = skillDef; window.__mpc = id => { const d=skillDef(id); return d&&d.mp?mpCostOf(skillMp(id,d)):0; }; window.__castTree = castTreeSkill; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
+  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__pageDef = pageDef; window.__view = () => ({ x: view.x, y: view.y, z: view.z, dpr }); window.__mkUniqAt = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; cam.x=s0.x; cam.y=s0.y; return {id:s0.id, kind:s0.kind, x:s0.x, y:s0.y}; }; window.__mkUniq = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; const me2=window.__me?me:me; me.x=s0.x; me.y=s0.y-80; cam.x=s0.x; cam.y=s0.y-40; return {id:s0.id, kind:s0.kind}; }; window.__useSkill = useSkill; window.__openStats = openStats; window.__sortBag = sortBag; window.__toggleAuto = toggleAuto; window.__auto = () => autoHunt; window.__settings = () => settings; window.__salvage = salvageBulk; window.__invRar = () => Object.entries(me.inv||{}).map(([k,v])=>({k, id:String(v).split(/[*~+]/)[0], rar:getItem(v).rarity, rank:RARITY_RANK[getItem(v).rarity]??0, slot:getItem(v).slot||'-'})); window.__claimAchv = claimAchv; window.__ownedTitles = ownedTitles; window.__paused = () => ({ paused, ready, dead: me.dead, wm: worldMapOpen() }); window.__unpause = () => { paused = false; }; window.__cdUntil = id => skillCdUntil[id]||0; window.__bound = boundId; window.__skillDef = skillDef; window.__mpc = id => { const d=skillDef(id); return d&&d.mp?mpCostOf(skillMp(id,d)):0; }; window.__castTree = castTreeSkill; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
   window.__ITEMS = () => ({ items: Object.keys(ITEMS).length, sets: Object.keys(SETS).length, sample: Object.entries(ITEMS).filter(([k]) => /_b[0-9]$/.test(k)).slice(0, 3).map(([k, v]) => k + ':' + v.name) });
   window.__ZONETEX = n => { try { const t = getTex('p' + n); return { w: t.width, h: t.height, cols: (worldColliders['p' + n] || []).length }; } catch (e) { return { err: String(e && e.stack || e).slice(0, 300) }; } };
   window.__DBG = () => ({ page: myPage(), colliders: (worldColliders[myMap()] || []).length, frozenMs: hitStopUntil - Date.now(), activeIsChat: document.activeElement === chatInput, activeTag: document.activeElement && document.activeElement.tagName + '#' + document.activeElement.id, wmUp: worldMapOpen(), mouseDown, moveSpd: moveSpd(), atkRange: atkRange(), atkCdMs: atkCdOf(), sinceAtk: Date.now() - lastAttackAt, mapFading, snapN: window.__snapN || 0, snapAgoMs: window.__snapT ? Date.now() - window.__snapT : null, lastDmg: window.__lastDmg || null, lastErr: window.__lastErr || null, dead: !!me.dead, paused, ready, sheets: Object.fromEntries(Object.entries(HERO_SHEETS).map(([k, v]) => [k, v.img ? 'ok' : v.failed ? 'failed' : 'loading'])), target: attackTargetSimId, hover: hoverSimId, dest: dest && { x: Math.round(dest.x), y: Math.round(dest.y) }, zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),

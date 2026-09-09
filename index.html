@@ -231,6 +231,11 @@
   .setrow input[type=range] { width: 130px; }
   .setrow input[type=checkbox] { width: 18px; height: 18px; accent-color: #ffd700; }
   .setNote { color: #778; font-size: 11px; line-height: 1.5; margin-top: 10px; }
+  #statsBtn { font-size: 10px; padding: 1px 6px; background: rgba(93,173,226,.2); color: #7fc7ff; border: 1px solid rgba(93,173,226,.4); border-radius: 5px; margin-right: 4px; }
+  #sortBtn { font-size: 10px; padding: 2px 8px; margin-left: 6px; background: linear-gradient(#5d8ab8,#2c5470); color: #fff; border-radius: 6px; }
+  .strow2 { display: flex; justify-content: space-between; padding: 6px 2px; font-size: 13px; color: #cde; border-bottom: 1px solid rgba(255,255,255,.05); }
+  .stsetHd { color: #ffd700; font-size: 12px; font-weight: bold; margin: 10px 0 4px; }
+  .stset { color: #9fd; font-size: 12px; padding: 2px 0; }
   @media (max-width: 640px) { #autoBtn { right: 6px; bottom: 170px; width: 50px; height: 50px; } }
   .sgr { font-size: 10px; border: 1px solid; border-radius: 4px; padding: 0 4px; margin-left: 6px; vertical-align: 1px; }
   .skind { font-size: 10px; border-radius: 4px; padding: 0 5px; margin-left: 4px; vertical-align: 1px; }
@@ -572,7 +577,7 @@
   <div id="hudDetail">
   <div class="barwrap"><div class="bar" id="expbar"></div></div>
   <div class="bartext" id="expText"></div>
-  <div id="stats">공격 <b id="uiAtk"></b> · 방어 <b id="uiDef"></b> · 치명타 <b id="uiCrit"></b>% · 속도 <b id="uiSpd"></b></div>
+  <div id="stats"><button id="statsBtn" title="상세 능력치">📊 상세</button> 공격 <b id="uiAtk"></b> · 방어 <b id="uiDef"></b> · 치명타 <b id="uiCrit"></b>% · 속도 <b id="uiSpd"></b></div>
   <div id="goldRow">💰 <span id="uiGold">0</span> G</div>
   <div id="statPtsRow">✨ 포인트 <b id="uiPts">0</b><span id="stBtns"></span><!-- 직업별 8종 스탯 버튼: JS(renderStatButtons)가 생성 --></div>
   </div><!-- /hudDetail -->
@@ -593,7 +598,7 @@
 <div id="invPanel" class="panel">
   <h3 class="tog" data-tog="equipGrid">장비 [클릭: 해제] <span class="arr">▾</span></h3>
   <div id="equipGrid"></div>
-  <h3 class="tog" data-tog="invGrid">가방 [클릭: 장착/사용] <span id="bagCount">0/18</span> <button id="bulkSellBtn">등급판매</button> <button id="salvageBtn">분해</button> <span class="arr">▾</span></h3>
+  <h3 class="tog" data-tog="invGrid">가방 [클릭: 장착/사용] <span id="bagCount">0/18</span> <button id="sortBtn">정렬</button> <button id="bulkSellBtn">등급판매</button> <button id="salvageBtn">분해</button> <span class="arr">▾</span></h3>
   <div id="invGrid"></div>
 </div>
 
@@ -744,7 +749,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=123"
+<script type="module" src="game.js?v=124"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

@@ -6224,7 +6224,7 @@ function loadSheet(key, e) {
   }).catch(() => { e.failed = true; });
 }
 const SHEET_MOBILE = innerWidth <= 640;
-const SHEET_CAP = SHEET_MOBILE ? 12 : 999; /* 모바일: 로드된 몹 시트 상한 — 초과 시 최근 미사용분 제거(누적 메모리로 Safari 텍스처 스래싱 방지) */
+const SHEET_CAP = SHEET_MOBILE ? 6 : 999; /* 12장(장당 2~8MB 디코드)은 iOS 캔버스 메모리 한계를 넘겨 텍스처 스래싱을 일으켰다 — 한 구역은 3장이면 충분 */ /* 모바일: 로드된 몹 시트 상한 — 초과 시 최근 미사용분 제거(누적 메모리로 Safari 텍스처 스래싱 방지) */
 function evictSheets() {
   if (!SHEET_MOBILE) return;
   const now = Date.now();
@@ -6234,6 +6234,7 @@ function evictSheets() {
   for (const k of mob) {
     if (Object.keys(HERO_SHEETS).filter(x => x.startsWith('mob_') && HERO_SHEETS[x] && HERO_SHEETS[x].img).length <= SHEET_CAP) break;
     if (now - (HERO_SHEETS[k].used || 0) < 4000) continue; /* 최근 4초 내 화면에 그려진 시트는 유지 */
+    try { const im = HERO_SHEETS[k].img; if (im && im.close) im.close(); else if (im && im.width !== undefined && im.tagName === 'CANVAS') { im.width = 0; im.height = 0; } } catch (e2) {} /* 네이티브 메모리 즉시 반환(GC를 기다리지 않는다) */
     delete HERO_SHEETS[k]; /* 다음 조회 시 필요하면 재로드 */
   }
 }
@@ -6312,7 +6313,8 @@ function hueSheet(base, sh, dh) {
   const ent = { c, g, img: sh.img, y: 0, done: false };
   hueSheetCache.set(key, ent);
   hueBakeQ.push(ent);
-  while (hueSheetCache.size > 6) { const k0 = hueSheetCache.keys().next().value; const old = hueSheetCache.get(k0); hueSheetCache.delete(k0); const i = hueBakeQ.indexOf(old); if (i >= 0) hueBakeQ.splice(i, 1); }
+  const hueCap = innerWidth <= 640 ? 2 : 6; /* 시트 크기 캔버스라 모바일에선 2장까지만(메모리) */
+  while (hueSheetCache.size > hueCap) { const k0 = hueSheetCache.keys().next().value; const old = hueSheetCache.get(k0); hueSheetCache.delete(k0); const i = hueBakeQ.indexOf(old); if (i >= 0) hueBakeQ.splice(i, 1); try { old.c.width = 0; old.c.height = 0; } catch (e2) {} }
   return sh.img; /* 이번 프레임은 원본으로 */
 }
 const HUE_BAKE_PX = innerWidth <= 640 ? 400000 : 1600000; /* 프레임당 굽는 픽셀 수 — 모바일은 더 잘게 */
@@ -6326,8 +6328,44 @@ function hueBakeStep() {
   if (e.y >= e.c.height) { e.done = true; hueBakeQ.shift(); }
 }
 /* 외곽선 텍스트: shadowBlur 텍스트는 글자마다 블러 패스를 돌려 모바일에서 프레임을 깎았다 → 스트로크 1회로 대체 */
+/* 라벨 비트맵 캐시 — 몬스터 이름·레벨처럼 매 프레임 같은 글자를 다시 그리면
+   iOS 캔버스에서 strokeText+fillText가 프레임당 30회 이상 돌아 지속적인 끊김을 만들었다.
+   한 번 구운 작은 캔버스를 blit한다(문자열·글꼴·색·배율이 같으면 재사용). */
+const labCache = new Map();
+function labelBmp(txt, font, fill, col, w, sc) {
+  const key = txt + '|' + font + '|' + fill + '|' + col + '|' + w + '|' + sc;
+  let e = labCache.get(key);
+  if (e) { labCache.delete(key); labCache.set(key, e); return e; }
+  const mc = document.createElement('canvas'); const g = mc.getContext('2d');
+  g.font = font;
+  const m = g.measureText(txt);
+  const asc = Math.ceil(m.actualBoundingBoxAscent || (parseFloat(font) || 10) * .8);
+  const desc = Math.ceil(m.actualBoundingBoxDescent || (parseFloat(font) || 10) * .25);
+  const pad = Math.ceil(w + 2);
+  const W = Math.ceil(m.width) + pad * 2, H = asc + desc + pad * 2;
+  mc.width = Math.max(1, Math.ceil(W * sc)); mc.height = Math.max(1, Math.ceil(H * sc));
+  g.scale(sc, sc);
+  g.font = font; g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+  g.lineJoin = 'round'; g.lineWidth = w; g.strokeStyle = col; g.fillStyle = fill;
+  g.strokeText(txt, pad, pad + asc); g.fillText(txt, pad, pad + asc);
+  e = { c: mc, W, H, pad, asc };
+  labCache.set(key, e);
+  if (labCache.size > 220) { const k0 = labCache.keys().next().value; labCache.delete(k0); }
+  return e;
+}
 function outlinedText(txt, x, y, w = 3, col = 'rgba(0,0,0,.85)') {
-  ctx.lineJoin = 'round'; ctx.lineWidth = w; ctx.strokeStyle = col; ctx.strokeText(txt, x, y); ctx.fillText(txt, x, y);
+  const fill = ctx.fillStyle;
+  if (typeof fill !== 'string') { /* 그라디언트 등은 캐시 불가 → 기존 경로 */
+    ctx.lineJoin = 'round'; ctx.lineWidth = w; ctx.strokeStyle = col; ctx.strokeText(txt, x, y); ctx.fillText(txt, x, y); return;
+  }
+  const t = String(txt);
+  const sc = Math.min(4, Math.max(1, Math.round(((view.z || 1) * (dpr || 1)) * 2) / 2)); /* 화면 배율에 맞춰 굽고 0.5 단위로 뭉쳐 캐시 적중률 유지 */
+  const e = labelBmp(t, ctx.font, fill, col, w, sc);
+  const al = ctx.textAlign;
+  const ox = (al === 'center') ? -e.W / 2 : (al === 'right' || al === 'end') ? -e.W : 0;
+  const bl = ctx.textBaseline;
+  const oy = (bl === 'middle') ? e.asc / 2 : (bl === 'top' || bl === 'hanging') ? e.asc : (bl === 'bottom') ? -(e.H - e.pad - e.asc) : 0;
+  ctx.drawImage(e.c, x + ox, y + oy - e.pad - e.asc, e.W, e.H);
 }
 function drawMobSheet(s, base, x, y, opts = {}) {
   const sh = heroSheet('mob_' + base);

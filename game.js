@@ -1643,8 +1643,9 @@ function drawMobFallback(s, x, y, r) {
   const hue = (((280 + (typeof s.def.hue === 'number' ? s.def.hue : 0)) % 360) + 360) % 360;
   const S = r * 4.2;
   ctx.save();
+  ctx.globalAlpha = .8; /* 시트가 도착하기 전 잠깐 보이는 자리표시 — 진짜 몬스터로 오인하지 않게 어둡고 옅게 */
   ctx.translate(x - S / 2, y - S * .86);
-  silPath(ctx, M.role || 'mid', !!M.fly, S, `hsl(${hue},34%,42%)`, `hsl(${hue},48%,64%)`, false);
+  silPath(ctx, M.role || 'mid', !!M.fly, S, `hsl(${hue},18%,30%)`, `hsl(${hue},26%,48%)`, false);
   ctx.restore();
 }
 
@@ -4507,6 +4508,8 @@ const mm = $('minimap'), mctx = mm.getContext('2d');
 /* 백버퍼를 기기 픽셀비만큼 키워 렌더 — cvW/cvH는 CSS 픽셀 기준(기존 코드 의미 유지) */
 let dpr = 1, cvW = 0, cvH = 0, resizeT = 0;
 let wssT = 0;
+const DQ = innerWidth <= 640 ? .45 : 1; /* 모바일 지형 디테일 계수 — 구역을 옮길 때마다 지형을 새로 굽는 비용(아이폰 100ms+)이 화면을 멈추게 했다. 축소 화면이라 밀도를 줄여도 차이가 거의 없다 */
+const dq = n => Math.max(1, Math.round(n * DQ));
 let WSS = 2; /* 지형 텍스처 배율 — 아래 calcWSS()가 해상도에 맞춰 정하고, resize마다 갱신된다(함수 선언은 호이스팅되므로 첫 resize에서도 안전) */
 function resize() {
   const mob = innerWidth <= 640;
@@ -4952,8 +4955,8 @@ function buildZoneWorld(n) {
   c.strokeStyle = P.style === 'volcano' ? 'rgba(255,120,40,.35)' : 'rgba(120,60,40,.25)'; c.lineWidth = 6; c.beginPath(); c.arc(800, 1000, 130, 0, 7); c.stroke();
 
   /* 4) 풀·꽃·잔디 */
-  for (let i = 0; i < (P.grassN || 0); i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; if (blocked.some(b => b.r > 60 && Math.hypot(b.x - x, b.y - y) < b.r - 40)) continue; c.strokeStyle = P.grass[i % 2]; c.lineWidth = 1.4; c.beginPath(); c.moveTo(x, y); c.lineTo(x + R(-2, 2), y - R(3, 7)); c.stroke(); }
-  for (let i = 0; i < 240; i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; if (isBlocked(x, y, -60)) continue; const col = P.flowers[i % 4]; c.fillStyle = col; c.beginPath(); c.arc(x, y, 2.6, 0, 7); c.fill(); c.fillStyle = 'rgba(255,255,255,.55)'; c.beginPath(); c.arc(x, y, 1, 0, 7); c.fill(); }
+  for (let i = 0, gN = dq(P.grassN || 0); i < gN; i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; if (blocked.some(b => b.r > 60 && Math.hypot(b.x - x, b.y - y) < b.r - 40)) continue; c.strokeStyle = P.grass[i % 2]; c.lineWidth = 1.4; c.beginPath(); c.moveTo(x, y); c.lineTo(x + R(-2, 2), y - R(3, 7)); c.stroke(); }
+  for (let i = 0, fN = dq(240); i < fN; i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; if (isBlocked(x, y, -60)) continue; const col = P.flowers[i % 4]; c.fillStyle = col; c.beginPath(); c.arc(x, y, 2.6, 0, 7); c.fill(); c.fillStyle = 'rgba(255,255,255,.55)'; c.beginPath(); c.arc(x, y, 1, 0, 7); c.fill(); }
   if (P.reeds) for (let i = 0; i < P.reeds; i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; c.strokeStyle = 'rgba(110,140,70,.8)'; c.lineWidth = 2; c.beginPath(); c.moveTo(x, y); c.lineTo(x + R(-3, 3), y - R(14, 26)); c.stroke(); c.fillStyle = '#6b4a2f'; c.fillRect(x - 2, y - R(20, 26), 4, 7); }
   if (P.embers) for (let i = 0; i < P.embers; i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; c.fillStyle = P.style === 'volcano' ? 'rgba(255,140,60,.75)' : 'rgba(200,120,255,.7)'; c.beginPath(); c.arc(x, y, R(.8, 2), 0, 7); c.fill(); }
   if (P.snowPiles) for (let i = 0; i < P.snowPiles; i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; if (isBlocked(x, y, -30)) continue; c.fillStyle = 'rgba(255,255,255,.85)'; c.beginPath(); c.ellipse(x, y, R(14, 34), R(6, 12), 0, 0, 7); c.fill(); c.fillStyle = 'rgba(160,185,205,.5)'; c.beginPath(); c.ellipse(x, y + 4, R(14, 30), 4, 0, 0, Math.PI); c.fill(); }
@@ -4979,11 +4982,11 @@ function buildZoneWorld(n) {
   if (P.walls) { /* 동굴/폐허: 가장자리 벽 덩이 */
     for (let k = 0; k < 26; k++) { const side = k % 4, t = rng(); const x = side === 0 ? 40 + rng() * 60 : side === 1 ? WORLD.w - 40 - rng() * 60 : 60 + t * (WORLD.w - 120), y = side === 2 ? 40 + rng() * 50 : side === 3 ? WORLD.h - 40 - rng() * 50 : 60 + t * (WORLD.h - 120); if (isBlocked(x, y, 40)) continue; const r = 26 + rng() * 30; c.fillStyle = P.rock[1]; c.beginPath(); c.arc(x, y, r, 0, 7); c.fill(); c.fillStyle = P.rock[0]; c.beginPath(); c.arc(x - r * .2, y - r * .25, r * .6, 0, 7); c.fill(); cols.push({ x, y, r: r * .85 }); }
   }
-  place(Math.round(P.trees * 1.7), (x, y, s) => tree(x, y, s, P.style === 'snow' ? rng() < .7 : rng() < .38), 16, 1.05, 1.9); /* 밀도 1.7배·크기 상향 — 스프라이트 프롭 기준 */
-  place(Math.round(P.rocks * 1.4), rock, 0, .9, 1.7);
-  place(Math.round(P.bushes * 1.6), bush, -20, .9, 1.5);
+  place(dq(Math.round(P.trees * 1.7)), (x, y, s) => tree(x, y, s, P.style === 'snow' ? rng() < .7 : rng() < .38), 16, 1.05, 1.9); /* 밀도 1.7배·크기 상향 — 스프라이트 프롭 기준 */
+  place(dq(Math.round(P.rocks * 1.4)), rock, 0, .9, 1.7);
+  place(dq(Math.round(P.bushes * 1.6)), bush, -20, .9, 1.5);
   /* 가장자리 숲 벨트: 지도 테두리를 따라 큰 나무를 촘촘히 — 세계 끝이 허전하지 않게 (관문 근처 제외) */
-  for (let k = 0, tries = 0; k < 70 && tries < 420; tries++) {
+  for (let k = 0, beltN = dq(70), tries = 0; k < beltN && tries < beltN * 6; tries++) {
     const side = tries % 4; let x, y;
     if (side === 0) { x = 40 + rng() * 110; y = 60 + rng() * (WORLD.h - 120); }
     else if (side === 1) { x = WORLD.w - 40 - rng() * 110; y = 60 + rng() * (WORLD.h - 120); }
@@ -4999,7 +5002,7 @@ function buildZoneWorld(n) {
   if (P.pillars) place(P.pillars, (x, y, s) => pillar(x, y, s, rng() < .55), 0, .9, 1.3);
   if (P.ice) for (let k = 0; k < P.ice; k++) { const x = R(200, 1400), y = R(200, 1050); if (isBlocked(x, y, 60)) continue; c.fillStyle = 'rgba(200,235,255,.55)'; c.beginPath(); c.ellipse(x, y, R(50, 100), R(30, 60), R(0, 3), 0, 7); c.fill(); c.strokeStyle = 'rgba(255,255,255,.7)'; c.lineWidth = 1.5; c.beginPath(); c.moveTo(x - 30, y - 10); c.lineTo(x + 10, y + 5); c.lineTo(x + 35, y - 12); c.stroke(); }
   /* 5b) 세트 드레싱: 소품(꽃·버섯·통나무…) + 스폰 캠프 + 관문 표지판 + 길가 울타리 */
-  { const extras = 10 + (tier % 4) * 3;
+  { const extras = dq(10 + (tier % 4) * 3);
     for (let k = 0, tries = 0; k < extras && tries < extras * 5; tries++) { const x = 70 + rng() * (WORLD.w - 140), y = 70 + rng() * (WORLD.h - 140); if (isBlocked(x, y, -30)) continue; const ek = pick(PS.extra); const eh = ek === 'log' ? 9 + rng() * 4 : 16 + rng() * 12; /* 통나무는 납작·넓어 작게 */ drawPropTex(c, ek, x, y, eh, PS.tint, rng() < .5); k++; } /* 로드 전이면 건너뛰되 난수 소비는 동일(로드 후 재빌드 시 배치 불변) */
     if (PS.dress.includes('campfire_logs')) { /* 스폰 캠프: 모닥불 + 통나무 + 그루터기 (텐트 모델은 정면이 벽처럼 구워져 제외) */
       const cx0 = n === 1 ? spawn.x - 90 : spawn.x + 40, cy0 = n === 1 ? spawn.y + 30 : spawn.y + 120; /* 2구역부터 스폰이 좌측 벽 옆 → 캠프는 스폰 아래쪽(테두리·관문 겹침 방지) */
@@ -5128,7 +5131,7 @@ function paintGround(c, P, rng, style) {
   /* 미세 질감: 스타일별 */
   const R = (a, b) => a + rng() * (b - a);
   if (style === 'meadow' || style === 'jungle' || style === 'swamp' || style === 'sky') { /* 잔디 결 */
-    for (let i = 0; i < 2000; i++) { const x = rng() * W, y = rng() * H; c.strokeStyle = i % 2 ? P.grass[0] : P.grass[1]; c.lineWidth = 1.1; c.globalAlpha = .55; c.beginPath(); c.moveTo(x, y); c.lineTo(x + R(-2, 2), y - R(4, 9)); c.stroke(); } c.globalAlpha = 1;
+    for (let i = 0, bN = dq(2000); i < bN; i++) { const x = rng() * W, y = rng() * H; c.strokeStyle = i % 2 ? P.grass[0] : P.grass[1]; c.lineWidth = 1.1; c.globalAlpha = .55; c.beginPath(); c.moveTo(x, y); c.lineTo(x + R(-2, 2), y - R(4, 9)); c.stroke(); } c.globalAlpha = 1;
   } else if (style === 'desert') { /* 모래 알갱이 + 물결 */
     for (let i = 0; i < 2200; i++) { c.fillStyle = i % 3 ? 'rgba(255,245,215,.35)' : 'rgba(120,90,50,.25)'; c.fillRect(rng() * W, rng() * H, 1.5, 1.5); }
     for (let i = 0; i < 160; i++) { const x = rng() * W, y = rng() * H, w = R(60, 160); c.strokeStyle = 'rgba(255,240,200,.14)'; c.lineWidth = 3; c.beginPath(); c.moveTo(x, y); c.quadraticCurveTo(x + w / 2, y - 6, x + w, y); c.stroke(); }
@@ -5173,7 +5176,7 @@ function getTex(mp) {
   if (!t) {
     t = buildZoneWorld(n); /* 구역별 지형(팔레트·물·장식·충돌체) */
     bioTexCache.set(n, t);
-    const texCap = (innerWidth <= 640 || WSS > 2) ? 1 : 2; while (bioTexCache.size > texCap) { const old = bioTexCache.keys().next().value; bioTexCache.delete(old); } /* 모바일·고배율 텍스처는 1장만 캐시(메모리 상쇄) */
+    const texCap = WSS > 2 ? 1 : 2; /* 모바일은 텍스처가 작아(1600x1200) 2장까지 캐시 — 왕복 이동 시 재굽기 없음 */ while (bioTexCache.size > texCap) { const old = bioTexCache.keys().next().value; bioTexCache.delete(old); } /* 모바일·고배율 텍스처는 1장만 캐시(메모리 상쇄) */
     t.wss = WSS;
   }
   return t;
@@ -5303,6 +5306,7 @@ function gotoPage(n) {
     cam.x = sp.x; cam.y = sp.y;
     updX(meRef, { map: pageId(n), x: sp.x, y: sp.y }).catch(() => {});
     trySync(true); /* 구역 이동은 즉시 저장 */
+    try { getTex(pageId(n)); } catch (e) {} /* 지형·충돌체를 암전 중에 미리 구움 — 페이드가 걷힌 뒤 프레임이 멈추지 않게 */
     const mn = $('mapName');
     if (mn) mn.textContent = pageDef(n).name;
     watchMonsters();

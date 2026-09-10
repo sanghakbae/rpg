@@ -229,7 +229,7 @@
     width: 42px; height: 42px; justify-content: center; border-radius: 11px; border: 1px solid rgba(255,255,255,.18);
     background: linear-gradient(180deg, rgba(26,32,48,.95), rgba(10,14,22,.95)); color: #ccd; box-shadow: 0 4px 14px rgba(0,0,0,.45); }
   #autoBtn .ah { font-size: 16px; line-height: 1; } #autoBtn span:last-child { font-size: 8px; letter-spacing: 0; }
-  #autoBtn.on { border-color: #ffd700; color: #ffd700; box-shadow: 0 0 14px rgba(255,215,0,.55); animation: autopulse 1.2s ease-in-out infinite; }
+  #dockL #autoBtn.on { border-color: #ffd700; color: #ffd700; box-shadow: 0 0 14px rgba(255,215,0,.55); animation: autopulse 1.2s ease-in-out infinite; }
   @keyframes autopulse { 50% { box-shadow: 0 0 22px rgba(255,215,0,.8); } }
   .modalWrap { position: fixed; inset: 0; z-index: 130; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.6); }
   .modalWrap[hidden] { display: none; }
@@ -467,7 +467,7 @@
 
   /* 강화 주문서 탭 선택(모바일) */
   #invGrid .islot.picked { outline: 2px solid #ffd700; box-shadow: 0 0 10px rgba(255,215,0,.55); }
-  body.enhPicking #invGrid .islot[data-raw], body.enhPicking .eslot[data-raw] { cursor: crosshair; }
+  body.enhPicking .eslot[data-raw] { cursor: crosshair; }
   body.enhPicking .eslot[data-raw] { outline: 1px dashed rgba(255,215,0,.6); }
 
   /* 투기장(PvP) */
@@ -625,7 +625,7 @@
     #rankPanel { display: none; }
 
     /* 채팅: 핫바 위 — 터치엔 hover가 없으니 항상 불투명 */
-    #chatBox { left: 6px; width: calc(100vw - 12px); bottom: calc(130px + env(safe-area-inset-bottom)); opacity: 1; }
+    #chatBox { left: 6px; width: calc(100vw - 12px); bottom: calc(168px + env(safe-area-inset-bottom)); opacity: 1; } /* 자동 버튼(독 위)과 겹치지 않게 */
     /* 좌측 아이콘 → 모바일에서는 스킬창(핫바) 바로 위 가로 한 줄로 배치 */
     #dockL { left: 0; right: 0; top: auto; bottom: calc(72px + env(safe-area-inset-bottom)); transform: none;
       flex-direction: row; justify-content: center; gap: 5px; padding: 0 6px; }
@@ -895,7 +895,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=168"
+<script type="module" src="game.js?v=170"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

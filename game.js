@@ -2190,22 +2190,25 @@ const navIdx = (g, x, y) => Math.min(g.gh - 1, Math.max(0, Math.floor(y / NAV_G)
 function navClear(x0, y0, x1, y1) { /* 두 점 사이가 뚫려 있나 */
   const g = navGrid();
   const d = Math.hypot(x1 - x0, y1 - y0), n = Math.max(1, Math.ceil(d / (NAV_G * .6)));
-  for (let i = 0; i <= n; i++) { const t = i / n; if (g.b[navIdx(g, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t)]) return false; }
+  for (let i = 1; i <= n; i++) { const t = i / n; if (g.b[navIdx(g, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t)]) return false; } /* i=0(제자리)은 제외 — 충돌체에 붙어 있어도 직선 판정이 가능하게 */
   return true;
 }
 function navFind(sx, sy, tx, ty) {
   const g = navGrid();
-  const si = navIdx(g, sx, sy); let ti = navIdx(g, tx, ty);
-  if (g.b[ti]) { /* 목적지가 막혀 있으면 가장 가까운 빈 칸으로 */
+  const nearFree = (i0) => { /* 막힌 칸이면 주변에서 가장 가까운 빈 칸 */
+    if (!g.b[i0]) return i0;
+    const cx = i0 % g.gw, cy = (i0 / g.gw) | 0;
     let best = -1, bd = 1e9;
-    const cx = ti % g.gw, cy = (ti / g.gw) | 0;
     for (let y = Math.max(0, cy - 8); y <= Math.min(g.gh - 1, cy + 8); y++) for (let x = Math.max(0, cx - 8); x <= Math.min(g.gw - 1, cx + 8); x++) {
       const j = y * g.gw + x; if (g.b[j]) continue;
       const dd = (x - cx) * (x - cx) + (y - cy) * (y - cy); if (dd < bd) { bd = dd; best = j; }
     }
-    if (best < 0) return null;
-    ti = best;
-  }
+    return best;
+  };
+  const si = nearFree(navIdx(g, sx, sy)); let ti = navIdx(g, tx, ty);
+  if (si < 0) return null;
+  let moved = false;
+  if (g.b[ti]) { const t2 = nearFree(ti); if (t2 < 0) return null; if (t2 !== ti) moved = true; ti = t2; } /* 목적지가 막혀 있으면 가장 가까운 빈 칸으로 */
   if (si === ti) return null;
   const prev = new Int32Array(g.gw * g.gh).fill(-1);
   const q = new Int32Array(g.gw * g.gh); let head = 0, tail = 0;
@@ -2216,7 +2219,7 @@ function navFind(sx, sy, tx, ty) {
     const x = i % g.gw, y = (i / g.gw) | 0;
     for (let k = 0; k < 4; k++) {
       const nx = x + (k === 0 ? 1 : k === 1 ? -1 : 0), ny = y + (k === 2 ? 1 : k === 3 ? -1 : 0);
-      if (nx < 1 || ny < 1 || nx >= g.gw - 1 || ny >= g.gh - 1) continue;
+      if (nx < 0 || ny < 0 || nx >= g.gw || ny >= g.gh) continue;
       const j = ny * g.gw + nx;
       if (prev[j] >= 0 || g.b[j]) continue;
       prev[j] = i; q[tail++] = j;
@@ -2230,24 +2233,25 @@ function navFind(sx, sy, tx, ty) {
   const out = []; let cur = { x: sx, y: sy }, i2 = 0;
   while (i2 < pts.length) {
     let far = i2;
-    for (let j = pts.length - 1; j > i2; j--) { if (navClear(cur.x, cur.y, pts[j].x, pts[j].y)) { far = j; break; } }
+    for (let j = Math.min(pts.length - 1, i2 + 24); j > i2; j--) { if (navClear(cur.x, cur.y, pts[j].x, pts[j].y)) { far = j; break; } } /* 앞으로 24칸까지만 — 전체 탐색은 O(n^2)이라 긴 우회로에서 멈췄다 */
     out.push(pts[far]); cur = pts[far]; i2 = far + 1;
   }
-  out.push({ x: tx, y: ty });
+  out.push(moved ? { x: (ti % g.gw) * NAV_G + NAV_G / 2, y: (((ti / g.gw) | 0)) * NAV_G + NAV_G / 2 } : { x: tx, y: ty }); /* 목적지가 막혔으면 옮긴 지점으로 (바위에 처박히지 않게) */
   return out;
 }
 let navPath = null, navKey = '', navAt = 0;
 /* 목적지로 갈 다음 지점 — 직선이 뚫렸으면 그대로, 막혔으면 우회 경로의 다음 웨이포인트 */
 function navStep(tx, ty) {
+  if (hordeOn()) return { x: tx, y: ty }; /* 쇄도 결계 안은 열린 공간 — 우회 경로가 결계 밖으로 나가는 것 방지 */
   if (navClear(me.x, me.y, tx, ty)) { navPath = null; return { x: tx, y: ty }; }
   const key = Math.round(tx / 24) + ',' + Math.round(ty / 24) + '|' + myMap();
   const now = Date.now();
   if (!navPath || navKey !== key || now - navAt > 3000) {
     navKey = key; navAt = now;
-    navPath = navFind(me.x, me.y, tx, ty);
-    if (!navPath || !navPath.length) { navPath = null; return { x: tx, y: ty }; }
+    navPath = navFind(me.x, me.y, tx, ty) || [{ x: tx, y: ty }]; /* 실패도 캐시 — 예전엔 매 프레임 전체 BFS가 다시 돌았다 */
   }
   while (navPath.length > 1 && Math.hypot(navPath[0].x - me.x, navPath[0].y - me.y) < 26) navPath.shift();
+  if (navPath.length > 1 && !navClear(me.x, me.y, navPath[0].x, navPath[0].y)) navAt = 0; /* 밀려나서 다음 지점이 벽 뒤가 됐으면 다음 프레임에 다시 계산 */
   return navPath[0] || { x: tx, y: ty };
 }
 
@@ -3796,7 +3800,7 @@ function markSetGlow(div, rawId) {
 }
 function renderInvUI() {
   /* 위치 저장 에코 스냅샷마다 호출되므로 실제 내용이 바뀐 경우에만 DOM 재구축 */
-  if (!$('invPanel').classList.contains('open')) { invUIKey = ''; return; } /* 가방이 닫혀 있으면 DOM을 만들지 않는다 — 전리품마다 슬롯 100칸+아이콘을 다시 그려 모바일이 끊겼다(열 때 다시 그린다) */
+  if (!$('invPanel').classList.contains('open')) { invUIKey = ''; if (enhPick) setEnhPick(null); try { setPrevCounts = { ...setBonus().counts }; } catch (e) {} return; } /* 닫힌 동안에도 세트 기준은 갱신 — 안 하면 다음에 열 때 세트 발동 토스트가 다시 뜬다 */ /* 가방이 닫혀 있으면 DOM을 만들지 않는다 — 전리품마다 슬롯 100칸+아이콘을 다시 그려 모바일이 끊겼다(열 때 다시 그린다) */
   hideTip();
   const key = JSON.stringify([me.inv, me.equipped, me.bagSize, me.skills]);
   if (key === invUIKey) return;
@@ -3817,11 +3821,15 @@ function renderInvUI() {
       const th = itemThumb(itemId);
       div.innerHTML = (th ? `<img class="ic" src="${th}" alt="">` : `<span class="ic">${itemIcon(itemId)}</span>`) + (scnt > 1 ? `<span class="scnt">${scnt}</span>` : '');
       div.dataset.raw = itemId;
+      if (enhPick && itemId === enhPick) div.classList.add('picked'); /* 재렌더돼도 선택 표시 유지 */
       { const sl = it._base ? setLineFor(it._base) : '';
         div.title = `${it.name} [${RARITY_KR[it.rarity] || '일반'}]\n${itemStat(it) || '소모품'}${sl ? '\n' + sl : ''}\n좌클릭: 장착/사용 · 우클릭: 강화/판매`; }
       let lastTap = 0;
       div.onclick = () => {
-        if (enhPick && !it.scroll && it.slot) { const sc = enhPick; setEnhPick(null); openEnhModal(sc, itemId); return; } /* 주문서 선택 후 장비 탭 = 강화 */
+        if (enhPick && !it.scroll) { /* 주문서 선택 중 */
+          if (it.slot) { const sc = enhPick; setEnhPick(null); openEnhModal(sc, itemId); } else toast('이 아이템은 강화할 수 없습니다 (장비만 가능)');
+          return;
+        }
         if (it.scroll) { setEnhPick(enhPick === itemId ? null : itemId); return; } /* 탭으로 선택(드래그 불가한 모바일용) */
         if (it.book) { const d = skillDef(it.book); toast(`${skillIconHtml(it.book, d)} <b>${esc(d ? d.name : it.book)}</b> 스킬서 — <b>더블 클릭</b>하면 스킬이 활성화됩니다`); return; }
         slotClick(itemId);
@@ -4509,7 +4517,7 @@ const mm = $('minimap'), mctx = mm.getContext('2d');
 let dpr = 1, cvW = 0, cvH = 0, resizeT = 0;
 let wssT = 0;
 const DQ = innerWidth <= 640 ? .45 : 1; /* 모바일 지형 디테일 계수 — 구역을 옮길 때마다 지형을 새로 굽는 비용(아이폰 100ms+)이 화면을 멈추게 했다. 축소 화면이라 밀도를 줄여도 차이가 거의 없다 */
-const dq = n => Math.max(1, Math.round(n * DQ));
+const dq = n => n > 0 ? Math.max(1, Math.round(n * DQ)) : 0;
 let WSS = 2; /* 지형 텍스처 배율 — 아래 calcWSS()가 해상도에 맞춰 정하고, resize마다 갱신된다(함수 선언은 호이스팅되므로 첫 resize에서도 안전) */
 function resize() {
   const mob = innerWidth <= 640;
@@ -4521,7 +4529,7 @@ function resize() {
   const W = Math.round(innerWidth * d), H = Math.round(innerHeight * d);
   if (W === cv.width && H === cv.height && d === dpr) { cvW = innerWidth; cvH = innerHeight; return; } /* 치수 동일 → 재할당 생략 */
   dpr = d; cvW = innerWidth; cvH = innerHeight;
-  { const nw = calcWSS(); if (nw !== WSS) { WSS = nw; clearTimeout(wssT); wssT = setTimeout(() => { try { bioTexCache.clear(); worldColliders[myMap()] = null; } catch (e) {} }, 600); } } /* 해상도가 바뀌면 지형 배율도 따라가되, 창을 끌 때 매 단계 재굽지 않게 0.6초 뒤에 한 번만 */
+  { const nw = calcWSS(); if (nw !== WSS) { WSS = nw; clearTimeout(wssT); wssT = setTimeout(() => { try { bioTexCache.clear(); worldColliders[myMap()] = null; delete navGrids[myMap()]; } catch (e) {} }, 600); } } /* 해상도가 바뀌면 지형 배율도 따라가되, 창을 끌 때 매 단계 재굽지 않게 0.6초 뒤에 한 번만 */
   cv.width = W; cv.height = H;
   cv.style.width = cvW + 'px'; cv.style.height = cvH + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -4792,7 +4800,7 @@ function resolveCollide() {
   const cols = worldColliders[myMap()] || [];
   for (const c of cols) {
     const dx = me.x - c.x, dy = me.y - c.y;
-    const d = Math.hypot(dx, dy), min = c.r + 10;
+    const d = Math.hypot(dx, dy), min = c.r + NAV_PAD + 1; /* 길찾기 격자 여유와 맞춤 — 충돌체에 붙어 서면 격자상 '막힌 칸'이 돼 매 프레임 우회 계산이 돌았다 */
     if (d < min && d > 0) {
       me.x = clampN(c.x + dx / d * min, 40, WORLD.w - 40);
       me.y = clampN(c.y + dy / d * min, 40, WORLD.h - 40);
@@ -4819,16 +4827,16 @@ const BIOME_GRADE = [
    100구역 각각을 결정적 시드로 생성: 바이옴 팔레트(땅·풀·나무·바위·물) + 구역 고유 지형 요소(연못/강/폭포/절벽/용암/구름틈)
    + 장식 밀도(밀림·사막·설원…). 물·절벽·나무·바위는 worldColliders[pid]에 충돌체로 등록된다. */
 const BIOME_PAL = [
-  { ground: '#26492f', tints: ['#2a5034', '#224329', '#2d5538', '#1f3f26'], grass: ['rgba(46,94,58,.5)', 'rgba(64,120,74,.45)'], path: ['#8a7a52', '#6e6040'], trunk: '#4a3524', leaf: ['#173f28', '#1a4a2e', '#1f6039', '#257047', '#2e8455'], rock: ['#7a8288', '#5c646a', '#98a0a6'], flowers: ['#e8da7a', '#d98cb3', '#8ecae6', '#f4f1de'], water: ['#1d4e6b', '#2a6f95', '#7fc7e8'], style: 'meadow', trees: 30, bushes: 18, rocks: 16, grass: 2600 },
-  { ground: '#17301f', tints: ['#1a3a25', '#12281a', '#1f4229', '#0f2216'], grass: ['rgba(30,70,44,.5)', 'rgba(44,90,58,.45)'], path: ['#5f5540', '#4a4330'], trunk: '#332318', leaf: ['#0f2a1a', '#123421', '#164028', '#1a4d30', '#205a38'], rock: ['#5a6066', '#40464c', '#737a80'], flowers: ['#7a6fa8', '#4f6d8a', '#3f5f4a', '#8a8fa8'], water: ['#0e2f3a', '#164a58', '#4f8fa0'], style: 'jungle', trees: 62, bushes: 40, rocks: 14, grass: 3400 },
-  { ground: '#c9ac6e', tints: ['#d4b878', '#bfa062', '#dcc184', '#b3945a'], grass: ['rgba(150,120,70,.35)', 'rgba(170,140,90,.3)'], path: ['#a88d5a', '#8c7448'], trunk: '#6b5230', leaf: ['#5d7a3a', '#6b8a42', '#7a9a4c', '#86a656', '#94b262'], rock: ['#b39a70', '#8f7a56', '#cbb48c'], flowers: ['#e8b04a', '#d97a5a', '#f2d68a', '#c9a0c0'], water: ['#2a6f7a', '#3e95a3', '#a6dfe8'], style: 'desert', trees: 8, bushes: 6, rocks: 34, grass: 500, cacti: 26, dunes: 14 },
-  { ground: '#dfe8ef', tints: ['#eef4f8', '#cdd9e3', '#f5f9fb', '#c2d0dc'], grass: ['rgba(200,215,225,.5)', 'rgba(170,190,205,.4)'], path: ['#b9c2c9', '#9aa5ad'], trunk: '#4a3a30', leaf: ['#2f5a45', '#3a6b52', '#eaf2f6', '#f4f8fa', '#ffffff'], rock: ['#9fb0bd', '#7c8c99', '#c5d2dc'], flowers: ['#ffffff', '#cfe6f5', '#e8eef2', '#b9d7ea'], water: ['#5a86a8', '#7fb0d0', '#d6ecf7'], style: 'snow', trees: 26, bushes: 10, rocks: 20, grass: 900, snowPiles: 40, ice: 6 },
-  { ground: '#2b3b2a', tints: ['#324532', '#243424', '#3a4f36', '#1e2c1e'], grass: ['rgba(80,110,60,.5)', 'rgba(100,130,70,.45)'], path: ['#5a5a40', '#46462f'], trunk: '#3a3024', leaf: ['#2a4a2a', '#345a30', '#3e6a38', '#4a7a40', '#5a8a48'], rock: ['#6a7060', '#4e5448', '#868c7a'], flowers: ['#a0c060', '#c8d070', '#7fb07a', '#e0e090'], water: ['#243d2c', '#35583e', '#6f9a7a'], style: 'swamp', trees: 34, bushes: 30, rocks: 10, grass: 3000, reeds: 60, murk: true },
-  { ground: '#3a2622', tints: ['#472c26', '#2e1c19', '#52322b', '#241614'], grass: ['rgba(80,50,40,.5)', 'rgba(110,70,50,.4)'], path: ['#5a4a3c', '#463a2e'], trunk: '#2a1a14', leaf: ['#3a2a1a', '#4a3320', '#5a3c24', '#6a4a2c', '#7a5a34'], rock: ['#5a4a44', '#3e3230', '#7a6a62'], flowers: ['#ff7f27', '#ff4d2e', '#ffb347', '#e0522a'], water: ['#7a1e0c', '#c9440f', '#ffb04a'], style: 'volcano', trees: 10, bushes: 4, rocks: 40, grass: 600, lava: true, embers: 120 },
-  { ground: '#1d2130', tints: ['#242a3c', '#181c2a', '#2a3044', '#141826'], grass: ['rgba(60,70,100,.45)', 'rgba(80,90,120,.4)'], path: ['#3e4457', '#2f3444'], trunk: '#2a2e3a', leaf: ['#20263a', '#283048', '#303a56', '#3a4664', '#465274'], rock: ['#4a5062', '#343a4a', '#626a7e'], flowers: ['#6fb0ff', '#8ad0ff', '#4fd0c0', '#a0a8ff'], water: ['#0f1a2a', '#1a2e48', '#4f7aa8'], style: 'cave', trees: 0, bushes: 8, rocks: 56, grass: 400, stalagmites: 40, crystals: 24, walls: true },
-  { ground: '#4a4a44', tints: ['#555550', '#3f3f3a', '#606058', '#383834'], grass: ['rgba(110,110,80,.45)', 'rgba(130,130,100,.4)'], path: ['#6a6a60', '#54544a'], trunk: '#3a3028', leaf: ['#3a4a30', '#465a38', '#556a42', '#647a4c', '#748a58'], rock: ['#8a8a82', '#6a6a64', '#a8a8a0'], flowers: ['#c9c0a0', '#a89a78', '#d8d0b8', '#8a8878'], water: ['#2a3a3a', '#3e5a5a', '#7fa0a0'], style: 'ruin', trees: 14, bushes: 12, rocks: 22, grass: 1400, pillars: 22, walls: true },
-  { ground: '#24122e', tints: ['#2e1840', '#1a0c22', '#381c4c', '#140a1a'], grass: ['rgba(120,60,160,.45)', 'rgba(150,80,190,.4)'], path: ['#4a2a5a', '#3a2046'], trunk: '#2a1a34', leaf: ['#3a1a4a', '#4a2460', '#5a2e74', '#6a3a88', '#7a469c'], rock: ['#5a4a6a', '#40344e', '#7a6a8a'], flowers: ['#ff5fd0', '#c05fff', '#8a2fd4', '#ff8ae0'], water: ['#1a0a2a', '#3a1660', '#a04fff'], style: 'abyss', trees: 16, bushes: 10, rocks: 24, grass: 1200, cracks: 30, embers: 60 },
-  { ground: '#a9c8e8', tints: ['#bcd6f0', '#98b8dc', '#cfe2f5', '#8aaed4'], grass: ['rgba(200,225,245,.5)', 'rgba(170,205,235,.4)'], path: ['#d8e6f2', '#bccbdb'], trunk: '#6a5a4a', leaf: ['#6aa070', '#7ab080', '#8ac090', '#9ad0a0', '#aae0b0'], rock: ['#c8d8e8', '#a8bcd0', '#e4eef8'], flowers: ['#ffffff', '#ffe9a0', '#ffd0e8', '#d0ecff'], water: ['#2a4a7a', '#3a6aa8', '#8fc0f0'], style: 'sky', trees: 18, bushes: 12, rocks: 10, grass: 900, clouds: 40, gaps: 5 },
+  { ground: '#26492f', tints: ['#2a5034', '#224329', '#2d5538', '#1f3f26'], grass: ['rgba(46,94,58,.5)', 'rgba(64,120,74,.45)'], path: ['#8a7a52', '#6e6040'], trunk: '#4a3524', leaf: ['#173f28', '#1a4a2e', '#1f6039', '#257047', '#2e8455'], rock: ['#7a8288', '#5c646a', '#98a0a6'], flowers: ['#e8da7a', '#d98cb3', '#8ecae6', '#f4f1de'], water: ['#1d4e6b', '#2a6f95', '#7fc7e8'], style: 'meadow', trees: 30, bushes: 18, rocks: 16, grassN: 2600 },
+  { ground: '#17301f', tints: ['#1a3a25', '#12281a', '#1f4229', '#0f2216'], grass: ['rgba(30,70,44,.5)', 'rgba(44,90,58,.45)'], path: ['#5f5540', '#4a4330'], trunk: '#332318', leaf: ['#0f2a1a', '#123421', '#164028', '#1a4d30', '#205a38'], rock: ['#5a6066', '#40464c', '#737a80'], flowers: ['#7a6fa8', '#4f6d8a', '#3f5f4a', '#8a8fa8'], water: ['#0e2f3a', '#164a58', '#4f8fa0'], style: 'jungle', trees: 62, bushes: 40, rocks: 14, grassN: 3400 },
+  { ground: '#c9ac6e', tints: ['#d4b878', '#bfa062', '#dcc184', '#b3945a'], grass: ['rgba(150,120,70,.35)', 'rgba(170,140,90,.3)'], path: ['#a88d5a', '#8c7448'], trunk: '#6b5230', leaf: ['#5d7a3a', '#6b8a42', '#7a9a4c', '#86a656', '#94b262'], rock: ['#b39a70', '#8f7a56', '#cbb48c'], flowers: ['#e8b04a', '#d97a5a', '#f2d68a', '#c9a0c0'], water: ['#2a6f7a', '#3e95a3', '#a6dfe8'], style: 'desert', trees: 8, bushes: 6, rocks: 34, grassN: 500, cacti: 26, dunes: 14 },
+  { ground: '#dfe8ef', tints: ['#eef4f8', '#cdd9e3', '#f5f9fb', '#c2d0dc'], grass: ['rgba(200,215,225,.5)', 'rgba(170,190,205,.4)'], path: ['#b9c2c9', '#9aa5ad'], trunk: '#4a3a30', leaf: ['#2f5a45', '#3a6b52', '#eaf2f6', '#f4f8fa', '#ffffff'], rock: ['#9fb0bd', '#7c8c99', '#c5d2dc'], flowers: ['#ffffff', '#cfe6f5', '#e8eef2', '#b9d7ea'], water: ['#5a86a8', '#7fb0d0', '#d6ecf7'], style: 'snow', trees: 26, bushes: 10, rocks: 20, grassN: 900, snowPiles: 40, ice: 6 },
+  { ground: '#2b3b2a', tints: ['#324532', '#243424', '#3a4f36', '#1e2c1e'], grass: ['rgba(80,110,60,.5)', 'rgba(100,130,70,.45)'], path: ['#5a5a40', '#46462f'], trunk: '#3a3024', leaf: ['#2a4a2a', '#345a30', '#3e6a38', '#4a7a40', '#5a8a48'], rock: ['#6a7060', '#4e5448', '#868c7a'], flowers: ['#a0c060', '#c8d070', '#7fb07a', '#e0e090'], water: ['#243d2c', '#35583e', '#6f9a7a'], style: 'swamp', trees: 34, bushes: 30, rocks: 10, grassN: 3000, reeds: 60, murk: true },
+  { ground: '#3a2622', tints: ['#472c26', '#2e1c19', '#52322b', '#241614'], grass: ['rgba(80,50,40,.5)', 'rgba(110,70,50,.4)'], path: ['#5a4a3c', '#463a2e'], trunk: '#2a1a14', leaf: ['#3a2a1a', '#4a3320', '#5a3c24', '#6a4a2c', '#7a5a34'], rock: ['#5a4a44', '#3e3230', '#7a6a62'], flowers: ['#ff7f27', '#ff4d2e', '#ffb347', '#e0522a'], water: ['#7a1e0c', '#c9440f', '#ffb04a'], style: 'volcano', trees: 10, bushes: 4, rocks: 40, grassN: 600, lava: true, embers: 120 },
+  { ground: '#1d2130', tints: ['#242a3c', '#181c2a', '#2a3044', '#141826'], grass: ['rgba(60,70,100,.45)', 'rgba(80,90,120,.4)'], path: ['#3e4457', '#2f3444'], trunk: '#2a2e3a', leaf: ['#20263a', '#283048', '#303a56', '#3a4664', '#465274'], rock: ['#4a5062', '#343a4a', '#626a7e'], flowers: ['#6fb0ff', '#8ad0ff', '#4fd0c0', '#a0a8ff'], water: ['#0f1a2a', '#1a2e48', '#4f7aa8'], style: 'cave', trees: 0, bushes: 8, rocks: 56, grassN: 400, stalagmites: 40, crystals: 24, walls: true },
+  { ground: '#4a4a44', tints: ['#555550', '#3f3f3a', '#606058', '#383834'], grass: ['rgba(110,110,80,.45)', 'rgba(130,130,100,.4)'], path: ['#6a6a60', '#54544a'], trunk: '#3a3028', leaf: ['#3a4a30', '#465a38', '#556a42', '#647a4c', '#748a58'], rock: ['#8a8a82', '#6a6a64', '#a8a8a0'], flowers: ['#c9c0a0', '#a89a78', '#d8d0b8', '#8a8878'], water: ['#2a3a3a', '#3e5a5a', '#7fa0a0'], style: 'ruin', trees: 14, bushes: 12, rocks: 22, grassN: 1400, pillars: 22, walls: true },
+  { ground: '#24122e', tints: ['#2e1840', '#1a0c22', '#381c4c', '#140a1a'], grass: ['rgba(120,60,160,.45)', 'rgba(150,80,190,.4)'], path: ['#4a2a5a', '#3a2046'], trunk: '#2a1a34', leaf: ['#3a1a4a', '#4a2460', '#5a2e74', '#6a3a88', '#7a469c'], rock: ['#5a4a6a', '#40344e', '#7a6a8a'], flowers: ['#ff5fd0', '#c05fff', '#8a2fd4', '#ff8ae0'], water: ['#1a0a2a', '#3a1660', '#a04fff'], style: 'abyss', trees: 16, bushes: 10, rocks: 24, grassN: 1200, cracks: 30, embers: 60 },
+  { ground: '#a9c8e8', tints: ['#bcd6f0', '#98b8dc', '#cfe2f5', '#8aaed4'], grass: ['rgba(200,225,245,.5)', 'rgba(170,205,235,.4)'], path: ['#d8e6f2', '#bccbdb'], trunk: '#6a5a4a', leaf: ['#6aa070', '#7ab080', '#8ac090', '#9ad0a0', '#aae0b0'], rock: ['#c8d8e8', '#a8bcd0', '#e4eef8'], flowers: ['#ffffff', '#ffe9a0', '#ffd0e8', '#d0ecff'], water: ['#2a4a7a', '#3a6aa8', '#8fc0f0'], style: 'sky', trees: 18, bushes: 12, rocks: 10, grassN: 900, clouds: 40, gaps: 5 },
 ];
 function zoneRng(n) { let t = (n * 2654435761 + 12345) >>> 0; return () => { t = (t + 0x6D2B79F5) >>> 0; let r = Math.imul(t ^ (t >>> 15), 1 | t); r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r; return ((r ^ (r >>> 14)) >>> 0) / 4294967296; }; }
 function buildZoneWorld(n) {
@@ -5018,6 +5026,7 @@ function buildZoneWorld(n) {
   /* 6) 테두리 */
   try { drawBrickBorder(c, P.style === 'volcano' ? 15 : P.style === 'abyss' ? 280 : P.style === 'snow' ? 205 : P.style === 'desert' ? 40 : 30, P.style === 'cave' ? 12 : 30); } catch (e) {}
   worldColliders[pid] = cols;
+  delete navGrids[pid]; /* 지형이 다시 구워졌으면 길찾기 격자도 새로 */
   return cv2;
 }
 const bioTexCache = new Map(); /* 바이옴 텍스처는 크므로(데스크톱 3200x2400) 최근 2개만 보관 */
@@ -5075,7 +5084,7 @@ let propRebuildT = 0;
 function onPropLoaded() { /* 프롭이 로드되면 현재 구역 지형을 다시 구워 벡터 폴백을 스프라이트로 교체 */
   clearTimeout(propRebuildT);
   const allDone = PROP_KEYS.every(k => { const e = HERO_SHEETS['prop_' + k.toLowerCase()]; return e && (e.img || e.failed); });
-  propRebuildT = setTimeout(() => { try { bioTexCache.delete(pageNum()); worldColliders[myMap()] = null; } catch (e) {} }, allDone ? 0 : 1500); /* 46장이 따로따로 도착해도 재빌드는 한 번(전부 도착 시 즉시, 아니면 1.5초 정지 후) */
+  propRebuildT = setTimeout(() => { try { bioTexCache.delete(pageNum()); worldColliders[myMap()] = null; delete navGrids[myMap()]; } catch (e) {} }, allDone ? 0 : 1500); /* 46장이 따로따로 도착해도 재빌드는 한 번(전부 도착 시 즉시, 아니면 1.5초 정지 후) */
 }
 /* 바이옴별 프롭 세트 */
 const PROP_SETS = {
@@ -6178,7 +6187,10 @@ const sheetManifestP = fetch(`assets/sprites/manifest.json?v=${SHEET_VER}`).then
 /* 시트 로딩: PNG 디코드를 메인 스레드 밖에서(createImageBitmap) 처리하고, 한 번에 한 장씩만 디코드한다.
    예전에는 img.onload 뒤 곧바로 메인 스레드에서 디코드+절반 축소가 일어나 구역을 옮길 때마다 30~60ms씩 화면이 멈췄다. */
 let decodeChain = Promise.resolve();
-const decodeQueue = fn => (decodeChain = decodeChain.then(fn, fn));
+const decodeQueue = fn => (decodeChain = decodeChain.then(() => Promise.race([
+  Promise.resolve().then(fn),
+  new Promise(r => setTimeout(r, 8000)), /* 한 장이 멎어도 이후 시트 로딩이 통째로 멈추지 않게 */
+]), () => {}));
 function sheetReady(key, e) { /* 로드 완료 후 후처리(기존과 동일) */
   if (key.startsWith('mob_')) { try { evictSheets(); } catch (e2) {} if ($('dexPanel')?.classList.contains('open')) { try { renderDex(); } catch (err) {} } }
   if (key.startsWith('prop_')) { try { onPropLoaded(); } catch (e3) {} }
@@ -6192,10 +6204,12 @@ function sheetReady(key, e) { /* 로드 완료 후 후처리(기존과 동일) *
 function loadSheet(key, e) {
   const url = `assets/sprites/${key}.png?v=${SHEET_VER}`;
   fetch(`assets/sprites/${key}.json?v=${SHEET_VER}`).then(r => r.ok ? r.json() : Promise.reject(r.status)).then(meta => {
-    const wantHalf = innerWidth <= 640 && meta.fr > 256; /* 모바일: 시트 절반 해상도(메모리) */
+    const mobileHalf = innerWidth <= 640; /* 모바일: 큰 시트는 절반 해상도로(메모리) — 판정은 아래에서 실제 픽셀 면적으로 */
     const legacy = () => new Promise((res, rej) => { /* createImageBitmap 미지원 브라우저 */
       const img = new Image();
       img.onload = () => {
+        e.used = Date.now();
+        const wantHalf = mobileHalf && img.naturalWidth * img.naturalHeight > 2.5e6;
         if (!wantHalf) { e.img = img; e.meta = meta; return res(); }
         try {
           const c = document.createElement('canvas'); c.width = img.width >> 1; c.height = img.height >> 1;
@@ -6211,13 +6225,14 @@ function loadSheet(key, e) {
     return fetch(url).then(r => r.ok ? r.blob() : Promise.reject(r.status)).then(blob => decodeQueue(async () => {
       let bmp = await createImageBitmap(blob); /* 디코드: 메인 스레드 밖 */
       let halved = false;
+      const wantHalf = mobileHalf && bmp.width * bmp.height > 2.5e6; /* 250만 픽셀(=10MB) 초과분만 축소 — fr 기준은 무거운 시트 대부분을 놓쳤다 */
       if (wantHalf) {
         try {
           const half = await createImageBitmap(bmp, { resizeWidth: bmp.width >> 1, resizeHeight: bmp.height >> 1, resizeQuality: 'high' });
           if (half && half.width && half.width < bmp.width) { try { bmp.close(); } catch (err) {} bmp = half; halved = true; }
         } catch (err) { /* 리사이즈 옵션 미지원(구형 Safari) → 원본 해상도 유지 */ }
       }
-      e.img = bmp;
+      e.img = bmp; e.used = Date.now(); /* 방금 로드한 시트가 LRU에서 '가장 오래된 것'으로 몰려 즉시 제거되던 문제 */
       e.meta = halved ? { ...meta, fr: meta.fr / 2, top: meta.top / 2, feet: meta.feet / 2 } : meta;
       sheetReady(key, e);
     })).catch(() => legacy().then(() => sheetReady(key, e)));
@@ -6234,7 +6249,9 @@ function evictSheets() {
   for (const k of mob) {
     if (Object.keys(HERO_SHEETS).filter(x => x.startsWith('mob_') && HERO_SHEETS[x] && HERO_SHEETS[x].img).length <= SHEET_CAP) break;
     if (now - (HERO_SHEETS[k].used || 0) < 4000) continue; /* 최근 4초 내 화면에 그려진 시트는 유지 */
-    try { const im = HERO_SHEETS[k].img; if (im && im.close) im.close(); else if (im && im.width !== undefined && im.tagName === 'CANVAS') { im.width = 0; im.height = 0; } } catch (e2) {} /* 네이티브 메모리 즉시 반환(GC를 기다리지 않는다) */
+    const im = HERO_SHEETS[k].img;
+    dropHueOf(im); /* 이 시트를 원본으로 굽고 있던 색조 캐시·대기열을 먼저 정리 — 닫힌 비트맵을 그리면 깨진다 */
+    try { if (im && im.close) im.close(); else if (im && im.tagName === 'CANVAS') { im.width = 0; im.height = 0; } } catch (e2) {} /* 네이티브 메모리 즉시 반환(GC를 기다리지 않는다) */
     delete HERO_SHEETS[k]; /* 다음 조회 시 필요하면 재로드 */
   }
 }
@@ -6297,7 +6314,8 @@ const hueBakeQ = []; /* 굽는 중인 색조 시트 — 프레임마다 조금�
 /* 시트 전체(8~30MB)를 한 프레임에 색조 변환하면 아이폰에서 50ms 넘게 멈췄다(구역 이동·새 몬스터 등장 때마다).
    → 캔버스만 먼저 만들고 가로 띠 단위로 여러 프레임에 나눠 굽는다. 다 구워지기 전에는 원본 시트를 그대로 쓴다. */
 function hueSheet(base, sh, dh) {
-  const key = base + '|' + dh;
+  if (innerWidth <= 640 && sh.img.width * sh.img.height > 6e6) return sh.img; /* 큰 시트는 모바일에서 틴트 생략 — 31MB 캔버스를 매번 새로 만들다 프레임이 무너졌다 */
+  const key = base + '|' + dh + '|' + sh.img.width; /* 해상도가 바뀌면(회전 등) 다른 캐시 */
   const e = hueSheetCache.get(key);
   if (e) {
     hueSheetCache.delete(key); hueSheetCache.set(key, e);
@@ -6313,9 +6331,21 @@ function hueSheet(base, sh, dh) {
   const ent = { c, g, img: sh.img, y: 0, done: false };
   hueSheetCache.set(key, ent);
   hueBakeQ.push(ent);
-  const hueCap = innerWidth <= 640 ? 2 : 6; /* 시트 크기 캔버스라 모바일에선 2장까지만(메모리) */
+  const hueCap = innerWidth <= 640 ? 4 : 6; /* 한 구역에 3종(일반2+보스)이라 2장이면 매 프레임 교체되며 영원히 못 굽는다 */ /* 시트 크기 캔버스라 모바일에선 2장까지만(메모리) */
   while (hueSheetCache.size > hueCap) { const k0 = hueSheetCache.keys().next().value; const old = hueSheetCache.get(k0); hueSheetCache.delete(k0); const i = hueBakeQ.indexOf(old); if (i >= 0) hueBakeQ.splice(i, 1); try { old.c.width = 0; old.c.height = 0; } catch (e2) {} }
   return sh.img; /* 이번 프레임은 원본으로 */
+}
+/* 시트가 제거될 때 그 원본으로 굽던 색조 캐시/대기열을 함께 버린다(닫힌 ImageBitmap 참조 방지) */
+function dropHueOf(img) {
+  if (!img) return;
+  for (const [k, e] of [...hueSheetCache]) {
+    if (e.img !== img) continue;
+    e.img = null; /* 닫힌 비트맵 참조 제거 */
+    if (e.done) continue; /* 이미 다 구운 사본은 독립적이라 그대로 쓴다 */
+    hueSheetCache.delete(k);
+    const i = hueBakeQ.indexOf(e); if (i >= 0) hueBakeQ.splice(i, 1);
+    try { e.c.width = 0; e.c.height = 0; } catch (err) {}
+  }
 }
 const HUE_BAKE_PX = innerWidth <= 640 ? 400000 : 1600000; /* 프레임당 굽는 픽셀 수 — 모바일은 더 잘게 */
 function hueBakeStep() {
@@ -6323,7 +6353,8 @@ function hueBakeStep() {
   if (!e) return;
   const rows = Math.max(16, Math.floor(HUE_BAKE_PX / Math.max(1, e.c.width)));
   const h = Math.min(rows, e.c.height - e.y);
-  try { e.g.drawImage(e.img, 0, e.y, e.c.width, h, 0, e.y, e.c.width, h); } catch (err) { e.done = true; hueBakeQ.shift(); return; }
+  if (!e.img || !e.c.width) { hueBakeQ.shift(); return; } /* 원본 시트가 제거됨 */
+  try { e.g.drawImage(e.img, 0, e.y, e.c.width, h, 0, e.y, e.c.width, h); } catch (err) { hueBakeQ.shift(); try { e.c.width = 0; } catch (e3) {} return; } /* 실패 시 done을 세우지 않아 원본 시트로 계속 그린다 */
   e.y += h;
   if (e.y >= e.c.height) { e.done = true; hueBakeQ.shift(); }
 }
@@ -6339,8 +6370,9 @@ function labelBmp(txt, font, fill, col, w, sc) {
   const mc = document.createElement('canvas'); const g = mc.getContext('2d');
   g.font = font;
   const m = g.measureText(txt);
-  const asc = Math.ceil(m.actualBoundingBoxAscent || (parseFloat(font) || 10) * .8);
-  const desc = Math.ceil(m.actualBoundingBoxDescent || (parseFloat(font) || 10) * .25);
+  const px = parseFloat((/(\d*\.?\d+)px/.exec(font) || [])[1]) || 10; /* 'bold 20px …'에서 20을 뽑는다(parseFloat는 NaN) */
+  const asc = Math.ceil(m.actualBoundingBoxAscent || px * .8);
+  const desc = Math.ceil(m.actualBoundingBoxDescent || px * .25);
   const pad = Math.ceil(w + 2);
   const W = Math.ceil(m.width) + pad * 2, H = asc + desc + pad * 2;
   mc.width = Math.max(1, Math.ceil(W * sc)); mc.height = Math.max(1, Math.ceil(H * sc));
@@ -6362,7 +6394,7 @@ function outlinedText(txt, x, y, w = 3, col = 'rgba(0,0,0,.85)') {
   const sc = Math.min(4, Math.max(1, Math.round(((view.z || 1) * (dpr || 1)) * 2) / 2)); /* 화면 배율에 맞춰 굽고 0.5 단위로 뭉쳐 캐시 적중률 유지 */
   const e = labelBmp(t, ctx.font, fill, col, w, sc);
   const al = ctx.textAlign;
-  const ox = (al === 'center') ? -e.W / 2 : (al === 'right' || al === 'end') ? -e.W : 0;
+  const ox = (al === 'center') ? -e.W / 2 : (al === 'right' || al === 'end') ? e.pad - e.W : -e.pad; /* 좌/우 정렬은 여백만큼 보정 */
   const bl = ctx.textBaseline;
   const oy = (bl === 'middle') ? e.asc / 2 : (bl === 'top' || bl === 'hanging') ? e.asc : (bl === 'bottom') ? -(e.H - e.pad - e.asc) : 0;
   ctx.drawImage(e.c, x + ox, y + oy - e.pad - e.asc, e.W, e.H);
@@ -9593,6 +9625,7 @@ function syncModal() {
     const el = document.getElementById(id);
     b.classList.toggle('on', !!(el && el.classList.contains('open')));
   });
+  if (enhPick && !$('invPanel').classList.contains('open')) setEnhPick(null); /* 가방이 어떤 경로로 닫히든 주문서 선택 해제(무심코 장비를 강화창에 올리는 사고 방지) */
   if (open && !paused) { paused = true; pauseStart = Date.now(); }
   else if (!open && paused) {
     paused = false;

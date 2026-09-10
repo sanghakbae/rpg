@@ -7,7 +7,7 @@ const SHELL = VER + '-shell', ASSET = VER + '-asset';
 const SHELL_URLS = ['/', '/index.html', '/manifest.webmanifest', '/assets/pwa/icon-192.png'];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(SHELL).then(c => c.addAll(SHELL_URLS)).catch(() => {}).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(SHELL).then(c => Promise.all(SHELL_URLS.map(u => c.add(u).catch(() => {})))).catch(() => {}).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => !k.startsWith(VER)).map(k => caches.delete(k)))).then(() => self.clients.claim()));
@@ -24,7 +24,13 @@ self.addEventListener('fetch', e => {
 
   if (isAsset(u)) {                                          /* 캐시 우선 */
     e.respondWith(caches.match(req).then(hit => hit || fetch(req).then(res => {
-      if (res && res.ok) { const cp = res.clone(); caches.open(ASSET).then(c => c.put(req, cp)).catch(() => {}); }
+      if (res && res.ok) {
+        const cp = res.clone();
+        caches.open(ASSET).then(async c => {
+          for (const k of await c.keys()) { try { if (new URL(k.url).pathname === u.pathname) await c.delete(k); } catch (err) {} } /* 같은 파일의 옛 버전 제거 */
+          await c.put(req, cp);
+        }).catch(() => {});
+      }
       return res;
     })));
     return;
@@ -33,6 +39,8 @@ self.addEventListener('fetch', e => {
     e.respondWith(fetch(req).then(res => {
       if (res && res.ok) { const cp = res.clone(); caches.open(SHELL).then(c => c.put(req, cp)).catch(() => {}); }
       return res;
-    }).catch(() => caches.match(req).then(hit => hit || caches.match('/index.html'))));
+    }).catch(() => caches.match(req).then(hit => hit
+      || (req.mode === 'navigate' ? caches.match('/index.html') : null)
+      || Response.error()))); /* 문서가 아닌 요청에 HTML을 돌려주면 MIME 오류로 흰 화면이 된다 */
   }
 });

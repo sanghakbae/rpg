@@ -1,9 +1,10 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /players/{uid} {
+    match /players/{pid} {
       allow read: if request.auth != null;
-      allow create, update: if request.auth != null && request.auth.uid == uid;
+      // 직업별 캐릭터: players/{uid} (처음 만든 직업) 와 players/{uid}__{cls} 를 모두 본인 문서로 인정
+      allow create, update: if request.auth != null && pid.split('__')[0] == request.auth.uid;
       allow delete: if false;
     }
     match /monsters/{id} {

@@ -1176,7 +1176,7 @@ function toggleMute() {
 }
 
 /* ================= 상태 ================= */
-let uid = null, myName = '', meRef = null, myCls = 'warrior', googleName = '';
+let uid = null, authUid = null, myName = '', meRef = null, myCls = 'warrior', googleName = '';
 let me = { x: SPAWN.x, y: SPAWN.y, face: Math.PI / 2, lv: 1, exp: 0, hp: 100, maxHp: 100, atk: 10, gold: 0, inv: {}, equipped: {}, skills: {}, q: {}, qc: {}, dead: false };
 let others = {}, lootItems = {};
 let sims = [], bossWasAlive = true;
@@ -1847,20 +1847,29 @@ function watchLoot() {
   sub();
 }
 
-let rankMode = 'lv';
+let rankMode = 'lv', rankCls = 'all'; /* 직업별 랭킹 필터 */
 let rankCache = [];
 const curPower = () => { try { return Math.round(totalAtk() * (1 + totalCrit()) * skillPow()) || 0; } catch (e) { return 0; } };
 function renderRank() {
   /* 내 행은 로컬 값(레벨·전투력)을 즉시 반영 — 서버에는 1분 주기/레벨업 때 실린다 */
-  const src = rankCache.map(p => p._id === uid ? { ...p, lv: me.lv || p.lv, power: curPower() } : p);
+  let src = rankCache.map(p => p._id === uid ? { ...p, lv: me.lv || p.lv, power: curPower() } : p);
+  if (rankCls !== 'all') src = src.filter(p => (p.cls || 'warrior') === rankCls); /* 직업별 보기 */
   const list = [...src].sort((a, b) => rankMode === 'lv' ? (b.lv || 1) - (a.lv || 1) : (b.power || 0) - (a.power || 0)).slice(0, 10);
   const rows = list.map((p, i) => {
     const medal = ['🥇', '🥈', '🥉'][i] || `${i + 1}`;
     const val = rankMode === 'lv' ? `Lv${p.lv || 1}` : `⚔${p.power || 0}`;
-    return `<div><span style="color:#889;display:inline-block;width:18px;">${medal}</span> ${esc(p.name || '?')} <b style="color:#ffd700">${val}</b> <span style="color:#667">${CLASSES[p.cls]?.icon || ''}</span></div>`;
+    const nm = /\([^)]*\)$/.test(p.name || '') ? p.name : dispName(p.base || p.name || '?', p.cls || 'warrior'); /* 옛 캐릭터도 이름(직업)으로 표시 */
+    return `<div><span style="color:#889;display:inline-block;width:18px;">${medal}</span> ${esc(nm)} <b style="color:#ffd700">${val}</b> <span style="color:#667">${CLASSES[p.cls]?.icon || ''}</span></div>`;
   }).join('');
   const el = $('rankList');
-  if (el) el.innerHTML = rows || '<div style="color:#556">아직 없음</div>';
+  if (el) el.innerHTML = rows || `<div style="color:#556">${rankCls === 'all' ? '아직 없음' : clsKr(rankCls) + ' 캐릭터 없음'}</div>`;
+  const cb = $('rankCls');
+  if (cb && !cb.dataset.built) { /* 직업 필터 칩: 전체 + 4직업 */
+    cb.dataset.built = '1';
+    cb.innerHTML = `<button data-rc="all" title="전체">전체</button>` + CLASS_KEYS.map(k => `<button data-rc="${k}" title="${clsKr(k)}">${(CLASSES[k] && CLASSES[k].icon) || k}</button>`).join('');
+    cb.querySelectorAll('button').forEach(b => b.onclick = () => { rankCls = b.dataset.rc; sfx('click'); renderRank(); });
+  }
+  if (cb) cb.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.rc === rankCls));
   const t1 = $('rankTabLv'), t2 = $('rankTabAtk');
   if (t1) t1.style.background = rankMode === 'lv' ? '#c9a227' : '#2b3547';
   if (t2) t2.style.background = rankMode === 'atk' ? '#c9a227' : '#2b3547';
@@ -9657,6 +9666,45 @@ function buildCreateUI(resolve) {
   $('nameInput').addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
 }
 
+/* ================= 직업별 캐릭터 =================
+   계정 하나에 직업마다 캐릭터를 따로 둔다. 처음 만든 캐릭터는 players/{uid},
+   나머지 직업은 players/{uid}__{cls}. 로그인에서 고른 영웅으로 접속하고, 진행도(레벨·가방·업적)는 직업별로 쌓인다. */
+const CLASS_KEYS = ['warrior', 'archer', 'rogue', 'mage'];
+const clsKr = c => (CLASSES[c] && CLASSES[c].name) || c;
+const dispName = (base, cls) => `${base}(${clsKr(cls)})`;
+function charIdOf(auth, cls, primaryCls) { return (!primaryCls || cls === primaryCls) ? auth : `${auth}__${cls}`; }
+/* 영웅 선택 화면 — 로그인 화면의 라인업을 재사용한다(직업별 레벨 표시, 없으면 '새 캐릭터') */
+function showCharSelect(chars, preferred) {
+  return new Promise(resolve => {
+    $('loading').style.display = 'none';
+    let scr = $('loginScreen');
+    if (!scr) { scr = document.createElement('div'); scr.id = 'loginScreen'; document.body.appendChild(scr); }
+    let sel = preferred && chars[preferred] ? preferred : (CLASS_KEYS.find(k => chars[k]) || preferred || 'warrior');
+    scr.innerHTML = '<div class="lgBg"><div class="lgStars"></div><div class="lgFog"></div><img class="lgArt" id="lgArt" alt=""><div class="lgVig"></div></div>'
+      + '<div class="lgTop"><div class="lgEyebrow">VIBE ARENA</div><h1>영웅 선택</h1><div class="sub">직업마다 캐릭터가 따로 자랍니다</div></div>'
+      + '<div class="lgBottom"><div class="party">'
+      + CLASS_KEYS.map(k => `<div class="lp" data-cls="${k}"><img alt=""><span></span><em class="lpLv">${chars[k] ? 'Lv ' + (chars[k].lv || 1) : '새 캐릭터'}</em></div>`).join('')
+      + '</div><div class="lphint">고른 영웅으로 접속합니다 — 새 직업은 Lv1부터 시작</div><button id="charGoBtn">시작</button></div>';
+    const paint = () => {
+      scr.querySelectorAll('.lp').forEach(el => el.classList.toggle('sel', el.dataset.cls === sel));
+      try { setTitleArt('lgArt', sel); } catch (e) {}
+      const b = $('charGoBtn');
+      if (b) b.textContent = chars[sel] ? `${clsKr(sel)}(으)로 시작` : `${clsKr(sel)} 새로 만들기`;
+    };
+    scr.querySelectorAll('.lp').forEach(el => {
+      const k = el.dataset.cls;
+      try { el.querySelector('img').src = heroPortrait(k); } catch (e) {}
+      el.querySelector('span').textContent = clsKr(k);
+      el.onclick = () => { sel = k; selectedCls = k; paint(); };
+      el.ondblclick = () => { sel = k; done(); };
+    });
+    const done = () => { scr.style.display = 'none'; resolve(sel); };
+    scr.style.display = 'flex';
+    paint();
+    $('charGoBtn').onclick = done;
+  });
+}
+
 function showCreateUI() {
   return new Promise(resolve => {
     $('loading').style.display = 'none';
@@ -9678,7 +9726,7 @@ function waitForLoginClick() {
       + '<div class="lgTop"><div class="lgEyebrow">VIBE ARENA</div><h1>바이브 아레나</h1><div class="sub">영웅들의 무대 · 100개 구역을 정복하라</div></div>'
       + '<div class="lgBottom"><div class="party">'
       + ['warrior', 'archer', 'rogue', 'mage'].map(k => `<div class="lp" data-cls="${k}"><img alt=""><span></span></div>`).join('')
-      + '</div><div class="lphint">영웅을 고르면 캐릭터 생성에 반영됩니다</div><button id="googleLoginBtn">🅶 Google로 계속하기</button></div>';
+      + '</div><div class="lphint">영웅을 고르면 그 직업으로 접속합니다 — 직업마다 캐릭터가 따로 자랍니다</div><button id="googleLoginBtn">🅶 Google로 계속하기</button></div>';
       scr.querySelectorAll('.lp').forEach(el => {
         try {
           const k = el.dataset.cls;
@@ -9772,28 +9820,49 @@ async function init() {
       }
     }
   }
-  uid = user.uid;
+  authUid = user.uid;
   googleName = user.displayName || '';
+  /* 계정의 직업별 캐릭터를 모두 조회 — 처음 만든 캐릭터는 players/{uid}, 나머지는 players/{uid}__{cls} */
+  const primaryRef = doc(db, 'players', authUid);
+  const primarySnap = await getDoc(primaryRef).catch(() => null);
+  const primary = primarySnap && primarySnap.exists() ? primarySnap.data() : null;
+  const primaryCls = primary ? (primary.cls || 'warrior') : null;
+  const chars = {};
+  if (primary) {
+    chars[primaryCls] = primary;
+    for (const k of CLASS_KEYS) {
+      if (k === primaryCls) continue;
+      const sn = await getDoc(doc(db, 'players', `${authUid}__${k}`)).catch(() => null);
+      if (sn && sn.exists()) chars[k] = sn.data();
+    }
+  }
+  /* 캐릭터가 하나도 없으면 생성 화면, 있으면 영웅 선택 화면 */
+  let pickCls = primary ? await showCharSelect(chars, selectedCls || primaryCls) : null;
+  uid = primary ? charIdOf(authUid, pickCls, primaryCls) : authUid;
   meRef = doc(db, 'players', uid);
 
-  const snap = await getDoc(meRef);
+  const snap = primary ? (pickCls === primaryCls ? primarySnap : await getDoc(meRef)) : { exists: () => false };
   if (!snap.exists()) {
-    const choice = await showCreateUI();
-    myName = choice.name;
-    myCls = choice.cls;
-    const c = CLASSES[choice.cls];
+    let baseName, cls;
+    if (primary) { baseName = primary.base || String(primary.name || '').replace(/\([^)]*\)$/, '') || '영웅'; cls = pickCls; } /* 다른 직업 캐릭터는 같은 이름으로 즉시 생성 */
+    else { const choice = await showCreateUI(); baseName = choice.name; cls = choice.cls; uid = authUid; meRef = doc(db, 'players', uid); }
+    myCls = cls;
+    myName = dispName(baseName, cls);
+    const c = CLASSES[cls];
     await setDoc(meRef, {
-      name: myName, cls: choice.cls, x: SPAWN.x, y: SPAWN.y,
+      name: myName, base: baseName, cls, x: SPAWN.x, y: SPAWN.y,
       lv: 1, exp: 0, hp: c.hp, maxHp: c.hp, atk: c.atk,
       gold: 100, inv: {}, equipped: {}, skills: {}, q: {}, qc: {},
       dead: false, color: colorOf(uid), map: 'p1', conq: {}, dex: {}, statPts: 0, lastSeen: Date.now(), mp: maxMpOf(), gem: 0, achv: {}, title: '', daily: {},
     });
-    me = { ...me, cls: choice.cls, map: 'p1', gold: 100, hp: c.hp, maxHp: c.hp, atk: c.atk }; /* 스냅샷 도착 전 로컬 동기화 */
-    await sysMsg(`${myName}(${c.name})님이 월드에 입장했습니다.`);
+    me = { ...me, cls, map: 'p1', gold: 100, hp: c.hp, maxHp: c.hp, atk: c.atk, lv: 1, exp: 0, inv: {}, equipped: {}, skills: {}, conq: {}, dex: {}, achv: {}, q: {}, statPts: 0, gem: 0, title: '' }; /* 스냅샷 도착 전 로컬 동기화 */
+    await sysMsg(`${myName}님이 월드에 입장했습니다.`);
   } else {
     const d = snap.data();
-    myName = d.name;
     myCls = d.cls || 'warrior';
+    const baseName = d.base || String(d.name || '').replace(/\([^)]*\)$/, '') || '영웅';
+    myName = dispName(baseName, myCls); /* 표기 통일: 이름(직업) */
+    if (d.name !== myName || !d.base) updX(meRef, { name: myName, base: baseName }).catch(() => {}); /* 옛 캐릭터 이름 형식 업그레이드 */
     muted = !!d.muted;
     if (!d.cls) await updX(meRef, { cls: 'warrior' }).catch(() => {});
     /* 문서 전체를 지금 병합해야 아래 ensurePage/watchMonsters가 올바른 구역(me.map)을 본다

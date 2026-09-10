@@ -53,6 +53,8 @@
   #loginScreen .lp:nth-child(2) { animation-delay: .35s; } #loginScreen .lp:nth-child(3) { animation-delay: .7s; } #loginScreen .lp:nth-child(4) { animation-delay: 1.05s; }
   #loginScreen .lp img { width: min(96px, 18vw); height: auto; filter: drop-shadow(0 0 14px rgba(255,215,0,.25)); pointer-events: none; }
   #loginScreen .lp span { color: #cdb; font-size: 12px; letter-spacing: 3px; }
+  #loginScreen .lp .lpLv { font-style: normal; font-size: 10.5px; color: #8a93a6; letter-spacing: .5px; }
+  #loginScreen .lp.sel .lpLv { color: #ffd700; }
   #loginScreen .lp:hover { transform: translateY(-4px); border-color: #7788aa; }
   #loginScreen .lp.sel { border-color: #ffd700; background: rgba(255,215,0,.10); box-shadow: 0 0 22px rgba(255,215,0,.3); }
   #loginScreen .lphint { color: #8a93a6; font-size: 11px; letter-spacing: 1px; text-shadow: 0 1px 4px #000; }
@@ -459,7 +461,11 @@
   #rankPanel h3 { font-size: 11px; color: #aaa; margin-bottom: 6px; letter-spacing: 1px; cursor: pointer; }
   #rankPanel h3 span { float: right; display: flex; gap: 3px; }
   #dockL button.flash { animation: invflash 1s ease-out; } /* 가방이 닫혀 있어도 획득 피드백 */
-  #rankPanel.folded #rankList, #rankPanel.folded h3 span { display: none; }
+  #rankPanel.folded #rankList, #rankPanel.folded #rankCls, #rankPanel.folded h3 span { display: none; }
+  #rankCls { display: flex; gap: 3px; margin-bottom: 6px; }
+  #rankCls button { flex: 1 1 0; min-width: 0; padding: 3px 0; font-size: 10px; border-radius: 3px; background: #2b3547; color: #cfd6e4; }
+  #rankCls button.on { background: #c9a227; color: #fff; }
+  #rankCls button:hover { filter: brightness(1.15); }
   #rankPanel.folded h3 { margin-bottom: 0; }
   #rankList { font-size: 12px; line-height: 1.9; color: #ddd; }
   #rankList div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -772,6 +778,7 @@
       <button id="rankTabAtk" style="padding:2px 6px;font-size:9px;border-radius:3px;color:#fff;">공격</button>
     </span>
   </h3>
+  <div id="rankCls"></div>
   <div id="rankList"></div>
 </div>
 
@@ -820,7 +827,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=154"
+<script type="module" src="game.js?v=156"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

@@ -2,7 +2,7 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signInAnonymously, onAuthStateChanged, connectAuthEmulator, setPersistence, browserLocalPersistence, signOut } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import {
   getFirestore, initializeFirestore, deleteDoc, doc, setDoc, updateDoc, onSnapshot, collection,
-  query, orderBy, limit, addDoc, runTransaction, getDoc, writeBatch, increment, where,
+  query, orderBy, limit, addDoc, runTransaction, getDoc, getDocs, writeBatch, increment, where,
   connectFirestoreEmulator
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
@@ -1848,16 +1848,17 @@ function watchLoot() {
 }
 
 let rankMode = 'lv', rankCls = 'all'; /* 직업별 랭킹 필터 */
+const rankVal = p => rankMode === 'lv' ? (p.lv || 1) : rankMode === 'pvp' ? ((p.pvp && p.pvp.pts) || 1000) : (p.power || 0);
 let rankCache = [];
 const curPower = () => { try { return Math.round(totalAtk() * (1 + totalCrit()) * skillPow()) || 0; } catch (e) { return 0; } };
 function renderRank() {
   /* 내 행은 로컬 값(레벨·전투력)을 즉시 반영 — 서버에는 1분 주기/레벨업 때 실린다 */
   let src = rankCache.map(p => p._id === uid ? { ...p, lv: me.lv || p.lv, power: curPower() } : p);
   if (rankCls !== 'all') src = src.filter(p => (p.cls || 'warrior') === rankCls); /* 직업별 보기 */
-  const list = [...src].sort((a, b) => rankMode === 'lv' ? (b.lv || 1) - (a.lv || 1) : (b.power || 0) - (a.power || 0)).slice(0, 10);
+  const list = [...src].sort((a, b) => rankVal(b) - rankVal(a)).slice(0, 10);
   const rows = list.map((p, i) => {
     const medal = ['🥇', '🥈', '🥉'][i] || `${i + 1}`;
-    const val = rankMode === 'lv' ? `Lv${p.lv || 1}` : `⚔${p.power || 0}`;
+    const val = rankMode === 'lv' ? `Lv${p.lv || 1}` : rankMode === 'pvp' ? `🏆${(p.pvp && p.pvp.pts) || 1000}` : `⚔${p.power || 0}`;
     const nm = /\([^)]*\)$/.test(p.name || '') ? p.name : dispName(p.base || p.name || '?', p.cls || 'warrior'); /* 옛 캐릭터도 이름(직업)으로 표시 */
     return `<div><span style="color:#889;display:inline-block;width:18px;">${medal}</span> ${esc(nm)} <b style="color:#ffd700">${val}</b> <span style="color:#667">${CLASSES[p.cls]?.icon || ''}</span></div>`;
   }).join('');
@@ -1870,9 +1871,10 @@ function renderRank() {
     cb.querySelectorAll('button').forEach(b => b.onclick = () => { rankCls = b.dataset.rc; sfx('click'); renderRank(); });
   }
   if (cb) cb.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.rc === rankCls));
-  const t1 = $('rankTabLv'), t2 = $('rankTabAtk');
+  const t1 = $('rankTabLv'), t2 = $('rankTabAtk'), t3 = $('rankTabPvp');
   if (t1) t1.style.background = rankMode === 'lv' ? '#c9a227' : '#2b3547';
   if (t2) t2.style.background = rankMode === 'atk' ? '#c9a227' : '#2b3547';
+  if (t3) t3.style.background = rankMode === 'pvp' ? '#c9a227' : '#2b3547';
 }
 function watchRank() {
   onSnapSafe('rank', query(collection(db, 'players'), orderBy('lv', 'desc'), limit(30)), snap => {
@@ -8923,6 +8925,7 @@ function togglePanel(id) {
     if (id === 'dexPanel') renderDex();
     if (id === 'achvPanel') renderAchv();
     if (id === 'hordePanel') renderHorde();
+    if (id === 'pvpPanel') { renderPvp(); pvpLoadFoes(); }
   }
 }
 const rb2 = $('reviveBtn');
@@ -8930,6 +8933,7 @@ if (rb2) rb2.onclick = reviveNow;
 const rtl = $('rankTabLv'), rta = $('rankTabAtk');
 if (rtl) rtl.onclick = () => { rankMode = 'lv'; renderRank(); };
 if (rta) rta.onclick = () => { rankMode = 'atk'; renderRank(); };
+{ const rtp = $('rankTabPvp'); if (rtp) rtp.onclick = () => { rankMode = 'pvp'; renderRank(); }; }
 /* 직업별 스탯 버튼 8종 생성 (로그인 후 호출 — myCls 확정 필요) */
 function renderStatButtons() {
   const box = $('stBtns');
@@ -9101,6 +9105,7 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyP') toggleAuto();
   if (e.code === 'KeyC') { sfx('click'); toggleDex(); }
   if (e.code === 'KeyK') { sfx('click'); togglePanel('hordePanel'); }
+  if (e.code === 'KeyJ') { sfx('click'); togglePanel('pvpPanel'); }
 });
 addEventListener('keyup', e => keys[e.code] = false);
 /* 포커스 이탈/탭 전환 시 keyup 유실로 캐릭터가 계속 걷는 것 방지 */
@@ -9385,7 +9390,7 @@ requestAnimationFrame(loop);
 /* 중앙 모달 + 일시정지 (독/ESC 등 모든 토글은 MutationObserver가 자동 감지) */
 let paused = false, pauseStart = 0, chatVisible = true;
 function syncModal() {
-  const open = !!document.querySelector('#invPanel.open,.sidepanel.open,#worldMap.open,#enhModal,#enhMenu,#hordePick.open,#hordeEnd.open');
+  const open = !!document.querySelector('#invPanel.open,.sidepanel.open,#worldMap.open,#enhModal,#enhMenu,#hordePick.open,#hordeEnd.open,#pvpPlay.open');
   const dim = $('modalDim');
   if (dim) dim.classList.toggle('on', open);
   document.querySelectorAll('#dockL [data-p]').forEach(b => {
@@ -9703,6 +9708,158 @@ function showCharSelect(chars, preferred) {
     paint();
     $('charGoBtn').onclick = done;
   });
+}
+
+/* ================= 투기장(PvP): 자동 전투 =================
+   상대 문서를 읽어 능력치를 계산하고 전투를 로컬에서 자동으로 굴린다. 상대 문서에는 쓰지 않으므로(보안 규칙상 불가)
+   서버 쓰기는 내 전적 1회뿐. 하루 도전 횟수 제한이 있고, 승패로 투기장 점수가 오르내린다. */
+const PVP_DAILY = 10, PVP_TICK = 120, PVP_MAX_TICKS = 500;
+/* 임의의 플레이어 문서(내 것 포함)에서 전투 능력치를 뽑는다 — 기존 공식(maxHpOf/totalAtk/...)의 p 버전 */
+function pvpSetB(p) {
+  const counts = {};
+  for (const id of Object.values(p.equipped || {})) { if (!id) continue; const sid = SET_PIECE_TO_SET[getItem(id)._base || id]; if (sid) counts[sid] = (counts[sid] || 0) + 1; }
+  const b = { atk: 0, def: 0, crit: 0, spd: 0, hp: 0, mp: 0, atkMul: 0, defMul: 0, critDmgMul: 0, bossMul: 0, takenMul: 0 };
+  for (const [sid, n] of Object.entries(counts)) { const s = SETS[sid]; if (!s) continue; for (const [tier, bo] of Object.entries(s.bonus)) if (n >= +tier) for (const [k, v] of Object.entries(bo)) b[k] = (b[k] || 0) + v; }
+  return b;
+}
+function pvpStats(p) {
+  const cls = p.cls || 'warrior', C = CLASSES[cls] || CLASSES.warrior, b = pvpSetB(p);
+  const eq = f => Object.values(p.equipped || {}).reduce((a, id) => a + (getItem(id)[f] || 0), 0);
+  const sLv = id => ((p.skills || {})[id] || 0) + (((p.skillEnh || {})[id]) || 0);
+  const pass = f => Object.keys(SKILLS).reduce((a, id) => a + (SKILLS[id][f] || 0) * sLv(id), 0);
+  const lv = p.lv || 1;
+  const hp = Math.round(C.hp + (lv - 1) * 10 + (p.stHp || 0) * 15 + b.hp);
+  const atk = Math.round(((p.atk || C.atk) + (p.stAtk || 0) * 2 + eq('atk') + pass('atk') + b.atk) * (1 + b.atkMul));
+  const def = Math.round(((p.stDef || 0) + eq('def') + pass('def') + b.def) * (1 + b.defMul));
+  const crit = Math.min(.9, C.crit + (p.stCrit || 0) * .01 + pass('crit') + eq('crit') + b.crit);
+  const critDmg = (1.6 + (p.stCritDmg || 0) * .06) * (1 + b.critDmgMul);
+  const cd = C.atkCd * Math.max(.5, 1 - (p.stAspd || 0) * .02);
+  const skills = Object.keys(p.skills || {}).length;
+  return { name: p.name || '?', base: p.base || p.name || '?', cls, lv, hp, maxHp: hp,
+    atk, def, crit, critDmg, cd, evade: Math.min(.35, (p.stEvade || 0) * .01), life: (p.stLife || 0) * .01,
+    skillPow: 1 + (p.stWis || 0) * .03, skills, power: Math.round(atk * (1 + crit) * (1 + (p.stWis || 0) * .03)) };
+}
+/* 씨앗 난수 — 같은 대전은 항상 같은 결과(재생 중 되감기해도 어긋나지 않게) */
+function pvpRng(seed) { let t = (seed >>> 0) || 1; return () => { t = (t + 0x6D2B79F5) >>> 0; let r = Math.imul(t ^ (t >>> 15), 1 | t); r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r; return ((r ^ (r >>> 14)) >>> 0) / 4294967296; }; }
+function pvpSim(A, B, seed) {
+  const rng = pvpRng(seed);
+  const a = { ...A, hp: A.maxHp, next: 0, hits: 0 }, b = { ...B, hp: B.maxHp, next: A.cd * .15, hits: 0 };
+  const log = [], frames = [];
+  let t = 0;
+  const swing = (x, y) => {
+    x.hits++;
+    const isSkill = x.skills > 0 && x.hits % 4 === 0; /* 4타마다 스킬 일격 */
+    if (rng() < y.evade) { log.push({ t, s: x === a ? 'a' : 'b', txt: `${x.base}의 공격 — ${y.base} 회피!`, k: 'miss' }); return; }
+    const crit = rng() < x.crit;
+    let dmg = x.atk * (.85 + rng() * .3) * (crit ? x.critDmg : 1) * (isSkill ? 1.6 * x.skillPow : 1);
+    dmg = Math.max(1, Math.round(dmg - y.def * (isSkill ? .5 : 1)));
+    y.hp = Math.max(0, y.hp - dmg);
+    if (x.life) x.hp = Math.min(x.maxHp, x.hp + Math.round(dmg * x.life));
+    log.push({ t, s: x === a ? 'a' : 'b', txt: `${x.base}${isSkill ? ' 스킬' : ''} ${crit ? '치명타 ' : ''}${dmg}`, k: crit ? 'crit' : isSkill ? 'skill' : 'hit' });
+  };
+  for (let i = 0; i < PVP_MAX_TICKS && a.hp > 0 && b.hp > 0; i++) {
+    t += PVP_TICK;
+    if (t >= a.next) { a.next = t + a.cd; swing(a, b); }
+    if (b.hp > 0 && t >= b.next) { b.next = t + b.cd; swing(b, a); }
+    frames.push({ t, a: a.hp / a.maxHp, b: b.hp / b.maxHp });
+  }
+  let win;
+  if (a.hp <= 0 && b.hp <= 0) win = a.maxHp >= b.maxHp ? 'a' : 'b';
+  else if (b.hp <= 0) win = 'a';
+  else if (a.hp <= 0) win = 'b';
+  else win = (a.hp / a.maxHp) >= (b.hp / b.maxHp) ? 'a' : 'b'; /* 시간 초과: 남은 체력 비율 */
+  return { win, log, frames, aHp: a.hp, bHp: b.hp, timeout: a.hp > 0 && b.hp > 0 };
+}
+/* ---- 전적/보상 ---- */
+const pvpRec = () => me.pvp || { pts: 1000, win: 0, lose: 0, streak: 0, day: '', used: 0 };
+function pvpLeft() { const r = pvpRec(); return r.day === todayStr() ? Math.max(0, PVP_DAILY - (r.used || 0)) : PVP_DAILY; }
+function pvpApply(won, opp) {
+  const r = pvpRec(), today = todayStr();
+  const used = (r.day === today ? (r.used || 0) : 0) + 1;
+  const streak = won ? (r.streak || 0) + 1 : 0;
+  const gain = won ? 20 + Math.min(20, (streak - 1) * 4) : -8;
+  const pts = Math.max(0, (r.pts || 1000) + gain);
+  const gold = won ? 200 + (me.lv || 1) * 30 : 40;
+  me.pvp = { pts, win: (r.win || 0) + (won ? 1 : 0), lose: (r.lose || 0) + (won ? 0 : 1), streak, day: today, used };
+  updX(meRef, { pvp: me.pvp, gold: (me.gold || 0) + gold }).catch(() => {});
+  trySync(true);
+  return { gain, pts, gold, streak };
+}
+/* ---- UI ---- */
+let pvpFoes = [], pvpBusy = false;
+function renderPvp() {
+  const body = $('pvpBody'); if (!body) return;
+  const r = pvpRec(), left = pvpLeft(), my = pvpStats({ ...me, cls: myCls, name: myName });
+  const rows = pvpFoes.length ? pvpFoes.map((f, i) => {
+    const s = f._st;
+    return `<div class="pvRow"><div class="pvWho"><b>${esc(/\([^)]*\)$/.test(f.name || '') ? f.name : dispName(f.base || f.name || '?', f.cls || 'warrior'))}</b>
+      <span>Lv${f.lv || 1} · ${(CLASSES[f.cls] && CLASSES[f.cls].icon) || ''} 전투력 ${s.power} · 점수 ${(f.pvp && f.pvp.pts) || 1000}</span></div>
+      <button data-foe="${i}" ${left > 0 ? '' : 'disabled'}>도전</button></div>`;
+  }).join('') : '<div class="pvEmpty">상대를 찾는 중…</div>';
+  body.innerHTML = `<div class="pvMe"><div><span>투기장 점수</span><b>${r.pts || 1000}</b></div><div><span>전적</span><b>${r.win || 0}승 ${r.lose || 0}패</b></div>
+      <div><span>연승</span><b>${r.streak || 0}</b></div><div><span>오늘 남은 도전</span><b>${left} / ${PVP_DAILY}</b></div></div>
+    <div class="pvHint">내 전투력 <b>${my.power}</b> · 전투는 자동으로 진행됩니다. 승리 시 점수와 골드를 얻고, 연승할수록 점수가 더 오릅니다.</div>
+    <div class="pvList">${rows}</div>`;
+  body.querySelectorAll('[data-foe]').forEach(b => b.onclick = () => pvpFight(pvpFoes[+b.dataset.foe]));
+}
+async function pvpLoadFoes() {
+  try {
+    const snap = await getDocs(query(collection(db, 'players'), orderBy('lv', 'desc'), limit(40)));
+    const all = [];
+    snap.forEach(d => { if (d.id !== uid && !d.id.startsWith(authUid + '__') && d.id !== authUid) all.push({ ...d.data(), _id: d.id }); });
+    for (const f of all) f._st = pvpStats(f);
+    const myPow = pvpStats({ ...me, cls: myCls }).power || 1;
+    all.sort((x, y) => Math.abs(x._st.power - myPow) - Math.abs(y._st.power - myPow)); /* 전투력이 비슷한 순 */
+    pvpFoes = all.slice(0, 6);
+  } catch (e) { pvpFoes = []; }
+  renderPvp();
+}
+function pvpFight(foe) {
+  if (!foe || pvpBusy) return;
+  if (pvpLeft() <= 0) { toast('오늘 도전 횟수를 모두 썼습니다 (매일 초기화)'); return; }
+  pvpBusy = true;
+  const A = pvpStats({ ...me, cls: myCls, name: myName, base: (me.base || myName) }), B = foe._st;
+  const res = pvpSim(A, B, (Date.now() ^ (foe.lv || 1) * 2654435761) >>> 0);
+  const won = res.win === 'a';
+  const reward = pvpApply(won, foe);
+  pvpShow(A, B, res, won, reward);
+  renderPvp();
+}
+function pvpShow(A, B, res, won, reward) {
+  const el = hordeEl('pvpPlay');
+  const bar = (side, st) => `<div class="pvSide"><img src="${heroPortrait(st.cls)}" alt=""><b>${esc(st.base)}</b><span>Lv${st.lv} · ${clsKr(st.cls)}</span>
+    <div class="pvHp"><i id="pvHp_${side}" style="width:100%"></i></div><em id="pvHpN_${side}">${st.maxHp}</em></div>`;
+  el.innerHTML = `<div class="pvBox"><h3>⚔ 투기장</h3><div class="pvVs">${bar('a', A)}<div class="pvX">VS</div>${bar('b', B)}</div>
+    <div class="pvLog" id="pvLog"></div><div class="pvResult" id="pvResult"></div><button id="pvClose" style="display:none">확인</button></div>`;
+  el.classList.add('open');
+  const logEl = el.querySelector('#pvLog');
+  const ha = el.querySelector('#pvHp_a'), hb = el.querySelector('#pvHp_b');
+  const na = el.querySelector('#pvHpN_a'), nb = el.querySelector('#pvHpN_b');
+  let i = 0;
+  const step = () => {
+    if (i >= res.log.length) return finish();
+    const chunk = Math.max(1, Math.ceil(res.log.length / 24)); /* 로그가 길면 묶어서 재생 — 총 4초 내외 */
+    for (let k = 0; k < chunk && i < res.log.length; k++, i++) {
+      const L = res.log[i];
+      const d = document.createElement('div'); d.className = 'pvLine ' + L.k + ' ' + L.s; d.textContent = L.txt; logEl.appendChild(d);
+    }
+    logEl.scrollTop = logEl.scrollHeight;
+    const f = res.frames[Math.min(res.frames.length - 1, Math.floor(i / res.log.length * res.frames.length))] || { a: 0, b: 0 };
+    ha.style.width = (f.a * 100).toFixed(1) + '%'; hb.style.width = (f.b * 100).toFixed(1) + '%';
+    na.textContent = Math.round(f.a * A.maxHp); nb.textContent = Math.round(f.b * B.maxHp);
+    sfx('hit');
+    setTimeout(step, 160);
+  };
+  const finish = () => {
+    ha.style.width = (res.aHp / A.maxHp * 100).toFixed(1) + '%'; hb.style.width = (res.bHp / B.maxHp * 100).toFixed(1) + '%';
+    na.textContent = res.aHp; nb.textContent = res.bHp;
+    el.querySelector('#pvResult').innerHTML = `<div class="pvWin ${won ? 'w' : 'l'}">${won ? '승리!' : '패배'}${res.timeout ? ' <small>(시간 초과 — 남은 체력 판정)</small>' : ''}</div>
+      <div class="pvGain">점수 ${reward.gain >= 0 ? '+' : ''}${reward.gain} → <b>${reward.pts}</b> · 골드 +${reward.gold}${reward.streak > 1 ? ` · <b>${reward.streak}연승</b>` : ''}</div>`;
+    sfx(won ? 'levelup' : 'die');
+    const cb = el.querySelector('#pvClose');
+    cb.style.display = ''; cb.onclick = () => { el.classList.remove('open'); pvpBusy = false; renderPvp(); };
+  };
+  step();
 }
 
 function showCreateUI() {

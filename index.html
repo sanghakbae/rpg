@@ -456,6 +456,48 @@
     #hordeHud { top: 96px; min-width: 210px; padding: 5px 10px 6px; } .hhTop .hhT { font-size: 16px; }
   }
 
+
+  /* 투기장(PvP) */
+  .pvMe { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 9px; }
+  .pvMe div { background: rgba(255,255,255,.04); border: 1px solid #2c3444; border-radius: 6px; padding: 6px 8px; }
+  .pvMe span { display: block; font-size: 10px; color: #7d879a; }
+  .pvMe b { font-size: 14px; color: #ffd700; }
+  .pvHint { font-size: 11.5px; color: #8b93a4; line-height: 1.6; margin-bottom: 10px; }
+  .pvHint b { color: #cfd6e4; }
+  .pvRow { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border: 1px solid #2c3444; border-radius: 7px; margin-bottom: 6px; background: rgba(255,255,255,.03); }
+  .pvWho { flex: 1 1 auto; min-width: 0; }
+  .pvWho b { display: block; font-size: 12.5px; color: #e6e9f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pvWho span { font-size: 10.5px; color: #8b93a4; }
+  .pvRow button { padding: 6px 11px; font-size: 11.5px; font-weight: bold; border-radius: 5px; background: linear-gradient(#c0392b, #7b241c); color: #fff; }
+  .pvRow button:disabled { background: #333a49; color: #7d879a; }
+  .pvEmpty { color: #667; font-size: 12px; padding: 10px 0; }
+  #pvpPlay { display: none; position: fixed; inset: 0; z-index: 120; background: rgba(6,9,14,.82); align-items: center; justify-content: center; }
+  #pvpPlay.open { display: flex; }
+  .pvBox { background: #141a25; border: 1px solid #3a4256; border-radius: 12px; padding: 16px 18px; width: 380px; max-width: 94vw; }
+  .pvBox h3 { text-align: center; color: #ffd700; font-size: 15px; margin-bottom: 12px; }
+  .pvVs { display: flex; align-items: flex-start; gap: 8px; }
+  .pvSide { flex: 1 1 0; min-width: 0; text-align: center; }
+  .pvSide img { width: 54px; height: 54px; object-fit: contain; border-radius: 8px; background: #0f1420; }
+  .pvSide b { display: block; font-size: 12px; color: #e6e9f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pvSide span { font-size: 10px; color: #8b93a4; }
+  .pvSide em { font-style: normal; font-size: 10px; color: #9fb0c4; }
+  .pvHp { height: 7px; background: #2a3040; border-radius: 4px; overflow: hidden; margin: 4px 0 2px; }
+  .pvHp i { display: block; height: 100%; background: linear-gradient(90deg, #e74c3c, #f39c12); transition: width .15s linear; }
+  .pvX { align-self: center; color: #7d879a; font-size: 12px; font-weight: bold; }
+  .pvLog { height: 130px; overflow-y: auto; margin: 10px 0; padding: 7px 9px; background: #0f1420; border-radius: 7px; font-size: 11px; line-height: 1.6; }
+  .pvLine { color: #9aa3b4; }
+  .pvLine.a { color: #9fd4ff; } .pvLine.b { color: #ffb3a7; }
+  .pvLine.crit { font-weight: bold; color: #ffd700; }
+  .pvLine.skill { color: #d6a8ff; }
+  .pvLine.miss { color: #6b7385; }
+  .pvResult { text-align: center; margin-bottom: 10px; }
+  .pvWin { font-size: 20px; font-weight: bold; }
+  .pvWin.w { color: #2ecc71; } .pvWin.l { color: #e74c3c; }
+  .pvWin small { font-size: 11px; color: #7d879a; font-weight: normal; }
+  .pvGain { font-size: 12px; color: #9aa3b4; margin-top: 4px; }
+  .pvGain b { color: #ffd700; }
+  #pvClose { width: 100%; padding: 9px; border-radius: 6px; background: #2b3547; color: #dfe4ee; font-size: 13px; }
+
   /* 랭킹 */
   #rankPanel { position: fixed; right: 12px; top: 148px; width: 185px; z-index: 10; padding: 9px 11px; }
   #rankPanel h3 { font-size: 11px; color: #aaa; margin-bottom: 6px; letter-spacing: 1px; cursor: pointer; }
@@ -574,7 +616,7 @@
     /* 좌측 아이콘 → 모바일에서는 스킬창(핫바) 바로 위 가로 한 줄로 배치 */
     #dockL { left: 0; right: 0; top: auto; bottom: calc(72px + env(safe-area-inset-bottom)); transform: none;
       flex-direction: row; justify-content: center; gap: 5px; padding: 0 6px; }
-    #dockL button { width: calc((100vw - 56px) / 9); max-width: 52px; height: auto; aspect-ratio: 1; gap: 1px;
+    #dockL button { width: calc((100vw - 52px) / 10); max-width: 52px; height: auto; aspect-ratio: 1; gap: 1px;
       font-size: min(26px, 6.2vw); border-radius: 12px; }
     #dockL .dki { width: 58%; }
     #dockL button span { font-size: 8px; } #dockL button span kbd { display: none; }
@@ -654,6 +696,7 @@
   <button data-p="dexPanel" title="도감 [C]"><i class="dki" style="--i:url(assets/icons/ui/open-book.svg)"></i><span>도감<kbd>C</kbd></span></button>
   <button data-p="achvPanel" title="업적 [G]"><i class="dki" style="--i:url(assets/icons/ui/trophy.svg)"></i><span>업적<kbd>G</kbd></span><em class="dkbadge" id="achvBadge" hidden></em></button>
   <button data-p="hordePanel" title="쇄도 [K]"><i class="dki" style="--i:url(assets/icons/ui/round-star.svg)"></i><span>쇄도<kbd>K</kbd></span></button>
+  <button data-p="pvpPanel" title="투기장 [J]"><i class="dki" style="--i:url(assets/icons/ui/laurel-crown.svg)"></i><span>투기장<kbd>J</kbd></span></button>
   <button data-p="chat" title="채팅 [L]"><i class="dki" style="--i:url(assets/icons/ui/chat-bubble.svg)"></i><span>채팅<kbd>L</kbd></span></button>
 </div>
 <div id="modalDim"></div>
@@ -668,6 +711,11 @@
 <div id="shopPanel" class="sidepanel panel">
   <header><b>⚔ 스킬 샵</b><span id="shopGold" class="hgold">💰 0 G</span><button data-close="shopPanel">✕</button></header>
   <div class="spbody" id="shopBody"></div>
+</div>
+
+<div id="pvpPanel" class="sidepanel panel">
+  <header><b>⚔ 투기장</b><button data-close="pvpPanel">✕</button></header>
+  <div class="spbody" id="pvpBody"></div>
 </div>
 
 <div id="hordePanel" class="sidepanel panel">
@@ -776,6 +824,7 @@
     <span style="float:right;display:flex;gap:3px;">
       <button id="rankTabLv" style="padding:2px 6px;font-size:9px;border-radius:3px;color:#fff;">레벨</button>
       <button id="rankTabAtk" style="padding:2px 6px;font-size:9px;border-radius:3px;color:#fff;">공격</button>
+      <button id="rankTabPvp" style="padding:2px 6px;font-size:9px;border-radius:3px;color:#fff;">투기장</button>
     </span>
   </h3>
   <div id="rankCls"></div>
@@ -827,7 +876,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=156"
+<script type="module" src="game.js?v=157"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

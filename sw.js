@@ -1,0 +1,38 @@
+/* 바이브 아레나 서비스 워커
+   - 스프라이트/아이콘처럼 버전 쿼리(?v=)가 붙은 정적 자산: 캐시 우선(재접속 때 수 MB 재다운로드 제거)
+   - index.html / game.js: 네트워크 우선 + 캐시 폴백(업데이트는 즉시 반영, 오프라인이면 마지막 버전)
+   - Firebase / 구글 API: 캐시하지 않음 */
+const VER = 'va-v1';
+const SHELL = VER + '-shell', ASSET = VER + '-asset';
+const SHELL_URLS = ['/', '/index.html', '/manifest.webmanifest', '/assets/pwa/icon-192.png'];
+
+self.addEventListener('install', e => {
+  e.waitUntil(caches.open(SHELL).then(c => c.addAll(SHELL_URLS)).catch(() => {}).then(() => self.skipWaiting()));
+});
+self.addEventListener('activate', e => {
+  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => !k.startsWith(VER)).map(k => caches.delete(k)))).then(() => self.clients.claim()));
+});
+const isAsset = u => /\/assets\/.*\.(png|jpg|jpeg|webp|svg|json|glb|woff2?)$/i.test(u.pathname);
+const isCode = u => u.pathname === '/' || /\.(html|js|webmanifest)$/i.test(u.pathname);
+
+self.addEventListener('fetch', e => {
+  const req = e.request;
+  if (req.method !== 'GET') return;
+  let u; try { u = new URL(req.url); } catch (err) { return; }
+  if (u.origin !== self.location.origin) return;            /* Firebase·gstatic 등은 그대로 통과 */
+  if (u.pathname === '/sw.js') return;
+
+  if (isAsset(u)) {                                          /* 캐시 우선 */
+    e.respondWith(caches.match(req).then(hit => hit || fetch(req).then(res => {
+      if (res && res.ok) { const cp = res.clone(); caches.open(ASSET).then(c => c.put(req, cp)).catch(() => {}); }
+      return res;
+    })));
+    return;
+  }
+  if (isCode(u)) {                                           /* 네트워크 우선 */
+    e.respondWith(fetch(req).then(res => {
+      if (res && res.ok) { const cp = res.clone(); caches.open(SHELL).then(c => c.put(req, cp)).catch(() => {}); }
+      return res;
+    }).catch(() => caches.match(req).then(hit => hit || caches.match('/index.html'))));
+  }
+});

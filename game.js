@@ -1387,7 +1387,9 @@ async function trySyncInner(now) {
   if (!offline && !pendKeys.size) return true;
   const payload = {};
   for (const k of pendKeys) if (me[k] !== undefined) payload[k] = me[k];
-  payload.x = me.x; payload.y = me.y; payload.hp = me.hp; if (me.mp != null) payload.mp = Math.round(me.mp);
+  payload.x = me.x; payload.y = me.y;
+  payload.hp = hordeOn() ? horde.hpBefore : me.hp; /* 쇄도 입장 회복분은 런이 끝나기 전까지 서버에 쓰지 않는다(리로드 무한 회복 방지) */
+  if (me.mp != null && !hordeOn()) payload.mp = Math.round(me.mp);
   payload.dead = !!me.dead; payload.deadUntil = me.deadUntil || 0; if (me.map) payload.map = me.map;
   payload.power = Math.round(totalAtk() * (1 + totalCrit()) * skillPow()) || 0; /* 랭킹 ⚔ 탭용(위치 심박은 절약 모드에서 꺼져 있음) */
   payload.lastSeen = now;
@@ -1816,7 +1818,7 @@ function watchMonsters() {
         ? '⛔ 서버 일일 한도 초과! 내일 자정(태평양)까지 일부 기능 제한 — Firebase Blaze 플랜 필요'
         : '⚠️ 몬스터 연결 실패: ' + esc(code));
     }
-    setTimeout(() => watchMonsters(), 4000);
+    setTimeout(() => { if (!hordeOn()) watchMonsters(); }, 4000); /* 쇄도 중에는 구역 몬스터를 다시 구독하지 않는다 */
   });
 }
 
@@ -1828,7 +1830,7 @@ function watchPlayers() {
   others = {}; othersPrev = {};
   const sub = () => unsubPlayers = onSnapshot(query(collection(db, 'players'), where('map', '==', myPage())), snap => {
     const next = {};
-    snap.forEach(dc => { if (dc.id !== uid) next[dc.id] = dc.data(); });
+    snap.forEach(dc => { if (dc.id !== uid && dc.id !== authUid && !dc.id.startsWith(authUid + '__')) next[dc.id] = dc.data(); }); /* 내 다른 직업 캐릭터는 유령으로 보이지 않게(몬스터 어그로까지 뺏겼다) */
     others = next;
   }, err => { console.error('[players]', err); noteErr(err); setTimeout(() => { if (unsubPlayers) watchPlayers(); }, 5000); });
   sub();
@@ -1848,22 +1850,22 @@ function watchLoot() {
 }
 
 let rankMode = 'lv', rankCls = 'all'; /* 직업별 랭킹 필터 */
-const rankVal = p => rankMode === 'lv' ? (p.lv || 1) : rankMode === 'pvp' ? ((p.pvp && p.pvp.pts) || 1000) : (p.power || 0);
+const rankVal = p => rankMode === 'lv' ? (p.lv || 1) : rankMode === 'pvp' ? ((p.pvp && p.pvp.pts) ?? 1000) : (p.power || 0);
 let rankCache = [];
 const curPower = () => { try { return Math.round(totalAtk() * (1 + totalCrit()) * skillPow()) || 0; } catch (e) { return 0; } };
 function renderRank() {
   /* 내 행은 로컬 값(레벨·전투력)을 즉시 반영 — 서버에는 1분 주기/레벨업 때 실린다 */
-  let src = rankCache.map(p => p._id === uid ? { ...p, lv: me.lv || p.lv, power: curPower() } : p);
+  let src = rankCache.map(p => p._id === uid ? { ...p, lv: me.lv || p.lv, power: curPower(), pvp: me.pvp || p.pvp } : p);
   if (rankCls !== 'all') src = src.filter(p => (p.cls || 'warrior') === rankCls); /* 직업별 보기 */
   const list = [...src].sort((a, b) => rankVal(b) - rankVal(a)).slice(0, 10);
   const rows = list.map((p, i) => {
     const medal = ['🥇', '🥈', '🥉'][i] || `${i + 1}`;
-    const val = rankMode === 'lv' ? `Lv${p.lv || 1}` : rankMode === 'pvp' ? `🏆${(p.pvp && p.pvp.pts) || 1000}` : `⚔${p.power || 0}`;
-    const nm = /\([^)]*\)$/.test(p.name || '') ? p.name : dispName(p.base || p.name || '?', p.cls || 'warrior'); /* 옛 캐릭터도 이름(직업)으로 표시 */
+    const val = rankMode === 'lv' ? `Lv${(p.lv | 0) || 1}` : rankMode === 'pvp' ? `🏆${(p.pvp && p.pvp.pts) | 0}` : `⚔${p.power | 0}`;
+    const nm = nameOf(p); /* 옛 캐릭터도 이름(직업)으로 표시 */
     return `<div><span style="color:#889;display:inline-block;width:18px;">${medal}</span> ${esc(nm)} <b style="color:#ffd700">${val}</b> <span style="color:#667">${CLASSES[p.cls]?.icon || ''}</span></div>`;
   }).join('');
   const el = $('rankList');
-  if (el) el.innerHTML = rows || `<div style="color:#556">${rankCls === 'all' ? '아직 없음' : clsKr(rankCls) + ' 캐릭터 없음'}</div>`;
+  if (el) el.innerHTML = rows || `<div style="color:#556">${rankCls === 'all' ? '아직 없음' : '상위 30위 내 ' + esc(clsKr(rankCls)) + ' 없음'}</div>`; /* 랭킹 캐시는 레벨 상위 30명 — '없다'고 단정하지 않는다 */
   const cb = $('rankCls');
   if (cb && !cb.dataset.built) { /* 직업 필터 칩: 전체 + 4직업 */
     cb.dataset.built = '1';
@@ -3697,6 +3699,7 @@ function markSetGlow(div, rawId) {
 }
 function renderInvUI() {
   /* 위치 저장 에코 스냅샷마다 호출되므로 실제 내용이 바뀐 경우에만 DOM 재구축 */
+  if (!$('invPanel').classList.contains('open')) { invUIKey = ''; return; } /* 가방이 닫혀 있으면 DOM을 만들지 않는다 — 전리품마다 슬롯 100칸+아이콘을 다시 그려 모바일이 끊겼다(열 때 다시 그린다) */
   hideTip();
   const key = JSON.stringify([me.inv, me.equipped, me.bagSize, me.skills]);
   if (key === invUIKey) return;
@@ -4406,6 +4409,7 @@ const cv = $('game'), ctx = cv.getContext('2d');
 const mm = $('minimap'), mctx = mm.getContext('2d');
 /* 백버퍼를 기기 픽셀비만큼 키워 렌더 — cvW/cvH는 CSS 픽셀 기준(기존 코드 의미 유지) */
 let dpr = 1, cvW = 0, cvH = 0, resizeT = 0;
+let wssT = 0;
 let WSS = 2; /* 지형 텍스처 배율 — 아래 calcWSS()가 해상도에 맞춰 정하고, resize마다 갱신된다(함수 선언은 호이스팅되므로 첫 resize에서도 안전) */
 function resize() {
   const mob = innerWidth <= 640;
@@ -4417,7 +4421,7 @@ function resize() {
   const W = Math.round(innerWidth * d), H = Math.round(innerHeight * d);
   if (W === cv.width && H === cv.height && d === dpr) { cvW = innerWidth; cvH = innerHeight; return; } /* 치수 동일 → 재할당 생략 */
   dpr = d; cvW = innerWidth; cvH = innerHeight;
-  { const nw = calcWSS(); if (nw !== WSS) { WSS = nw; try { bioTexCache.clear(); worldColliders[myMap()] = null; } catch (e) {} } } /* 해상도가 바뀌면 지형 텍스처 배율도 따라간다(최초 resize는 캐시가 아직 없어 catch로 넘어간다) */
+  { const nw = calcWSS(); if (nw !== WSS) { WSS = nw; clearTimeout(wssT); wssT = setTimeout(() => { try { bioTexCache.clear(); worldColliders[myMap()] = null; } catch (e) {} }, 600); } } /* 해상도가 바뀌면 지형 배율도 따라가되, 창을 끌 때 매 단계 재굽지 않게 0.6초 뒤에 한 번만 */
   cv.width = W; cv.height = H;
   cv.style.width = cvW + 'px'; cv.style.height = cvH + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -5210,10 +5214,10 @@ function gotoPage(n) {
     sysMsg(`${myName}님이 ${pageDef(n).name}(으)로 이동했습니다.`);
     try {
       const b = bandOfPage(n);
-      const seen = JSON.parse(localStorage.getItem('seenBands') || '[]');
+      const seen = JSON.parse(localStorage.getItem('seenBands_' + uid) || '[]');
       if (!seen.includes(b)) {
         seen.push(b);
-        localStorage.setItem('seenBands', JSON.stringify(seen));
+        localStorage.setItem('seenBands_' + uid, JSON.stringify(seen));
         const sets = Object.keys(SET_BANDS).filter(sid => SET_BANDS[sid].includes(b));
         if (sets.length) toast(`📍 ${BIOMES[b].name}: ${sets.map(sid => `◈${SETS[sid].name}`).join(' ')} 세트 드랍 지역!`, 'sysq');
       }
@@ -5244,6 +5248,7 @@ const hordeFmt = ms => { const s = Math.max(0, Math.round(ms / 1000)); return `$
 function hordeStart() {
   if (!ready || hordeOn()) return;
   if (me.dead) { toast('⚠️ 부활 후 입장할 수 있습니다'); return; }
+  if (mapFading) return; /* 구역 이동 연출 중에는 입장 금지(지연 콜백이 런 중에 구독을 되살린다) */
   if ((me.lv || 1) < 5) { toast('⚠️ 쇄도는 Lv5부터 입장할 수 있습니다'); return; }
   document.querySelectorAll('.sidepanel').forEach(p => p.classList.remove('open'));
   /* 서버 구독 해제: 쇄도 동안 구역 몬스터·전리품·플레이어를 받지 않는다(쓰기·읽기 0) */
@@ -5270,6 +5275,8 @@ function hordeEnd(reason) {
   const isBest = survived > bestBefore;
   const gems = Math.max(0, Math.floor(survived / 120000) - Math.floor(bestBefore / 120000)); /* 2분 단위 최고 기록 갱신분만 보석 */
   const gold = horde.gold, exp = horde.exp, kills = horde.kills, wave = horde.wave;
+  for (const s of sims) if (s.horde) s.alive = false; /* 남은 몬스터 즉시 무력화 */
+  try {
   me.horde = { best: Math.max(bestBefore, survived), kills: Math.max(rec.kills || 0, kills), runs: (rec.runs || 0) + 1, clears: (rec.clears || 0) + (reason === 'clear' ? 1 : 0) };
   sims = sims.filter(s => !s.horde);
   lootItems = {};
@@ -5285,10 +5292,13 @@ function hordeEnd(reason) {
   const sp = pageDef(pageNum()).spawn;
   me.x = sp.x; me.y = sp.y; me.vx = 0; me.vy = 0; cam.x = sp.x; cam.y = sp.y;
   attackTargetSimId = null; dest = null;
-  watchMonsters(); watchLoot(); watchPlayers();
-  trySync(true);
   hordeResult({ reason, survived, kills, wave, gold, exp, gems, isBest });
-  horde = null;
+  } finally { /* 어떤 예외가 나도 구역 구독과 상태는 반드시 복구 */
+    try { hordeEl('hordePick').classList.remove('open'); } catch (e) {}
+    horde = null;
+    watchMonsters(); watchLoot(); watchPlayers();
+    trySync(true);
+  }
 }
 
 function hordeSpawn() {
@@ -5313,6 +5323,7 @@ function hordeSpawn() {
 
 /* 쇄도 몬스터 AI: 홈 복귀·어그로 판정 없이 항상 플레이어로 직진 */
 function hordeSimTick(s, now, dt) {
+  if (!hordeOn()) { s.alive = false; return; } /* 런 종료 후 같은 프레임에 남은 몬스터가 계속 때려 진짜 사망 처리되던 문제 */
   if (s.kbx) {
     s.x = clampN(s.x + s.kbx, 40, WORLD.w - 40); s.y = clampN(s.y + s.kby, 40, WORLD.h - 40);
     s.kbx *= .8; s.kby *= .8;
@@ -5378,9 +5389,9 @@ function hordeTick(now, dt) {
   if (live < want && now - horde.spawnT > gap) { horde.spawnT = now; hordeSpawn(); if (live < want - 4) hordeSpawn(); }
   /* 시체 정리 */
   if (sims.length > 8) sims = sims.filter(s => !s.horde || s.alive || now - (s.deadT || 0) < 700);
+  if (horde.left <= 0) { hordeEnd('clear'); return; } /* 종료 판정을 먼저 — 같은 프레임에 각인 모달이 뜬 채 런이 끝나는 것 방지 */
   /* 각인 선택 */
   if (horde.waveLeft <= 0) { horde.waveLeft = HORDE_WAVE_MS; horde.wave++; hordePick(); }
-  if (horde.left <= 0) { hordeEnd('clear'); return; }
   hordeHudUpdate();
 }
 
@@ -5442,11 +5453,13 @@ function hordePick() {
   sfx('levelup');
   el.querySelectorAll('.hpCard').forEach(btn => btn.onclick = () => {
     const B = HORDE_BUFFS.find(b => b.id === btn.dataset.b);
-    if (B && horde) { horde.lv[B.id] = (horde.lv[B.id] || 0) + 1; horde.b[B.k] = (horde.b[B.k] || 0) + B.v; }
     el.classList.remove('open');
     sfx('buy');
-    float(me.x, me.y - 44, `${B.ic} ${B.n} ${horde.lv[B.id]}`, '#ffd700', true);
-    hordeHudUpdate();
+    if (B && horde) { /* 런이 이미 끝났으면 조용히 닫기만 */
+      horde.lv[B.id] = (horde.lv[B.id] || 0) + 1; horde.b[B.k] = (horde.b[B.k] || 0) + B.v;
+      float(me.x, me.y - 44, `${B.ic} ${B.n} ${horde.lv[B.id]}`, '#ffd700', true);
+      hordeHudUpdate();
+    }
   });
 }
 function hordeResult(r) {
@@ -8095,7 +8108,7 @@ function syncChars3D(now, dt) {
       face += d * Math.min(1, dt * .01);
     }
     poseChar3D(id, { cls: p.cls || 'warrior', equipped: p.equipped || {}, x: p.x, y: p.y, face, moving: mv, stepPh: ph,
-      swing: 0, hp: p.hp ?? 100, maxHp: p.maxHp ?? 100, name: p.name, isSelf: false, dead: !!p.dead, castFx: null },
+      swing: 0, hp: p.hp ?? 100, maxHp: p.maxHp ?? 100, name: nameOf(p), isSelf: false, dead: !!p.dead, castFx: null },
       p.equipped || {}, now, mv, ph, !!p.dead, dt);
     const rec = charNodes3D.get(id);
     rec.lx = p.x; rec.lz = p.y; rec.ph = ph; rec.fc = face;
@@ -8505,7 +8518,7 @@ function draw(now) {
     else { pv.x += ddx * k2; pv.y += ddy * k2; }
     if (dd > 2.5) { pv.mvT = now; pv.f = angLerp(pv.f ?? Math.PI / 2, Math.atan2(ddy, ddx), .25); }
     const mv = now - (pv.mvT || 0) < 400; /* 600ms 쓰기 간격 사이 걷기 애니메이션 깜빡임 방지 */
-    drawChar({ x: pv.x, y: pv.y, color: o.color || colorOf(id), name: o.name, title: o.title, hp: o.hp, maxHp: o.maxHp, dead: o.dead, equipped: o.equipped, cls: o.cls || 'warrior', isSelf: false, face: pv.f, moving: mv });
+    drawChar({ x: pv.x, y: pv.y, color: o.color || colorOf(id), name: nameOf(o), title: o.title, hp: o.hp, maxHp: o.maxHp, dead: o.dead, equipped: o.equipped, cls: o.cls || 'warrior', isSelf: false, face: pv.f, moving: mv });
   }
   if (ready) drawChar({ x: me.x, y: me.y, color: '#fff', name: myName, title: me.title, hp: me.hp, maxHp: me.maxHp, dead: me.dead, equipped: me.equipped, cls: myCls, isSelf: true, face: me.face ?? Math.PI / 2, moving: meMovingNow, swing: lastAttackAt });
 
@@ -8958,7 +8971,7 @@ $('hudTop').onclick = () => {
   try { localStorage.setItem('hudMini', mini ? '1' : ''); } catch (e) {}
 };
 try { if (localStorage.getItem('hudMini')) $('hud').classList.add('mini'); } catch (e) {}
-function toggleInv() { sfx('click'); $('invPanel').classList.toggle('open'); }
+function toggleInv() { sfx('click'); $('invPanel').classList.toggle('open'); if ($('invPanel').classList.contains('open')) renderInvUI(); } /* 열 때 밀린 갱신 반영 */
 document.querySelector('#rankPanel h3').addEventListener('click', e => {
   if (e.target.tagName === 'BUTTON') return;
   sfx('click');
@@ -8974,7 +8987,7 @@ $('hudLogout').onclick = e => { e.stopPropagation(); doLogout(); }; /* HUD 접�
 document.querySelectorAll('#mobileBar [data-mb]').forEach(b => b.onclick = () => {
   sfx('click');
   const k = b.dataset.mb;
-  if (k === 'inv') $('invPanel').classList.toggle('open'); /* sfx는 위에서 이미 재생 */
+  if (k === 'inv') { $('invPanel').classList.toggle('open'); if ($('invPanel').classList.contains('open')) renderInvUI(); } /* sfx는 위에서 이미 재생 */
   else if (k === 'map') toggleWorldMap();
   else if (k === 'dex') toggleDex();
   else togglePanel(k);
@@ -9079,6 +9092,7 @@ addEventListener('keydown', e => {
     document.querySelectorAll('.sidepanel').forEach(p => p.classList.remove('open'));
     $('invPanel').classList.remove('open');
     $('worldMap').classList.remove('open');
+    { const pv = document.getElementById('pvpPlay'); if (pv && pv.classList.contains('open')) pvpClosePlay(); } /* 전투 재생도 Esc로 닫힘 */
     closeEnhMenu();
     return;
   }
@@ -9288,8 +9302,8 @@ function stageMode() {
   if (new URLSearchParams(location.search).get('bag')) {
     me.inv = { 0: 'sword_wood', 1: 'sword_iron+2~112', 2: 'armor_plate', 3: 'potion*5', 4: 'scroll_normal*2', 5: 'ring_shadow', 6: 'crown_gold', 7: 'boots_wind~93', 8: 'potion_hi*3' };
     me.equipped = { weapon: 'sword_flame', armor: 'armor_leather', helmet: 'cap_leather' };
-    renderInvUI();
     $('invPanel').classList.add('open');
+    renderInvUI();
   }
   if (new URLSearchParams(location.search).get('panel') === 'tree') {
     me.gold = 5000; me.lv = 10;
@@ -9677,6 +9691,9 @@ function buildCreateUI(resolve) {
 const CLASS_KEYS = ['warrior', 'archer', 'rogue', 'mage'];
 const clsKr = c => (CLASSES[c] && CLASSES[c].name) || c;
 const dispName = (base, cls) => `${base}(${clsKr(cls)})`;
+const CLS_SUFFIX = new RegExp('\\((?:' + CLASS_KEYS.map(k => clsKr(k)).join('|') + ')\\)$'); /* '(전사)' 같은 직업 접미사만 — '(길드)' 등 사용자가 넣은 괄호는 보존 */
+const baseNameOf = p => (p && p.base) || String((p && p.name) || '').replace(CLS_SUFFIX, '') || '영웅';
+const nameOf = p => CLS_SUFFIX.test((p && p.name) || '') ? p.name : dispName(baseNameOf(p), (p && p.cls) || 'warrior'); /* 표시용 이름(직업) */
 function charIdOf(auth, cls, primaryCls) { return (!primaryCls || cls === primaryCls) ? auth : `${auth}__${cls}`; }
 /* 영웅 선택 화면 — 로그인 화면의 라인업을 재사용한다(직업별 레벨 표시, 없으면 '새 캐릭터') */
 function showCharSelect(chars, preferred) {
@@ -9700,7 +9717,7 @@ function showCharSelect(chars, preferred) {
       const k = el.dataset.cls;
       try { el.querySelector('img').src = heroPortrait(k); } catch (e) {}
       el.querySelector('span').textContent = clsKr(k);
-      el.onclick = () => { sel = k; selectedCls = k; paint(); };
+      el.onclick = () => { sel = k; selectedCls = k; try { localStorage.setItem('selCls', k); } catch (e2) {} paint(); };
       el.ondblclick = () => { sel = k; done(); };
     });
     const done = () => { scr.style.display = 'none'; resolve(sel); };
@@ -9723,7 +9740,8 @@ function pvpSetB(p) {
   return b;
 }
 function pvpStats(p) {
-  const cls = p.cls || 'warrior', C = CLASSES[cls] || CLASSES.warrior, b = pvpSetB(p);
+  const cls = CLASSES[p.cls] ? p.cls : 'warrior'; /* 상대 문서의 임의 문자열을 그대로 쓰지 않는다(초상화 폭주·XSS 방지) */
+  const C = CLASSES[cls], b = pvpSetB(p);
   const eq = f => Object.values(p.equipped || {}).reduce((a, id) => a + (getItem(id)[f] || 0), 0);
   const sLv = id => ((p.skills || {})[id] || 0) + (((p.skillEnh || {})[id]) || 0);
   const pass = f => Object.keys(SKILLS).reduce((a, id) => a + (SKILLS[id][f] || 0) * sLv(id), 0);
@@ -9731,11 +9749,12 @@ function pvpStats(p) {
   const hp = Math.round(C.hp + (lv - 1) * 10 + (p.stHp || 0) * 15 + b.hp);
   const atk = Math.round(((p.atk || C.atk) + (p.stAtk || 0) * 2 + eq('atk') + pass('atk') + b.atk) * (1 + b.atkMul));
   const def = Math.round(((p.stDef || 0) + eq('def') + pass('def') + b.def) * (1 + b.defMul));
-  const crit = Math.min(.9, C.crit + (p.stCrit || 0) * .01 + pass('crit') + eq('crit') + b.crit);
+  const crit = Math.min(.95, C.crit + (p.stCrit || 0) * .01 + pass('crit') + eq('crit') + b.crit);
   const critDmg = (1.6 + (p.stCritDmg || 0) * .06) * (1 + b.critDmgMul);
   const cd = C.atkCd * Math.max(.5, 1 - (p.stAspd || 0) * .02);
-  const skills = Object.keys(p.skills || {}).length;
-  return { name: p.name || '?', base: p.base || p.name || '?', cls, lv, hp, maxHp: hp,
+  const sk = Object.entries(p.skills || {}); /* 스킬 최고 레벨(강화 포함)까지 반영 — 예전엔 '있다/없다'만 봤다 */
+  const skills = sk.length ? Math.max(...sk.map(([id, l]) => (l || 0) + (((p.skillEnh || {})[id]) || 0))) : 0;
+  return { name: nameOf(p), base: baseNameOf(p), cls, lv, hp, maxHp: hp, takenMul: Math.min(.6, b.takenMul || 0),
     atk, def, crit, critDmg, cd, evade: Math.min(.35, (p.stEvade || 0) * .01), life: (p.stLife || 0) * .01,
     skillPow: 1 + (p.stWis || 0) * .03, skills, power: Math.round(atk * (1 + crit) * (1 + (p.stWis || 0) * .03)) };
 }
@@ -9743,7 +9762,7 @@ function pvpStats(p) {
 function pvpRng(seed) { let t = (seed >>> 0) || 1; return () => { t = (t + 0x6D2B79F5) >>> 0; let r = Math.imul(t ^ (t >>> 15), 1 | t); r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r; return ((r ^ (r >>> 14)) >>> 0) / 4294967296; }; }
 function pvpSim(A, B, seed) {
   const rng = pvpRng(seed);
-  const a = { ...A, hp: A.maxHp, next: 0, hits: 0 }, b = { ...B, hp: B.maxHp, next: A.cd * .15, hits: 0 };
+  const a = { ...A, hp: A.maxHp, next: 0, hits: 0 }, b = { ...B, hp: B.maxHp, next: B.cd * .15, hits: 0 };
   const log = [], frames = [];
   let t = 0;
   const swing = (x, y) => {
@@ -9751,8 +9770,8 @@ function pvpSim(A, B, seed) {
     const isSkill = x.skills > 0 && x.hits % 4 === 0; /* 4타마다 스킬 일격 */
     if (rng() < y.evade) { log.push({ t, s: x === a ? 'a' : 'b', txt: `${x.base}의 공격 — ${y.base} 회피!`, k: 'miss' }); return; }
     const crit = rng() < x.crit;
-    let dmg = x.atk * (.85 + rng() * .3) * (crit ? x.critDmg : 1) * (isSkill ? 1.6 * x.skillPow : 1);
-    dmg = Math.max(1, Math.round(dmg - y.def * (isSkill ? .5 : 1)));
+    let dmg = x.atk * (.85 + rng() * .3) * (crit ? x.critDmg : 1) * (isSkill ? (1.3 + Math.min(1.2, x.skills * .12)) * x.skillPow : 1);
+    dmg = Math.max(1, Math.round((dmg - y.def * (isSkill ? .5 : 1)) * (1 - (y.takenMul || 0))));
     y.hp = Math.max(0, y.hp - dmg);
     if (x.life) x.hp = Math.min(x.maxHp, x.hp + Math.round(dmg * x.life));
     log.push({ t, s: x === a ? 'a' : 'b', txt: `${x.base}${isSkill ? ' 스킬' : ''} ${crit ? '치명타 ' : ''}${dmg}`, k: crit ? 'crit' : isSkill ? 'skill' : 'hit' });
@@ -9772,13 +9791,14 @@ function pvpSim(A, B, seed) {
 }
 /* ---- 전적/보상 ---- */
 const pvpRec = () => me.pvp || { pts: 1000, win: 0, lose: 0, streak: 0, day: '', used: 0 };
+const pvpPts = r => (r && r.pts) ?? 1000; /* 0점도 0으로 (|| 1000 이면 0점이 1000으로 보였다) */
 function pvpLeft() { const r = pvpRec(); return r.day === todayStr() ? Math.max(0, PVP_DAILY - (r.used || 0)) : PVP_DAILY; }
 function pvpApply(won, opp) {
   const r = pvpRec(), today = todayStr();
   const used = (r.day === today ? (r.used || 0) : 0) + 1;
   const streak = won ? (r.streak || 0) + 1 : 0;
   const gain = won ? 20 + Math.min(20, (streak - 1) * 4) : -8;
-  const pts = Math.max(0, (r.pts || 1000) + gain);
+  const pts = Math.max(0, pvpPts(r) + gain);
   const gold = won ? 200 + (me.lv || 1) * 30 : 40;
   me.pvp = { pts, win: (r.win || 0) + (won ? 1 : 0), lose: (r.lose || 0) + (won ? 0 : 1), streak, day: today, used };
   updX(meRef, { pvp: me.pvp, gold: (me.gold || 0) + gold }).catch(() => {});
@@ -9792,43 +9812,60 @@ function renderPvp() {
   const r = pvpRec(), left = pvpLeft(), my = pvpStats({ ...me, cls: myCls, name: myName });
   const rows = pvpFoes.length ? pvpFoes.map((f, i) => {
     const s = f._st;
-    return `<div class="pvRow"><div class="pvWho"><b>${esc(/\([^)]*\)$/.test(f.name || '') ? f.name : dispName(f.base || f.name || '?', f.cls || 'warrior'))}</b>
-      <span>Lv${f.lv || 1} · ${(CLASSES[f.cls] && CLASSES[f.cls].icon) || ''} 전투력 ${s.power} · 점수 ${(f.pvp && f.pvp.pts) || 1000}</span></div>
+    return `<div class="pvRow"><div class="pvWho"><b>${esc(nameOf(f))}</b>
+      <span>Lv${f.lv || 1} · ${(CLASSES[f.cls] && CLASSES[f.cls].icon) || ''} 전투력 ${s.power} · 점수 ${pvpPts(f.pvp)}</span></div>
       <button data-foe="${i}" ${left > 0 ? '' : 'disabled'}>도전</button></div>`;
-  }).join('') : '<div class="pvEmpty">상대를 찾는 중…</div>';
-  body.innerHTML = `<div class="pvMe"><div><span>투기장 점수</span><b>${r.pts || 1000}</b></div><div><span>전적</span><b>${r.win || 0}승 ${r.lose || 0}패</b></div>
+  }).join('') : `<div class="pvEmpty">${esc(pvpFoeErr || '상대를 찾는 중…')}</div>`;
+  body.innerHTML = `<div class="pvMe"><div><span>투기장 점수</span><b>${pvpPts(r)}</b></div><div><span>전적</span><b>${r.win || 0}승 ${r.lose || 0}패</b></div>
       <div><span>연승</span><b>${r.streak || 0}</b></div><div><span>오늘 남은 도전</span><b>${left} / ${PVP_DAILY}</b></div></div>
     <div class="pvHint">내 전투력 <b>${my.power}</b> · 전투는 자동으로 진행됩니다. 승리 시 점수와 골드를 얻고, 연승할수록 점수가 더 오릅니다.</div>
     <div class="pvList">${rows}</div>`;
   body.querySelectorAll('[data-foe]').forEach(b => b.onclick = () => pvpFight(pvpFoes[+b.dataset.foe]));
 }
-async function pvpLoadFoes() {
-  try {
-    const snap = await getDocs(query(collection(db, 'players'), orderBy('lv', 'desc'), limit(40)));
-    const all = [];
-    snap.forEach(d => { if (d.id !== uid && !d.id.startsWith(authUid + '__') && d.id !== authUid) all.push({ ...d.data(), _id: d.id }); });
-    for (const f of all) f._st = pvpStats(f);
+let pvpFoeT = 0, pvpFoeErr = '';
+async function pvpLoadFoes(force) {
+  if (!uid || !authUid) return; /* 로그인 전 J키로 열린 경우 */
+  const mine = d => d._id === uid || d._id === authUid || String(d._id).startsWith(authUid + '__');
+  const pick = list => {
+    const all = list.filter(d => !mine(d));
+    for (const f of all) { try { f._st = pvpStats(f); } catch (e) { f._st = null; } }
     const myPow = pvpStats({ ...me, cls: myCls }).power || 1;
-    all.sort((x, y) => Math.abs(x._st.power - myPow) - Math.abs(y._st.power - myPow)); /* 전투력이 비슷한 순 */
-    pvpFoes = all.slice(0, 6);
-  } catch (e) { pvpFoes = []; }
+    const ok = all.filter(f => f._st);
+    ok.sort((x, y) => Math.abs(x._st.power - myPow) - Math.abs(y._st.power - myPow)); /* 전투력이 비슷한 순 */
+    return ok.slice(0, 6);
+  };
+  /* 랭킹 구독(rankCache)이 이미 같은 문서를 들고 있다 — 패널을 열 때마다 40건씩 다시 읽지 않는다 */
+  if (rankCache.length > 1) { pvpFoeErr = ''; pvpFoes = pick(rankCache); renderPvp(); return; }
+  if (offline) { pvpFoeErr = '로컬 모드에서는 상대를 불러올 수 없습니다'; pvpFoes = []; renderPvp(); return; }
+  if (!force && Date.now() - pvpFoeT < 60000) { renderPvp(); return; }
+  pvpFoeT = Date.now();
+  try {
+    const lv = me.lv || 1;
+    const snap = await getDocs(query(collection(db, 'players'), where('lv', '>=', Math.max(1, lv - 6)), where('lv', '<=', lv + 6), limit(30))); /* 내 레벨 주변만 */
+    const all = []; snap.forEach(d => all.push({ ...d.data(), _id: d.id }));
+    pvpFoes = pick(all); pvpFoeErr = pvpFoes.length ? '' : '비슷한 레벨의 상대가 아직 없습니다';
+  } catch (e) { pvpFoes = []; pvpFoeErr = '상대를 불러오지 못했습니다 — 잠시 후 다시 열어주세요'; }
   renderPvp();
 }
 function pvpFight(foe) {
   if (!foe || pvpBusy) return;
+  if (hordeOn()) { toast('🌀 쇄도 진행 중에는 투기장에 입장할 수 없습니다'); return; } /* 런 도중 다른 전투로 새는 것 방지 */
   if (pvpLeft() <= 0) { toast('오늘 도전 횟수를 모두 썼습니다 (매일 초기화)'); return; }
   pvpBusy = true;
   const A = pvpStats({ ...me, cls: myCls, name: myName, base: (me.base || myName) }), B = foe._st;
   const res = pvpSim(A, B, (Date.now() ^ (foe.lv || 1) * 2654435761) >>> 0);
   const won = res.win === 'a';
   const reward = pvpApply(won, foe);
-  pvpShow(A, B, res, won, reward);
-  renderPvp();
+  try { pvpShow(A, B, res, won, reward); }
+  catch (e) { pvpBusy = false; const el = document.getElementById('pvpPlay'); if (el) el.classList.remove('open'); toast('전투 재생 중 오류 — 결과는 반영되었습니다'); renderPvp(); }
 }
+let pvpGen = 0;
+function pvpClosePlay() { const el = document.getElementById('pvpPlay'); if (el) el.classList.remove('open'); pvpGen++; pvpBusy = false; renderPvp(); }
 function pvpShow(A, B, res, won, reward) {
+  const gen = ++pvpGen;
   const el = hordeEl('pvpPlay');
-  const bar = (side, st) => `<div class="pvSide"><img src="${heroPortrait(st.cls)}" alt=""><b>${esc(st.base)}</b><span>Lv${st.lv} · ${clsKr(st.cls)}</span>
-    <div class="pvHp"><i id="pvHp_${side}" style="width:100%"></i></div><em id="pvHpN_${side}">${st.maxHp}</em></div>`;
+  const bar = (side, st) => `<div class="pvSide"><img src="${heroPortrait(st.cls)}" alt=""><b>${esc(st.base)}</b><span>Lv${st.lv | 0} · ${esc(clsKr(st.cls))}</span>
+    <div class="pvHp"><i id="pvHp_${side}" style="width:100%"></i></div><em id="pvHpN_${side}">${st.maxHp | 0}</em></div>`;
   el.innerHTML = `<div class="pvBox"><h3>⚔ 투기장</h3><div class="pvVs">${bar('a', A)}<div class="pvX">VS</div>${bar('b', B)}</div>
     <div class="pvLog" id="pvLog"></div><div class="pvResult" id="pvResult"></div><button id="pvClose" style="display:none">확인</button></div>`;
   el.classList.add('open');
@@ -9837,6 +9874,7 @@ function pvpShow(A, B, res, won, reward) {
   const na = el.querySelector('#pvHpN_a'), nb = el.querySelector('#pvHpN_b');
   let i = 0;
   const step = () => {
+    if (gen !== pvpGen) return; /* 닫혔거나 다음 전투가 시작됨 */
     if (i >= res.log.length) return finish();
     const chunk = Math.max(1, Math.ceil(res.log.length / 24)); /* 로그가 길면 묶어서 재생 — 총 4초 내외 */
     for (let k = 0; k < chunk && i < res.log.length; k++, i++) {
@@ -9848,16 +9886,18 @@ function pvpShow(A, B, res, won, reward) {
     ha.style.width = (f.a * 100).toFixed(1) + '%'; hb.style.width = (f.b * 100).toFixed(1) + '%';
     na.textContent = Math.round(f.a * A.maxHp); nb.textContent = Math.round(f.b * B.maxHp);
     sfx('hit');
-    setTimeout(step, 160);
+    setTimeout(() => { try { step(); } catch (e) { pvpClosePlay(); } }, 160);
   };
   const finish = () => {
+    if (gen !== pvpGen) return;
     ha.style.width = (res.aHp / A.maxHp * 100).toFixed(1) + '%'; hb.style.width = (res.bHp / B.maxHp * 100).toFixed(1) + '%';
     na.textContent = res.aHp; nb.textContent = res.bHp;
     el.querySelector('#pvResult').innerHTML = `<div class="pvWin ${won ? 'w' : 'l'}">${won ? '승리!' : '패배'}${res.timeout ? ' <small>(시간 초과 — 남은 체력 판정)</small>' : ''}</div>
       <div class="pvGain">점수 ${reward.gain >= 0 ? '+' : ''}${reward.gain} → <b>${reward.pts}</b> · 골드 +${reward.gold}${reward.streak > 1 ? ` · <b>${reward.streak}연승</b>` : ''}</div>`;
     sfx(won ? 'levelup' : 'die');
     const cb = el.querySelector('#pvClose');
-    cb.style.display = ''; cb.onclick = () => { el.classList.remove('open'); pvpBusy = false; renderPvp(); };
+    cb.style.display = ''; cb.onclick = pvpClosePlay;
+    el.onclick = e => { if (e.target === el) pvpClosePlay(); }; /* 바깥 클릭으로도 닫힘 */
   };
   step();
 }
@@ -9890,7 +9930,7 @@ function waitForLoginClick() {
           el.querySelector('img').src = heroPortrait(k);
           el.querySelector('span').textContent = (CLASSES[k] && CLASSES[k].name) || k;
           el.classList.toggle('sel', k === selectedCls);
-          el.onclick = () => { selectedCls = k; scr.querySelectorAll('.lp').forEach(x => x.classList.toggle('sel', x === el)); setTitleArt('lgArt', k); };
+          el.onclick = () => { selectedCls = k; try { localStorage.setItem('selCls', k); } catch (e2) {} scr.querySelectorAll('.lp').forEach(x => x.classList.toggle('sel', x === el)); setTitleArt('lgArt', k); };
         } catch (e) { /* 초상화 실패해도 로그인은 진행 */
           el.querySelector('span').textContent = (CLASSES[el.dataset.cls] && CLASSES[el.dataset.cls].name) || el.dataset.cls;
         }
@@ -9981,45 +10021,53 @@ async function init() {
   googleName = user.displayName || '';
   /* 계정의 직업별 캐릭터를 모두 조회 — 처음 만든 캐릭터는 players/{uid}, 나머지는 players/{uid}__{cls} */
   const primaryRef = doc(db, 'players', authUid);
-  const primarySnap = await getDoc(primaryRef).catch(() => null);
-  const primary = primarySnap && primarySnap.exists() ? primarySnap.data() : null;
+  const loadFail = e => { /* 읽기 실패를 '캐릭터 없음'으로 오해하면 setDoc이 기존 캐릭터를 덮어쓴다 → 로그인을 중단하고 재시도를 안내 */
+    $('loading').style.display = '';
+    $('loading').innerHTML = '계정 정보를 불러오지 못했습니다: ' + esc((e && (e.code || e.message)) || e) +
+      '<br><br><a href="javascript:location.reload()" style="color:#7fc7ff">다시 시도</a>';
+  };
+  let primarySnap;
+  try { primarySnap = await getDoc(primaryRef); } catch (e) { loadFail(e); return; }
+  const primary = primarySnap.exists() ? primarySnap.data() : null;
   const primaryCls = primary ? (primary.cls || 'warrior') : null;
   const chars = {};
   if (primary) {
     chars[primaryCls] = primary;
     for (const k of CLASS_KEYS) {
       if (k === primaryCls) continue;
-      const sn = await getDoc(doc(db, 'players', `${authUid}__${k}`)).catch(() => null);
-      if (sn && sn.exists()) chars[k] = sn.data();
+      let sn; try { sn = await getDoc(doc(db, 'players', `${authUid}__${k}`)); } catch (e) { loadFail(e); return; }
+      if (sn.exists()) chars[k] = sn.data();
     }
   }
   /* 캐릭터가 하나도 없으면 생성 화면, 있으면 영웅 선택 화면 */
-  let pickCls = primary ? await showCharSelect(chars, selectedCls || primaryCls) : null;
+  try { const sc = localStorage.getItem('selCls'); if (sc && CLASS_KEYS.includes(sc)) selectedCls = sc; } catch (e) {} /* 리다이렉트 로그인으로 선택이 날아가는 것 방지 */
+  let pickCls = primary ? await showCharSelect(chars, chars[selectedCls] ? selectedCls : primaryCls) : null;
   uid = primary ? charIdOf(authUid, pickCls, primaryCls) : authUid;
   meRef = doc(db, 'players', uid);
 
-  const snap = primary ? (pickCls === primaryCls ? primarySnap : await getDoc(meRef)) : { exists: () => false };
+  let snap;
+  try { snap = (primary && pickCls === primaryCls) ? primarySnap : await getDoc(meRef); } catch (e) { loadFail(e); return; }
   if (!snap.exists()) {
     let baseName, cls;
-    if (primary) { baseName = primary.base || String(primary.name || '').replace(/\([^)]*\)$/, '') || '영웅'; cls = pickCls; } /* 다른 직업 캐릭터는 같은 이름으로 즉시 생성 */
+    if (primary) { baseName = baseNameOf(primary); cls = pickCls; } /* 다른 직업 캐릭터는 같은 이름으로 즉시 생성 */
     else { const choice = await showCreateUI(); baseName = choice.name; cls = choice.cls; uid = authUid; meRef = doc(db, 'players', uid); }
     myCls = cls;
     myName = dispName(baseName, cls);
     const c = CLASSES[cls];
-    await setDoc(meRef, {
+    try { await setDoc(meRef, {
       name: myName, base: baseName, cls, x: SPAWN.x, y: SPAWN.y,
       lv: 1, exp: 0, hp: c.hp, maxHp: c.hp, atk: c.atk,
       gold: 100, inv: {}, equipped: {}, skills: {}, q: {}, qc: {},
       dead: false, color: colorOf(uid), map: 'p1', conq: {}, dex: {}, statPts: 0, lastSeen: Date.now(), mp: maxMpOf(), gem: 0, achv: {}, title: '', daily: {},
-    });
+    }); } catch (e) { loadFail(e); return; }
     me = { ...me, cls, map: 'p1', gold: 100, hp: c.hp, maxHp: c.hp, atk: c.atk, lv: 1, exp: 0, inv: {}, equipped: {}, skills: {}, conq: {}, dex: {}, achv: {}, q: {}, statPts: 0, gem: 0, title: '' }; /* 스냅샷 도착 전 로컬 동기화 */
     await sysMsg(`${myName}님이 월드에 입장했습니다.`);
   } else {
     const d = snap.data();
     myCls = d.cls || 'warrior';
-    const baseName = d.base || String(d.name || '').replace(/\([^)]*\)$/, '') || '영웅';
+    const baseName = baseNameOf(d);
     myName = dispName(baseName, myCls); /* 표기 통일: 이름(직업) */
-    if (d.name !== myName || !d.base) updX(meRef, { name: myName, base: baseName }).catch(() => {}); /* 옛 캐릭터 이름 형식 업그레이드 */
+    var nameFix = (d.name !== myName || !d.base) ? { name: myName, base: baseName } : null; /* 옛 이름 형식 업그레이드 — 아래 로그인 1회 쓰기에 함께 실어 보낸다 */
     muted = !!d.muted;
     if (!d.cls) await updX(meRef, { cls: 'warrior' }).catch(() => {});
     /* 문서 전체를 지금 병합해야 아래 ensurePage/watchMonsters가 올바른 구역(me.map)을 본다
@@ -10034,7 +10082,7 @@ async function init() {
     restorePend(d); /* 이전 세션에서 서버에 못 올린 진행분(서버 lastSeen보다 새로울 때만) */
     await updX(meRef, { lastSeen: Date.now(), dead: false, ...(d.mp == null ? { mp: maxMpOf() } : {}) }).catch(() => {}); /* 한도 초과여도 로그인은 계속 */
     /* 로그인 1회 실제 서버 기록: 접속 시각·레벨·전투력 — 절약 모드에서는 보류 변경이 없으면 서버에 아무것도 안 실려 랭킹 ⚔이 옛값/0으로 남았다 */
-    withTimeout(updateDoc(meRef, { lastSeen: Date.now(), dead: false, lv: me.lv || 1, power: curPower() }), UPD_TIMEOUT).catch(() => {});
+    withTimeout(updateDoc(meRef, { lastSeen: Date.now(), dead: false, lv: me.lv || 1, power: curPower(), ...(nameFix || {}) }), UPD_TIMEOUT).catch(() => {});
     if (pendKeys.size) trySync(true);
   }
 

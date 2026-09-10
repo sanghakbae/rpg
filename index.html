@@ -6,6 +6,13 @@
 <title>바이브 아레나 — VIBE ARENA</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="바이브 아레나">
+<meta name="theme-color" content="#0c1018">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/assets/pwa/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/assets/pwa/icon-192.png">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: #000; touch-action: pan-x pan-y; /* 브라우저 핀치 확대 차단(패널 스크롤은 허용) */
@@ -654,6 +661,12 @@
       bottom: calc(62px + env(safe-area-inset-bottom)); max-height: none; z-index: 50; }
   }
 </style>
+<script>
+  /* PWA: 홈 화면에 설치해 전체화면으로 실행. 스프라이트를 캐시해 재접속 로딩을 크게 줄인다 */
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+  }
+</script>
 </head>
 <body>
 <canvas id="game"></canvas>
@@ -876,7 +889,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=157"
+<script type="module" src="game.js?v=159"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

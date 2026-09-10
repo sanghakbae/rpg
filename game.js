@@ -53,9 +53,9 @@ const STAT_DEFS = {
 const CLASS_ORDER = ['warrior', 'archer', 'rogue', 'mage'];
 
 const MONSTER_TYPES = {
-  slime:  { name: '슬라임', hp: 35,  atk: 6,  speed: 45,  exp: 12, gold: 15, r: 16, color: '#2ecc71', aggro: 160, respawn: 8000,  range: 42 },
-  goblin: { name: '고블린', hp: 70,  atk: 11, speed: 70,  exp: 28, gold: 35, r: 18, color: '#e67e22', aggro: 200, respawn: 9000,  range: 46 },
-  wolf:   { name: '늑대',   hp: 130, atk: 18, speed: 105, exp: 55, gold: 70, r: 20, color: '#95a5a6', aggro: 260, respawn: 10000, range: 50 },
+  slime:  { name: '슬라임', hp: 35,  atk: 6,  speed: 45,  exp: 12, gold: 15, r: 16, color: '#2ecc71', aggro: 160, respawn: 16000,  range: 42 },
+  goblin: { name: '고블린', hp: 70,  atk: 11, speed: 70,  exp: 28, gold: 35, r: 18, color: '#e67e22', aggro: 200, respawn: 18000,  range: 46 },
+  wolf:   { name: '늑대',   hp: 130, atk: 18, speed: 105, exp: 55, gold: 70, r: 20, color: '#95a5a6', aggro: 260, respawn: 20000, range: 50 },
 };
 const SPAWN_ZONES = [
   { type: 'slime',  count: 8, cx: 540,  cy: 430, spread: 150 },
@@ -63,7 +63,7 @@ const SPAWN_ZONES = [
   { type: 'wolf',   count: 5, cx: 1250, cy: 250, spread: 180 },
 ];
 const BOSS_DEF = { name: '오크 대족장', hp: 800, atk: 35, speed: 65, exp: 400, gold: 500, r: 42, color: '#c0392b', aggro: 420, respawn: 120000, range: 72 };
-const SKELETON_DEF = { name: '스켈레톤', hp: 220, atk: 26, speed: 75, exp: 90, gold: 110, r: 19, color: '#e8e4d8', aggro: 240, respawn: 12000, range: 50 };
+const SKELETON_DEF = { name: '스켈레톤', hp: 220, atk: 26, speed: 75, exp: 90, gold: 110, r: 19, color: '#e8e4d8', aggro: 240, respawn: 24000, range: 50 };
 const LICH_DEF = { name: '리치 왕', hp: 2000, atk: 55, speed: 55, exp: 1500, gold: 2500, r: 46, color: '#8b6bff', aggro: 460, respawn: 180000, range: 80 };
 const M2_ZONES = [
   { type: 'skeleton', count: 8, cx: 450, cy: 300, spread: 200 },
@@ -98,11 +98,11 @@ const KINDS = {
   archlich: { base: 'lich', name: '대마령', main: '#ff6b9a', shade: '#d43a6a' , fx: [["aura", "#ff6b9a"], ["crown", "#ff6b9a"]], th: 'abyss'},
 };
 const KIND_BASE = {
-  slime:    { hp: 35, atk: 6, exp: 12, gold: 15, r: 16, aggro: 160, speed: 45, respawn: 8000, range: 42 },
-  goblin:   { hp: 70, atk: 11, exp: 28, gold: 35, r: 18, aggro: 200, speed: 70, respawn: 9000, range: 46 },
-  wolf:     { hp: 130, atk: 18, exp: 55, gold: 70, r: 20, aggro: 260, speed: 105, respawn: 10000, range: 50 },
-  skeleton: { hp: 220, atk: 26, exp: 90, gold: 110, r: 19, aggro: 240, speed: 75, respawn: 12000, range: 50 },
-  orc:      { hp: 800, atk: 35, exp: 400, gold: 500, r: 42, aggro: 420, speed: 65, respawn: 120000, range: 72 },
+  slime:    { hp: 35, atk: 6, exp: 12, gold: 15, r: 16, aggro: 160, speed: 45, respawn: 16000, range: 42 },
+  goblin:   { hp: 70, atk: 11, exp: 28, gold: 35, r: 18, aggro: 200, speed: 70, respawn: 18000, range: 46 },
+  wolf:     { hp: 130, atk: 18, exp: 55, gold: 70, r: 20, aggro: 260, speed: 105, respawn: 20000, range: 50 },
+  skeleton: { hp: 220, atk: 26, exp: 90, gold: 110, r: 19, aggro: 240, speed: 75, respawn: 24000, range: 50 },
+  orc:      { hp: 800, atk: 35, exp: 400, gold: 500, r: 42, aggro: 420, speed: 65, respawn: 120000, range: 72 }, /* 보스는 정복 진행을 막지 않도록 기존 유지 */
   lich:     { hp: 2000, atk: 55, exp: 1500, gold: 2500, r: 46, aggro: 460, speed: 55, respawn: 180000, range: 80 },
 };
 /* ===== 구역별 몬스터 변형 시스템 =====
@@ -1569,6 +1569,83 @@ function kindSprId(k) {
   }
   return sprId;
 }
+/* 시트가 없을 때 쓰는 종별 실루엣 — 예전에는 정체를 알 수 없는 '초록 고블린 픽셀'이 27종에 공용으로 쓰여
+   도감이 같은 그림으로 도배되고 종마다 품질이 널뛰었다. 역할(체형)·비행 여부·구역 색조로 종마다 다른 형태를 그린다. */
+function silPath(g, role, fly, S, body, edge, dark) {
+  const cx = S / 2, gy = S * .86, u = S / 128; /* u: 128px 기준 배율 */
+  g.lineJoin = 'round'; g.lineCap = 'round';
+  const fill = p => { g.fillStyle = body; g.strokeStyle = edge; g.lineWidth = 2.4 * u; p(); g.fill(); g.stroke(); };
+  const ell = (x, y, rx, ry) => { g.beginPath(); g.ellipse(x, y, rx, ry, 0, 0, 7); };
+  /* 발밑 그림자 */
+  g.fillStyle = 'rgba(0,0,0,.28)'; ell(cx, gy + 4 * u, 30 * u, 9 * u); g.fill();
+  if (fly) { /* 날개 */
+    fill(() => { g.beginPath(); g.moveTo(cx - 14 * u, gy - 46 * u); g.quadraticCurveTo(cx - 54 * u, gy - 70 * u, cx - 46 * u, gy - 34 * u); g.quadraticCurveTo(cx - 32 * u, gy - 34 * u, cx - 14 * u, gy - 40 * u); g.closePath(); });
+    fill(() => { g.beginPath(); g.moveTo(cx + 14 * u, gy - 46 * u); g.quadraticCurveTo(cx + 54 * u, gy - 70 * u, cx + 46 * u, gy - 34 * u); g.quadraticCurveTo(cx + 32 * u, gy - 34 * u, cx + 14 * u, gy - 40 * u); g.closePath(); });
+  }
+  if (role === 'small') { /* 물렁한 덩어리 */
+    fill(() => { g.beginPath(); g.moveTo(cx - 30 * u, gy); g.quadraticCurveTo(cx - 34 * u, gy - 44 * u, cx, gy - 46 * u); g.quadraticCurveTo(cx + 34 * u, gy - 44 * u, cx + 30 * u, gy); g.closePath(); });
+  } else if (role === 'fast') { /* 네발 짐승 */
+    fill(() => { ell(cx + 2 * u, gy - 26 * u, 28 * u, 15 * u); });
+    fill(() => { ell(cx - 26 * u, gy - 34 * u, 13 * u, 11 * u); }); /* 머리 */
+    g.strokeStyle = body; g.lineWidth = 7 * u;
+    for (const dx of [-18, -6, 10, 22]) { g.beginPath(); g.moveTo(cx + dx * u, gy - 18 * u); g.lineTo(cx + (dx + 2) * u, gy - 2 * u); g.stroke(); }
+    g.lineWidth = 5 * u; g.beginPath(); g.moveTo(cx + 28 * u, gy - 30 * u); g.quadraticCurveTo(cx + 44 * u, gy - 40 * u, cx + 40 * u, gy - 52 * u); g.stroke(); /* 꼬리 */
+    fill(() => { g.beginPath(); g.moveTo(cx - 32 * u, gy - 44 * u); g.lineTo(cx - 28 * u, gy - 56 * u); g.lineTo(cx - 22 * u, gy - 44 * u); g.closePath(); }); /* 귀 */
+  } else { /* 인간형: mid / tank / boss */
+    const big = role === 'boss', tank = role === 'tank';
+    const w = big ? 26 : tank ? 24 : 18, hh = big ? 62 : tank ? 54 : 50;
+    g.strokeStyle = body; g.lineWidth = (big ? 9 : 7) * u; /* 다리 */
+    g.beginPath(); g.moveTo(cx - 9 * u, gy - 18 * u); g.lineTo(cx - 11 * u, gy - 2 * u); g.stroke();
+    g.beginPath(); g.moveTo(cx + 9 * u, gy - 18 * u); g.lineTo(cx + 11 * u, gy - 2 * u); g.stroke();
+    fill(() => { g.beginPath(); g.moveTo(cx - w * u, gy - 16 * u); g.lineTo(cx - (w - 4) * u, gy - hh * u); g.lineTo(cx + (w - 4) * u, gy - hh * u); g.lineTo(cx + w * u, gy - 16 * u); g.closePath(); }); /* 몸통 */
+    g.strokeStyle = body; g.lineWidth = (big ? 8 : 6) * u; /* 팔 */
+    g.beginPath(); g.moveTo(cx - (w - 2) * u, gy - (hh - 8) * u); g.lineTo(cx - (w + 8) * u, gy - 24 * u); g.stroke();
+    g.beginPath(); g.moveTo(cx + (w - 2) * u, gy - (hh - 8) * u); g.lineTo(cx + (w + 8) * u, gy - 24 * u); g.stroke();
+    fill(() => { ell(cx, gy - (hh + 12) * u, (big ? 17 : 14) * u, (big ? 16 : 13) * u); }); /* 머리 */
+    if (big || tank) { /* 뿔: 굵은 삼각 — 얇으면 화면에서 안 보인다 */
+      const hy = gy - (hh + 16) * u, hl = (big ? 20 : 15) * u;
+      fill(() => { g.beginPath(); g.moveTo(cx - 12 * u, hy); g.lineTo(cx - 12 * u - hl, hy - hl * .95); g.lineTo(cx - 4 * u, hy - 5 * u); g.closePath(); });
+      fill(() => { g.beginPath(); g.moveTo(cx + 12 * u, hy); g.lineTo(cx + 12 * u + hl, hy - hl * .95); g.lineTo(cx + 4 * u, hy - 5 * u); g.closePath(); });
+    }
+    if (big) { fill(() => { g.beginPath(); g.moveTo(cx - w * u, gy - (hh - 6) * u); g.lineTo(cx - (w + 12) * u, gy - 14 * u); g.lineTo(cx - (w - 2) * u, gy - 16 * u); g.closePath(); }); } /* 보스 망토 */
+  }
+  /* 눈 2개 — 미발견이면 생략해 '정체불명' 느낌 */
+  if (!dark) {
+    const ey = role === 'fast' ? gy - 36 * u : role === 'small' ? gy - 26 * u : gy - (role === 'boss' ? 76 : role === 'tank' ? 68 : 64) * u;
+    const ex = role === 'fast' ? cx - 26 * u : cx;
+    g.fillStyle = '#fff8d0';
+    ell(ex - 5 * u, ey, 3.2 * u, 3.6 * u); g.fill();
+    ell(ex + 5 * u, ey, 3.2 * u, 3.6 * u); g.fill();
+  }
+}
+const _silCache = {};
+function mobSilhouette(k, seen) {
+  const M = MOB_MODELS[k.base] || {};
+  const role = M.role || 'mid';
+  const hue = (((280 + (k.hue || 0)) % 360) + 360) % 360;
+  const ck = `${k.base}|${role}|${M.fly ? 1 : 0}|${Math.round(hue)}|${seen ? 1 : 0}`;
+  if (_silCache[ck]) return _silCache[ck];
+  const S = 128, c = document.createElement('canvas'); c.width = S; c.height = S;
+  const g = c.getContext('2d');
+  const body = seen ? `hsl(${hue},38%,46%)` : `hsl(${hue},22%,24%)`;
+  const edge = seen ? `hsl(${hue},52%,68%)` : `hsl(${hue},34%,40%)`;
+  silPath(g, role, !!M.fly, S, body, edge, !seen);
+  if (!seen) { g.fillStyle = 'rgba(255,255,255,.5)'; g.font = `bold ${Math.round(S * .3)}px sans-serif`; g.textAlign = 'center'; g.fillText('?', S / 2, S * .55); }
+  const url = c.toDataURL();
+  if (Object.keys(_silCache).length > 400) for (const k2 of Object.keys(_silCache).slice(0, 100)) delete _silCache[k2];
+  return (_silCache[ck] = url);
+}
+/* 인게임 폴백: 시트 도착 전에도 종별 실루엣으로 그린다(예전엔 전부 초록 고블린 픽셀) */
+function drawMobFallback(s, x, y, r) {
+  const d = sdef(s), M = MOB_MODELS[s.type] || {};
+  const hue = (((280 + (typeof s.def.hue === 'number' ? s.def.hue : 0)) % 360) + 360) % 360;
+  const S = r * 4.2;
+  ctx.save();
+  ctx.translate(x - S / 2, y - S * .86);
+  silPath(ctx, M.role || 'mid', !!M.fly, S, `hsl(${hue},34%,42%)`, `hsl(${hue},48%,64%)`, false);
+  ctx.restore();
+}
+
 const mobThumbCache = {};
 /* 도감 썸네일: VARCO 시트가 있으면 정면(d=2) 셀 + 변종 색조 회전, 없으면 픽셀 스프라이트 */
 function mobThumb(k, allowSheet = true) {
@@ -1589,9 +1666,12 @@ function mobThumb(k, allowSheet = true) {
       g.drawImage(sh.img, 2 * F, 0, F, F, S / 2 - F * kk / 2, S * .94 - m.feet * kk, F * kk, F * kk);
       return (mobThumbCache[ck] = c.toDataURL());
     }
-    const key = kindSprId(k);
-    if (!mobThumbCache[key]) mobThumbCache[key] = buildSprite(key).cv.toDataURL();
-    return mobThumbCache[key];
+    if (SPRITE_DEFS[k.base]) { /* 픽셀 원본이 실제로 있는 6종만 픽셀 폴백 */
+      const key = kindSprId(k);
+      if (!mobThumbCache[key]) mobThumbCache[key] = buildSprite(key).cv.toDataURL();
+      return mobThumbCache[key];
+    }
+    return mobSilhouette(k, allowSheet); /* 나머지는 종별 실루엣 */
   } catch (e) { return ''; }
 }
 function makeSim(id, d) {
@@ -5197,7 +5277,7 @@ function hordeSpawn() {
   const def = { ...base,
     hp: Math.max(6, Math.round(base.hp * hpM)), atk: Math.max(1, Math.round(base.atk * atkM)),
     exp: Math.max(1, Math.round(base.exp * (elite ? 2.5 : .40))), gold: Math.max(1, Math.round(base.gold * (elite ? 2.5 : .45))),
-    aggro: 4000, speed: Math.round(base.speed * (elite ? 1 : 1.18)), respawn: 999999 };
+    aggro: 4000, speed: Math.round(base.speed * (elite ? 1 : 1.18)), respawn: 1999998 };
   def.maxHp = def.hp;
   const a = rand(0, Math.PI * 2), rr = HORDE_R + rand(30, 90);
   const x = clampN(HORDE_C.x + Math.cos(a) * rr, 50, WORLD.w - 50), y = clampN(HORDE_C.y + Math.sin(a) * rr, 50, WORLD.h - 50);
@@ -6809,8 +6889,10 @@ function drawGenericMob(s, now) {
   ctx.beginPath(); ctx.ellipse(s.x, s.y + 10, r * (M.fly ? .7 : .95), r * (M.fly ? .26 : .36), 0, 0, 7); ctx.fill();
   if (s.uniq) uniqAura(s, now);
   const flash = s.hitFlash ? clampN(1 - (now - s.hitFlash) / 150, 0, 1) * .85 : 0;
-  if (!drawMobSheet(s, s.type, s.x, s.y + 11 - hover, { flash, bob: (s.movingF && !M.fly) ? Math.abs(Math.sin(now / 120 + (s.blink || 0))) * 3 : 0 }))
-    drawSprite(s.sprId || 'goblin', s.x, s.y + 11, s.uniq ? 5.6 : 4.5, { flash });
+  if (!drawMobSheet(s, s.type, s.x, s.y + 11 - hover, { flash, bob: (s.movingF && !M.fly) ? Math.abs(Math.sin(now / 120 + (s.blink || 0))) * 3 : 0 })) {
+    if (SPRITE_DEFS[s.type]) drawSprite(s.sprId || 'goblin', s.x, s.y + 11, s.uniq ? 5.6 : 4.5, { flash });
+    else drawMobFallback(s, s.x, s.y + 11 - hover, r * (s.uniq ? 1.15 : 1)); /* 시트 도착 전: 종별 실루엣(엉뚱한 고블린 금지) */
+  }
   drawKindExtras(s, now);
 }
 function mobUI(s, wide) {
@@ -9752,7 +9834,8 @@ async function init() {
   window.__PING = () => Promise.race([updateDoc(meRef, { lastSeen: Date.now() }).then(() => 'write-ok'), new Promise(r => setTimeout(() => r('write-timeout'), 8000))]).catch(e => 'write-error:' + (e.code || e.message)); /* 진단: 쓰기 채널 상태 */
   window.__MOB = async id => { const g = await getDoc(doc(db, 'monsters', id)); return g.exists() ? g.data() : null; };
   window.__give = async (id, slot = 17) => { await updX(meRef, { ['inv.' + slot]: id }); return 'ok'; }; /* 진단: 가방 슬롯에 아이템 넣기 */
-  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__tex = n => getTex(pageId(n)); window.__rank = () => rankCache; window.__horde = () => horde; window.__hordeStart = hordeStart; window.__hordeEnd = () => hordeEnd('clear'); window.__hordeSkip = ms => { if (horde) horde.left -= (ms || 60000); }; window.__waters = () => zoneWaters; window.__pageDef = pageDef; window.__view = () => ({ x: view.x, y: view.y, z: view.z, dpr }); window.__mkUniqAt = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; cam.x=s0.x; cam.y=s0.y; return {id:s0.id, kind:s0.kind, x:s0.x, y:s0.y}; }; window.__mkUniq = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; const me2=window.__me?me:me; me.x=s0.x; me.y=s0.y-80; cam.x=s0.x; cam.y=s0.y-40; return {id:s0.id, kind:s0.kind}; }; window.__useSkill = useSkill; window.__sheets2 = () => ({ total: Object.keys(HERO_SHEETS).length, mob: Object.keys(HERO_SHEETS).filter(k=>k.startsWith('mob_')&&HERO_SHEETS[k].img).length, wss: WSS, bioTex: bioTexCache.size }); window.__loadMob = base => heroSheet('mob_'+base); window.__openStats = openStats; window.__sortBag = sortBag; window.__toggleAuto = toggleAuto; window.__autoState = () => ({ auto: autoHunt, target: attackTargetSimId, dest, map: me.map, myMap: myMap(), nearLoot: (l => l ? { x: Math.round(l.x), y: Math.round(l.y), d: Math.round(Math.hypot(l.x - me.x, l.y - me.y)) } : null)(nearestLoot(280)) }); window.__clearTarget = () => { attackTargetSimId = null; dest = null; }; window.__auto = () => autoHunt; window.__settings = () => settings; window.__salvage = salvageBulk; window.__invRar = () => Object.entries(me.inv||{}).map(([k,v])=>({k, id:String(v).split(/[*~+]/)[0], rar:getItem(v).rarity, rank:RARITY_RANK[getItem(v).rarity]??0, slot:getItem(v).slot||'-'})); window.__claimAchv = claimAchv; window.__ownedTitles = ownedTitles; window.__paused = () => ({ paused, ready, dead: me.dead, wm: worldMapOpen() }); window.__unpause = () => { paused = false; }; window.__cdUntil = id => skillCdUntil[id]||0; window.__bound = boundId; window.__skillDef = skillDef; window.__mpc = id => { const d=skillDef(id); return d&&d.mp?mpCostOf(skillMp(id,d)):0; }; window.__castTree = castTreeSkill; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
+  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__uniqGrid = ns => ns.map(n => { const pd = pageDef(n); return { n, name: pd.kinds[0].name, base: pd.kinds[0].base, hue: pd.kinds[0].hue, thumb: mobThumb(pd.kinds[0]), boss: pd.boss.base, bossThumb: mobThumb(pd.boss) }; });
+window.__tex = n => getTex(pageId(n)); window.__rank = () => rankCache; window.__horde = () => horde; window.__hordeStart = hordeStart; window.__hordeEnd = () => hordeEnd('clear'); window.__hordeSkip = ms => { if (horde) horde.left -= (ms || 60000); }; window.__waters = () => zoneWaters; window.__pageDef = pageDef; window.__view = () => ({ x: view.x, y: view.y, z: view.z, dpr }); window.__mkUniqAt = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; cam.x=s0.x; cam.y=s0.y; return {id:s0.id, kind:s0.kind, x:s0.x, y:s0.y}; }; window.__mkUniq = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; const me2=window.__me?me:me; me.x=s0.x; me.y=s0.y-80; cam.x=s0.x; cam.y=s0.y-40; return {id:s0.id, kind:s0.kind}; }; window.__useSkill = useSkill; window.__sheets2 = () => ({ total: Object.keys(HERO_SHEETS).length, mob: Object.keys(HERO_SHEETS).filter(k=>k.startsWith('mob_')&&HERO_SHEETS[k].img).length, wss: WSS, bioTex: bioTexCache.size }); window.__loadMob = base => heroSheet('mob_'+base); window.__openStats = openStats; window.__sortBag = sortBag; window.__toggleAuto = toggleAuto; window.__autoState = () => ({ auto: autoHunt, target: attackTargetSimId, dest, map: me.map, myMap: myMap(), nearLoot: (l => l ? { x: Math.round(l.x), y: Math.round(l.y), d: Math.round(Math.hypot(l.x - me.x, l.y - me.y)) } : null)(nearestLoot(280)) }); window.__clearTarget = () => { attackTargetSimId = null; dest = null; }; window.__auto = () => autoHunt; window.__settings = () => settings; window.__salvage = salvageBulk; window.__invRar = () => Object.entries(me.inv||{}).map(([k,v])=>({k, id:String(v).split(/[*~+]/)[0], rar:getItem(v).rarity, rank:RARITY_RANK[getItem(v).rarity]??0, slot:getItem(v).slot||'-'})); window.__claimAchv = claimAchv; window.__ownedTitles = ownedTitles; window.__paused = () => ({ paused, ready, dead: me.dead, wm: worldMapOpen() }); window.__unpause = () => { paused = false; }; window.__cdUntil = id => skillCdUntil[id]||0; window.__bound = boundId; window.__skillDef = skillDef; window.__mpc = id => { const d=skillDef(id); return d&&d.mp?mpCostOf(skillMp(id,d)):0; }; window.__castTree = castTreeSkill; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
   window.__ITEMS = () => ({ items: Object.keys(ITEMS).length, sets: Object.keys(SETS).length, sample: Object.entries(ITEMS).filter(([k]) => /_b[0-9]$/.test(k)).slice(0, 3).map(([k, v]) => k + ':' + v.name) });
   window.__ZONETEX = n => { try { const t = getTex('p' + n); return { w: t.width, h: t.height, cols: (worldColliders['p' + n] || []).length }; } catch (e) { return { err: String(e && e.stack || e).slice(0, 300) }; } };
   window.__DBG = () => ({ page: myPage(), colliders: (worldColliders[myMap()] || []).length, frozenMs: hitStopUntil - Date.now(), activeIsChat: document.activeElement === chatInput, activeTag: document.activeElement && document.activeElement.tagName + '#' + document.activeElement.id, wmUp: worldMapOpen(), mouseDown, moveSpd: moveSpd(), atkRange: atkRange(), atkCdMs: atkCdOf(), sinceAtk: Date.now() - lastAttackAt, mapFading, snapN: window.__snapN || 0, snapAgoMs: window.__snapT ? Date.now() - window.__snapT : null, lastDmg: window.__lastDmg || null, lastErr: window.__lastErr || null, dead: !!me.dead, paused, ready, sheets: Object.fromEntries(Object.entries(HERO_SHEETS).map(([k, v]) => [k, v.img ? 'ok' : v.failed ? 'failed' : 'loading'])), target: attackTargetSimId, hover: hoverSimId, dest: dest && { x: Math.round(dest.x), y: Math.round(dest.y) }, zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),

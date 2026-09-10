@@ -2163,6 +2163,93 @@ function angLerp(a, b, t) {
 }
 /* ===== 자연스러운 이동: 속도 기반 가속/감속 + 도착 감속 + 회전 보간 =====
    me.vx/vy(픽셀/초)를 둬서 급출발·급정지를 없앰. dt 무관 시상수 방식 */
+/* ================= 길찾기 =================
+   클릭 이동이 직선이라 강·바위벽에 막혀 "강을 못 건넌다"는 문제가 있었다.
+   목적지까지 직선이 막혀 있으면 격자 BFS로 우회 경로(다리 등)를 찾아 웨이포인트를 따라 걷는다. */
+const NAV_G = 16, NAV_PAD = 13; /* 격자 16px, 플레이어 반경 여유 */
+const navGrids = {};
+function navGrid() {
+  const pid = myMap(), cols = worldColliders[pid] || [];
+  let g = navGrids[pid];
+  if (g && g.n === cols.length) return g;
+  const gw = Math.ceil(WORLD.w / NAV_G), gh = Math.ceil(WORLD.h / NAV_G);
+  const b = new Uint8Array(gw * gh);
+  for (const c of cols) {
+    const r = c.r + NAV_PAD;
+    const x0 = Math.max(0, Math.floor((c.x - r) / NAV_G)), x1 = Math.min(gw - 1, Math.ceil((c.x + r) / NAV_G));
+    const y0 = Math.max(0, Math.floor((c.y - r) / NAV_G)), y1 = Math.min(gh - 1, Math.ceil((c.y + r) / NAV_G));
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const dx = x * NAV_G + NAV_G / 2 - c.x, dy = y * NAV_G + NAV_G / 2 - c.y;
+      if (dx * dx + dy * dy < r * r) b[y * gw + x] = 1;
+    }
+  }
+  return (navGrids[pid] = { b, gw, gh, n: cols.length });
+}
+const navIdx = (g, x, y) => Math.min(g.gh - 1, Math.max(0, Math.floor(y / NAV_G))) * g.gw + Math.min(g.gw - 1, Math.max(0, Math.floor(x / NAV_G)));
+function navClear(x0, y0, x1, y1) { /* 두 점 사이가 뚫려 있나 */
+  const g = navGrid();
+  const d = Math.hypot(x1 - x0, y1 - y0), n = Math.max(1, Math.ceil(d / (NAV_G * .6)));
+  for (let i = 0; i <= n; i++) { const t = i / n; if (g.b[navIdx(g, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t)]) return false; }
+  return true;
+}
+function navFind(sx, sy, tx, ty) {
+  const g = navGrid();
+  const si = navIdx(g, sx, sy); let ti = navIdx(g, tx, ty);
+  if (g.b[ti]) { /* 목적지가 막혀 있으면 가장 가까운 빈 칸으로 */
+    let best = -1, bd = 1e9;
+    const cx = ti % g.gw, cy = (ti / g.gw) | 0;
+    for (let y = Math.max(0, cy - 8); y <= Math.min(g.gh - 1, cy + 8); y++) for (let x = Math.max(0, cx - 8); x <= Math.min(g.gw - 1, cx + 8); x++) {
+      const j = y * g.gw + x; if (g.b[j]) continue;
+      const dd = (x - cx) * (x - cx) + (y - cy) * (y - cy); if (dd < bd) { bd = dd; best = j; }
+    }
+    if (best < 0) return null;
+    ti = best;
+  }
+  if (si === ti) return null;
+  const prev = new Int32Array(g.gw * g.gh).fill(-1);
+  const q = new Int32Array(g.gw * g.gh); let head = 0, tail = 0;
+  q[tail++] = si; prev[si] = si;
+  while (head < tail) {
+    const i = q[head++];
+    if (i === ti) break;
+    const x = i % g.gw, y = (i / g.gw) | 0;
+    for (let k = 0; k < 4; k++) {
+      const nx = x + (k === 0 ? 1 : k === 1 ? -1 : 0), ny = y + (k === 2 ? 1 : k === 3 ? -1 : 0);
+      if (nx < 1 || ny < 1 || nx >= g.gw - 1 || ny >= g.gh - 1) continue;
+      const j = ny * g.gw + nx;
+      if (prev[j] >= 0 || g.b[j]) continue;
+      prev[j] = i; q[tail++] = j;
+    }
+  }
+  if (prev[ti] < 0) return null;
+  const pts = [];
+  for (let i = ti; i !== si; i = prev[i]) pts.push({ x: (i % g.gw) * NAV_G + NAV_G / 2, y: (((i / g.gw) | 0)) * NAV_G + NAV_G / 2 });
+  pts.reverse();
+  /* 시야 단순화: 건너뛸 수 있는 중간점 제거 */
+  const out = []; let cur = { x: sx, y: sy }, i2 = 0;
+  while (i2 < pts.length) {
+    let far = i2;
+    for (let j = pts.length - 1; j > i2; j--) { if (navClear(cur.x, cur.y, pts[j].x, pts[j].y)) { far = j; break; } }
+    out.push(pts[far]); cur = pts[far]; i2 = far + 1;
+  }
+  out.push({ x: tx, y: ty });
+  return out;
+}
+let navPath = null, navKey = '', navAt = 0;
+/* 목적지로 갈 다음 지점 — 직선이 뚫렸으면 그대로, 막혔으면 우회 경로의 다음 웨이포인트 */
+function navStep(tx, ty) {
+  if (navClear(me.x, me.y, tx, ty)) { navPath = null; return { x: tx, y: ty }; }
+  const key = Math.round(tx / 24) + ',' + Math.round(ty / 24) + '|' + myMap();
+  const now = Date.now();
+  if (!navPath || navKey !== key || now - navAt > 3000) {
+    navKey = key; navAt = now;
+    navPath = navFind(me.x, me.y, tx, ty);
+    if (!navPath || !navPath.length) { navPath = null; return { x: tx, y: ty }; }
+  }
+  while (navPath.length > 1 && Math.hypot(navPath[0].x - me.x, navPath[0].y - me.y) < 26) navPath.shift();
+  return navPath[0] || { x: tx, y: ty };
+}
+
 function glideToward(tx, ty, maxSpd, dt, arrive = 0) {
   const dx = tx - me.x, dy = ty - me.y;
   const d = Math.hypot(dx, dy);
@@ -3667,6 +3754,15 @@ function enhanceSkill(id) {
     else if (r === 'noscroll') toast('📜 강화 주문서가 없습니다');
   }).catch(() => {});
 }
+/* 강화 주문서 '탭 선택' — 모바일에서는 HTML5 드래그가 동작하지 않아 주문서를 장비에 끌어놓을 수 없었다.
+   주문서를 한 번 탭해 고른 뒤 장비(가방·장착칸)를 탭하면 강화 창이 열린다. 데스크톱 드래그는 그대로 동작. */
+let enhPick = null;
+function setEnhPick(raw) {
+  enhPick = raw;
+  document.querySelectorAll('#invGrid .islot').forEach(el => el.classList.toggle('picked', !!raw && el.dataset.raw === raw));
+  document.body.classList.toggle('enhPicking', !!raw);
+  if (raw) toast('📜 강화할 장비를 선택하세요 (주문서를 다시 누르면 취소)');
+}
 /* 강화 성공/실패 이펙트 (장비·스킬 공용) */
 function enhFxFx(ok) {
   let ov = $('enhFx');
@@ -3724,7 +3820,8 @@ function renderInvUI() {
         div.title = `${it.name} [${RARITY_KR[it.rarity] || '일반'}]\n${itemStat(it) || '소모품'}${sl ? '\n' + sl : ''}\n좌클릭: 장착/사용 · 우클릭: 강화/판매`; }
       let lastTap = 0;
       div.onclick = () => {
-        if (it.scroll) { toast('📜 주문서를 장비 위로 끌어다 놓으세요'); return; }
+        if (enhPick && !it.scroll && it.slot) { const sc = enhPick; setEnhPick(null); openEnhModal(sc, itemId); return; } /* 주문서 선택 후 장비 탭 = 강화 */
+        if (it.scroll) { setEnhPick(enhPick === itemId ? null : itemId); return; } /* 탭으로 선택(드래그 불가한 모바일용) */
         if (it.book) { const d = skillDef(it.book); toast(`${skillIconHtml(it.book, d)} <b>${esc(d ? d.name : it.book)}</b> 스킬서 — <b>더블 클릭</b>하면 스킬이 활성화됩니다`); return; }
         slotClick(itemId);
       };
@@ -3814,7 +3911,7 @@ function renderInvUI() {
       markSetGlow(div, itemId); /* 장착 슬롯 세트 네온 */
       const sl = it._base ? setLineFor(it._base) : '';
       div.title = `${it.name} [${RARITY_KR[it.rarity] || '일반'}]\n${itemStat(it)}${sl ? '\n' + sl : ''}\n클릭: 해제 · 우클릭: 강화`;
-      div.onclick = () => unequip(slot);
+      div.onclick = () => { if (enhPick && it.slot) { const sc = enhPick; setEnhPick(null); openEnhModal(sc, itemId); return; } unequip(slot); };
       div.oncontextmenu = e => { e.preventDefault(); showEnhMenu(e.clientX, e.clientY, itemId); };
     } else {
       div.innerHTML = `<span class="slbl">${label}</span><span style="color:#556">${SLOT_ICONS[slot]} -</span>`;
@@ -6074,30 +6171,52 @@ const sheetManifestP = fetch(`assets/sprites/manifest.json?v=${SHEET_VER}`).then
     for (const k of ['warrior', 'archer', 'rogue', 'mage']) { if (sheetManifest && sheetManifest.has(k)) heroSheet(k); /* 시트 로드 → 로드 완료 시 초상화 교체 */
       else { const el = document.querySelector(`#loginScreen .lp[data-cls="${k}"] img`); if (el) el.src = heroPortrait(k); } }
   } catch (e) {} });
+/* 시트 로딩: PNG 디코드를 메인 스레드 밖에서(createImageBitmap) 처리하고, 한 번에 한 장씩만 디코드한다.
+   예전에는 img.onload 뒤 곧바로 메인 스레드에서 디코드+절반 축소가 일어나 구역을 옮길 때마다 30~60ms씩 화면이 멈췄다. */
+let decodeChain = Promise.resolve();
+const decodeQueue = fn => (decodeChain = decodeChain.then(fn, fn));
+function sheetReady(key, e) { /* 로드 완료 후 후처리(기존과 동일) */
+  if (key.startsWith('mob_')) { try { evictSheets(); } catch (e2) {} if ($('dexPanel')?.classList.contains('open')) { try { renderDex(); } catch (err) {} } }
+  if (key.startsWith('prop_')) { try { onPropLoaded(); } catch (e3) {} }
+  if (!key.startsWith('mob_')) {
+    delete portraitCache[key];
+    const pel = document.querySelector(`#loginScreen .lp[data-cls="${key}"] img`);
+    if (pel) { try { pel.src = heroPortrait(key); } catch (err) {} }
+    for (const aid of ['lgArt', 'crArt']) { const a = document.getElementById(aid); if (a && a.dataset.cls === key) { try { setTitleArt(aid, key); } catch (err) {} } }
+  }
+}
 function loadSheet(key, e) {
+  const url = `assets/sprites/${key}.png?v=${SHEET_VER}`;
   fetch(`assets/sprites/${key}.json?v=${SHEET_VER}`).then(r => r.ok ? r.json() : Promise.reject(r.status)).then(meta => {
-    const img = new Image();
-    img.onload = () => {
-      if (innerWidth <= 640 && meta.fr > 256) { /* 모바일: 시트 절반 해상도 — 9장 72MB가 인앱 브라우저 메모리를 압박했다 */
+    const wantHalf = innerWidth <= 640 && meta.fr > 256; /* 모바일: 시트 절반 해상도(메모리) */
+    const legacy = () => new Promise((res, rej) => { /* createImageBitmap 미지원 브라우저 */
+      const img = new Image();
+      img.onload = () => {
+        if (!wantHalf) { e.img = img; e.meta = meta; return res(); }
         try {
-          const k = .5, c = document.createElement('canvas');
-          c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+          const c = document.createElement('canvas'); c.width = img.width >> 1; c.height = img.height >> 1;
           const g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(img, 0, 0, c.width, c.height);
-          meta = { ...meta, fr: meta.fr * k, top: meta.top * k, feet: meta.feet * k };
-          e.img = c; e.meta = meta;
+          e.img = c; e.meta = { ...meta, fr: meta.fr / 2, top: meta.top / 2, feet: meta.feet / 2 };
         } catch (err) { e.img = img; e.meta = meta; }
-      } else { e.img = img; e.meta = meta; }
-      if (key.startsWith('mob_')) { try { evictSheets(); } catch (e2) {} if ($('dexPanel')?.classList.contains('open')) { try { renderDex(); } catch (err) {} } } /* 로드 후 상한 초과분 제거 + 열린 도감 갱신 */
-      if (key.startsWith('prop_')) { try { onPropLoaded(); } catch (e3) {} } /* 배경 프롭 도착 → 현재 구역 지형 재구움 */
-      if (!key.startsWith('mob_')) { /* 로그인 초상화가 벡터로 먼저 그려졌으면 시트로 교체 */
-        delete portraitCache[key];
-        const pel = document.querySelector(`#loginScreen .lp[data-cls="${key}"] img`);
-        if (pel) { try { pel.src = heroPortrait(key); } catch (err) {} }
-        for (const aid of ['lgArt', 'crArt']) { const a = document.getElementById(aid); if (a && a.dataset.cls === key) { try { setTitleArt(aid, key); } catch (err) {} } } /* 타이틀 대형 아트 */
+        res();
+      };
+      img.onerror = rej;
+      img.src = url;
+    });
+    if (typeof createImageBitmap !== 'function') return legacy().then(() => sheetReady(key, e));
+    return fetch(url).then(r => r.ok ? r.blob() : Promise.reject(r.status)).then(blob => decodeQueue(async () => {
+      let bmp = await createImageBitmap(blob); /* 디코드: 메인 스레드 밖 */
+      let halved = false;
+      if (wantHalf) {
+        try {
+          const half = await createImageBitmap(bmp, { resizeWidth: bmp.width >> 1, resizeHeight: bmp.height >> 1, resizeQuality: 'high' });
+          if (half && half.width && half.width < bmp.width) { try { bmp.close(); } catch (err) {} bmp = half; halved = true; }
+        } catch (err) { /* 리사이즈 옵션 미지원(구형 Safari) → 원본 해상도 유지 */ }
       }
-    };
-    img.onerror = () => { e.failed = true; };
-    img.src = `assets/sprites/${key}.png?v=${SHEET_VER}`;
+      e.img = bmp;
+      e.meta = halved ? { ...meta, fr: meta.fr / 2, top: meta.top / 2, feet: meta.feet / 2 } : meta;
+      sheetReady(key, e);
+    })).catch(() => legacy().then(() => sheetReady(key, e)));
   }).catch(() => { e.failed = true; });
 }
 const SHEET_MOBILE = innerWidth <= 640;
@@ -6169,19 +6288,38 @@ function sheetRow(m, s, now) {
 }
 /* 색조 변형 시트 캐시 (base|hue → 캔버스). 구역당 최대 3종이라 LRU 6장이면 충분. Safari(캔버스 filter 미지원)는 원본 반환 */
 const hueSheetCache = new Map();
+const hueBakeQ = []; /* 굽는 중인 색조 시트 — 프레임마다 조금씩 나눠 굽는다 */
+/* 시트 전체(8~30MB)를 한 프레임에 색조 변환하면 아이폰에서 50ms 넘게 멈췄다(구역 이동·새 몬스터 등장 때마다).
+   → 캔버스만 먼저 만들고 가로 띠 단위로 여러 프레임에 나눠 굽는다. 다 구워지기 전에는 원본 시트를 그대로 쓴다. */
 function hueSheet(base, sh, dh) {
   const key = base + '|' + dh;
-  let c = hueSheetCache.get(key);
-  if (c) { hueSheetCache.delete(key); hueSheetCache.set(key, c); return c; }
+  const e = hueSheetCache.get(key);
+  if (e) {
+    hueSheetCache.delete(key); hueSheetCache.set(key, e);
+    return e.done ? e.c : sh.img;
+  }
+  let c, g;
   try {
     c = document.createElement('canvas'); c.width = sh.img.width; c.height = sh.img.height;
-    const g = c.getContext('2d');
+    g = c.getContext('2d');
     if (!('filter' in g)) return sh.img;
-    g.filter = `hue-rotate(${dh}deg)`; g.drawImage(sh.img, 0, 0);
-  } catch (e) { return sh.img; }
-  hueSheetCache.set(key, c);
-  while (hueSheetCache.size > 6) hueSheetCache.delete(hueSheetCache.keys().next().value);
-  return c;
+    g.filter = `hue-rotate(${dh}deg)`;
+  } catch (err) { return sh.img; }
+  const ent = { c, g, img: sh.img, y: 0, done: false };
+  hueSheetCache.set(key, ent);
+  hueBakeQ.push(ent);
+  while (hueSheetCache.size > 6) { const k0 = hueSheetCache.keys().next().value; const old = hueSheetCache.get(k0); hueSheetCache.delete(k0); const i = hueBakeQ.indexOf(old); if (i >= 0) hueBakeQ.splice(i, 1); }
+  return sh.img; /* 이번 프레임은 원본으로 */
+}
+const HUE_BAKE_PX = innerWidth <= 640 ? 400000 : 1600000; /* 프레임당 굽는 픽셀 수 — 모바일은 더 잘게 */
+function hueBakeStep() {
+  const e = hueBakeQ[0];
+  if (!e) return;
+  const rows = Math.max(16, Math.floor(HUE_BAKE_PX / Math.max(1, e.c.width)));
+  const h = Math.min(rows, e.c.height - e.y);
+  try { e.g.drawImage(e.img, 0, e.y, e.c.width, h, 0, e.y, e.c.width, h); } catch (err) { e.done = true; hueBakeQ.shift(); return; }
+  e.y += h;
+  if (e.y >= e.c.height) { e.done = true; hueBakeQ.shift(); }
 }
 /* 외곽선 텍스트: shadowBlur 텍스트는 글자마다 블러 패스를 돌려 모바일에서 프레임을 깎았다 → 스트로크 1회로 대체 */
 function outlinedText(txt, x, y, w = 3, col = 'rgba(0,0,0,.85)') {
@@ -9477,7 +9615,7 @@ function loopBody(t) {
       if (!s || !s.alive) { attackTargetSimId = null; brake(dt); }
       else if (Math.hypot(s.x - me.x, s.y - me.y) > atkRange()) {
         if (autoHunt) { if (!targetT0) targetT0 = now; else if (now - targetT0 > 8000) { simSkip[s.id] = now + 20000; attackTargetSimId = null; targetT0 = 0; } } /* 바위·연못 뒤 몬스터에 영원히 밀착하는 것 방지 */
-        glideToward(s.x, s.y, maxSpd, dt, 1);
+        const w = navStep(s.x, s.y); glideToward(w.x, w.y, maxSpd, dt, 0);
       }
       else { targetT0 = now; brake(dt); tryAttack(now, s); }
     } else if (dest) {
@@ -9487,7 +9625,7 @@ function loopBody(t) {
         dest = null; brake(dt);
       }
       else if (dd < 10 && !mouseDown) { dest = null; brake(dt); }
-      else glideToward(dest.x, dest.y, maxSpd, dt, 1);
+      else { const w = navStep(dest.x, dest.y); glideToward(w.x, w.y, maxSpd, dt, Math.hypot(w.x - dest.x, w.y - dest.y) < 1 ? 1 : 0); } /* 막혀 있으면 다리 등으로 우회 */
     } else brake(dt);
     /* 실제 속도로 걷기 판정 — 다리 모션·먼지가 속도와 동기화돼 밀림 현상 없음 */
     const spd = Math.hypot(me.vx, me.vy);
@@ -9579,6 +9717,7 @@ if (meRef) updX(meRef, { x: me.x, y: me.y, hp: me.hp, ...(me.mp != null ? { mp: 
 
   floats = floats.filter(f => (f.t += dt) < 1000);
   if (ready) { try { updateAmbient(now, dt); } catch (e) {} }
+  if (hueBakeQ.length) { try { hueBakeStep(); } catch (e) {} } /* 색조 시트를 조금씩 굽는다(한 번에 구우면 멈춘다) */
   try { hordeTick(now, dt); } catch (e) { window.__lastErr = { at: Date.now(), where: 'hordeTick', msg: String(e && e.message || e) }; }
   slashes = slashes.filter(s => (s.t += dt) < 180);
   bolts = bolts.filter(b => (b.t += dt) < b.max);
@@ -10122,7 +10261,7 @@ async function init() {
   window.__MOB = async id => { const g = await getDoc(doc(db, 'monsters', id)); return g.exists() ? g.data() : null; };
   window.__give = async (id, slot = 17) => { await updX(meRef, { ['inv.' + slot]: id }); return 'ok'; }; /* 진단: 가방 슬롯에 아이템 넣기 */
   window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__uniqGrid = ns => ns.map(n => { const pd = pageDef(n); return { n, name: pd.kinds[0].name, base: pd.kinds[0].base, hue: pd.kinds[0].hue, thumb: mobThumb(pd.kinds[0]), boss: pd.boss.base, bossThumb: mobThumb(pd.boss) }; });
-window.__tex = n => getTex(pageId(n)); window.__rank = () => rankCache; window.__horde = () => horde; window.__hordeStart = hordeStart; window.__hordeEnd = () => hordeEnd('clear'); window.__hordeSkip = ms => { if (horde) horde.left -= (ms || 60000); }; window.__waters = () => zoneWaters; window.__pageDef = pageDef; window.__view = () => ({ x: view.x, y: view.y, z: view.z, dpr }); window.__mkUniqAt = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; cam.x=s0.x; cam.y=s0.y; return {id:s0.id, kind:s0.kind, x:s0.x, y:s0.y}; }; window.__mkUniq = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; const me2=window.__me?me:me; me.x=s0.x; me.y=s0.y-80; cam.x=s0.x; cam.y=s0.y-40; return {id:s0.id, kind:s0.kind}; }; window.__useSkill = useSkill; window.__sheets2 = () => ({ total: Object.keys(HERO_SHEETS).length, mob: Object.keys(HERO_SHEETS).filter(k=>k.startsWith('mob_')&&HERO_SHEETS[k].img).length, wss: WSS, bioTex: bioTexCache.size }); window.__loadMob = base => heroSheet('mob_'+base); window.__openStats = openStats; window.__sortBag = sortBag; window.__toggleAuto = toggleAuto; window.__autoState = () => ({ auto: autoHunt, target: attackTargetSimId, dest, map: me.map, myMap: myMap(), nearLoot: (l => l ? { x: Math.round(l.x), y: Math.round(l.y), d: Math.round(Math.hypot(l.x - me.x, l.y - me.y)) } : null)(nearestLoot(280)) }); window.__clearTarget = () => { attackTargetSimId = null; dest = null; }; window.__auto = () => autoHunt; window.__settings = () => settings; window.__salvage = salvageBulk; window.__invRar = () => Object.entries(me.inv||{}).map(([k,v])=>({k, id:String(v).split(/[*~+]/)[0], rar:getItem(v).rarity, rank:RARITY_RANK[getItem(v).rarity]??0, slot:getItem(v).slot||'-'})); window.__claimAchv = claimAchv; window.__ownedTitles = ownedTitles; window.__paused = () => ({ paused, ready, dead: me.dead, wm: worldMapOpen() }); window.__unpause = () => { paused = false; }; window.__cdUntil = id => skillCdUntil[id]||0; window.__bound = boundId; window.__skillDef = skillDef; window.__mpc = id => { const d=skillDef(id); return d&&d.mp?mpCostOf(skillMp(id,d)):0; }; window.__castTree = castTreeSkill; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
+window.__tex = n => getTex(pageId(n)); window.__nav = (tx, ty) => navFind(me.x, me.y, tx, ty); window.__navStep = navStep; window.__cols = n => { getTex(pageId(n)); return worldColliders[pageId(n)] || []; }; window.__rank = () => rankCache; window.__horde = () => horde; window.__hordeStart = hordeStart; window.__hordeEnd = () => hordeEnd('clear'); window.__hordeSkip = ms => { if (horde) horde.left -= (ms || 60000); }; window.__waters = () => zoneWaters; window.__pageDef = pageDef; window.__view = () => ({ x: view.x, y: view.y, z: view.z, dpr }); window.__mkUniqAt = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; cam.x=s0.x; cam.y=s0.y; return {id:s0.id, kind:s0.kind, x:s0.x, y:s0.y}; }; window.__mkUniq = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; const me2=window.__me?me:me; me.x=s0.x; me.y=s0.y-80; cam.x=s0.x; cam.y=s0.y-40; return {id:s0.id, kind:s0.kind}; }; window.__useSkill = useSkill; window.__sheets2 = () => ({ total: Object.keys(HERO_SHEETS).length, mob: Object.keys(HERO_SHEETS).filter(k=>k.startsWith('mob_')&&HERO_SHEETS[k].img).length, wss: WSS, bioTex: bioTexCache.size }); window.__loadMob = base => heroSheet('mob_'+base); window.__openStats = openStats; window.__sortBag = sortBag; window.__toggleAuto = toggleAuto; window.__autoState = () => ({ auto: autoHunt, target: attackTargetSimId, dest, map: me.map, myMap: myMap(), nearLoot: (l => l ? { x: Math.round(l.x), y: Math.round(l.y), d: Math.round(Math.hypot(l.x - me.x, l.y - me.y)) } : null)(nearestLoot(280)) }); window.__clearTarget = () => { attackTargetSimId = null; dest = null; }; window.__auto = () => autoHunt; window.__settings = () => settings; window.__salvage = salvageBulk; window.__invRar = () => Object.entries(me.inv||{}).map(([k,v])=>({k, id:String(v).split(/[*~+]/)[0], rar:getItem(v).rarity, rank:RARITY_RANK[getItem(v).rarity]??0, slot:getItem(v).slot||'-'})); window.__claimAchv = claimAchv; window.__ownedTitles = ownedTitles; window.__paused = () => ({ paused, ready, dead: me.dead, wm: worldMapOpen() }); window.__unpause = () => { paused = false; }; window.__cdUntil = id => skillCdUntil[id]||0; window.__bound = boundId; window.__skillDef = skillDef; window.__mpc = id => { const d=skillDef(id); return d&&d.mp?mpCostOf(skillMp(id,d)):0; }; window.__castTree = castTreeSkill; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
   window.__ITEMS = () => ({ items: Object.keys(ITEMS).length, sets: Object.keys(SETS).length, sample: Object.entries(ITEMS).filter(([k]) => /_b[0-9]$/.test(k)).slice(0, 3).map(([k, v]) => k + ':' + v.name) });
   window.__ZONETEX = n => { try { const t = getTex('p' + n); return { w: t.width, h: t.height, cols: (worldColliders['p' + n] || []).length }; } catch (e) { return { err: String(e && e.stack || e).slice(0, 300) }; } };
   window.__DBG = () => ({ page: myPage(), colliders: (worldColliders[myMap()] || []).length, frozenMs: hitStopUntil - Date.now(), activeIsChat: document.activeElement === chatInput, activeTag: document.activeElement && document.activeElement.tagName + '#' + document.activeElement.id, wmUp: worldMapOpen(), mouseDown, moveSpd: moveSpd(), atkRange: atkRange(), atkCdMs: atkCdOf(), sinceAtk: Date.now() - lastAttackAt, mapFading, snapN: window.__snapN || 0, snapAgoMs: window.__snapT ? Date.now() - window.__snapT : null, lastDmg: window.__lastDmg || null, lastErr: window.__lastErr || null, dead: !!me.dead, paused, ready, sheets: Object.fromEntries(Object.entries(HERO_SHEETS).map(([k, v]) => [k, v.img ? 'ok' : v.failed ? 'failed' : 'loading'])), target: attackTargetSimId, hover: hoverSimId, dest: dest && { x: Math.round(dest.x), y: Math.round(dest.y) }, zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),

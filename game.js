@@ -4395,6 +4395,7 @@ const cv = $('game'), ctx = cv.getContext('2d');
 const mm = $('minimap'), mctx = mm.getContext('2d');
 /* 백버퍼를 기기 픽셀비만큼 키워 렌더 — cvW/cvH는 CSS 픽셀 기준(기존 코드 의미 유지) */
 let dpr = 1, cvW = 0, cvH = 0, resizeT = 0;
+let WSS = 2; /* 지형 텍스처 배율 — 아래 calcWSS()가 해상도에 맞춰 정하고, resize마다 갱신된다(함수 선언은 호이스팅되므로 첫 resize에서도 안전) */
 function resize() {
   const mob = innerWidth <= 640;
   let d = Math.min(devicePixelRatio || 1, mob ? 2 : 3);
@@ -4405,6 +4406,7 @@ function resize() {
   const W = Math.round(innerWidth * d), H = Math.round(innerHeight * d);
   if (W === cv.width && H === cv.height && d === dpr) { cvW = innerWidth; cvH = innerHeight; return; } /* 치수 동일 → 재할당 생략 */
   dpr = d; cvW = innerWidth; cvH = innerHeight;
+  { const nw = calcWSS(); if (nw !== WSS) { WSS = nw; try { bioTexCache.clear(); worldColliders[myMap()] = null; } catch (e) {} } } /* 해상도가 바뀌면 지형 텍스처 배율도 따라간다(최초 resize는 캐시가 아직 없어 catch로 넘어간다) */
   cv.width = W; cv.height = H;
   cv.style.width = cvW + 'px'; cv.style.height = cvH + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -4412,10 +4414,18 @@ function resize() {
 /* 핀치/회전 중 resize가 연속으로 터지면 매번 백버퍼를 재할당해 멈춤 → 120ms 디바운스 */
 addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(resize, 120); });
 resize();
+WSS = calcWSS();
 
 /* ================= 월드 텍스처 (프리렌더) ================= */
 /* 지형 텍스처 슈퍼샘플링 배율 — 확대/레티나에서 나무·바위·길이 뭉개지지 않게 원본을 크게 굽는다 */
-const WSS = innerWidth <= 640 ? 1.0 : (innerWidth >= 1500 ? 2.75 : 2); /* 넓은 화면은 월드(1600px)를 화면 가득 늘려 보여 2배 텍스처로는 texel이 모자랐다 → 2.75배(메모리는 아래 texCap 1장으로 상쇄) */
+/* 지형 텍스처 배율: '지금 플레이 중인 해상도'에 맞춘다.
+   월드(1600px)를 화면 가로에 꽉 채워 보여주므로 필요한 텍셀 = 화면 가로 실제 픽셀(innerWidth × 배율).
+   창을 키우거나 줄이면 resize에서 다시 계산해 지형을 새로 굽는다(예전엔 시작 시점 값에 고정돼, 폰 크기로 열었다 최대화하면 계속 흐릿했다). */
+function calcWSS() {
+  if (innerWidth <= 640) return 1.0; /* 모바일: 월드를 축소해 보여 1.0으로 충분(메모리 우선) */
+  const need = (innerWidth * Math.min(devicePixelRatio || 1, 3)) / WORLD.w;
+  return clampN(Math.ceil(need * 4) / 4, 1.5, 2.75); /* 0.25 단위 올림 — 텍셀이 화면 픽셀보다 모자라지 않게(내림하면 살짝 흐려진다) */
+}
 const worldTex = document.createElement('canvas');
 worldTex.width = Math.round(WORLD.w * WSS); worldTex.height = Math.round(WORLD.h * WSS);
 
@@ -5047,10 +5057,12 @@ function getTex(mp) {
   if (!m) return worldTex;
   const n = +m[1];
   let t = bioTexCache.get(n);
+  if (t && t.wss !== WSS) { bioTexCache.delete(n); t = null; } /* 창 크기가 바뀌어 배율이 달라졌으면 다시 굽는다 */
   if (!t) {
     t = buildZoneWorld(n); /* 구역별 지형(팔레트·물·장식·충돌체) */
     bioTexCache.set(n, t);
     const texCap = (innerWidth <= 640 || WSS > 2) ? 1 : 2; while (bioTexCache.size > texCap) { const old = bioTexCache.keys().next().value; bioTexCache.delete(old); } /* 모바일·고배율 텍스처는 1장만 캐시(메모리 상쇄) */
+    t.wss = WSS;
   }
   return t;
 }

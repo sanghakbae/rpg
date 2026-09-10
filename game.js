@@ -9051,7 +9051,7 @@ function loopBody(t) {
     ctx.fillStyle = '#8899aa';
     ctx.font = '16px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('⚔ 룬 크로니클 ⚔', cvW / 2, cvH / 2 - 12);
+    ctx.fillText('⚔ 바이브 아레나 ⚔', cvW / 2, cvH / 2 - 12);
     ctx.fillStyle = '#556';
     ctx.font = '12px sans-serif';
     ctx.fillText('연결 중...', cvW / 2, cvH / 2 + 12);
@@ -9317,7 +9317,7 @@ function waitForLoginClick() {
       scr = document.createElement('div');
       scr.id = 'loginScreen';
       scr.innerHTML = '<div class="lgBg"><div class="lgStars"></div><div class="lgFog"></div><img class="lgArt" id="lgArt" alt=""><div class="lgVig"></div></div>'
-      + '<div class="lgTop"><div class="lgEyebrow">RUNE CHRONICLE</div><h1>룬 크로니클</h1><div class="sub">룬의 대륙 · 100개 구역을 정복하라</div></div>'
+      + '<div class="lgTop"><div class="lgEyebrow">VIBE ARENA</div><h1>바이브 아레나</h1><div class="sub">영웅들의 무대 · 100개 구역을 정복하라</div></div>'
       + '<div class="lgBottom"><div class="party">'
       + ['warrior', 'archer', 'rogue', 'mage'].map(k => `<div class="lp" data-cls="${k}"><img alt=""><span></span></div>`).join('')
       + '</div><div class="lphint">영웅을 고르면 캐릭터 생성에 반영됩니다</div><button id="googleLoginBtn">🅶 Google로 계속하기</button></div>';

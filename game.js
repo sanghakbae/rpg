@@ -4398,8 +4398,9 @@ let dpr = 1, cvW = 0, cvH = 0, resizeT = 0;
 function resize() {
   const mob = innerWidth <= 640;
   let d = Math.min(devicePixelRatio || 1, mob ? 2 : 3);
-  /* 백버퍼 픽셀 예산: 모바일 2.4M / 데스크톱 9M — 초과하면 배율을 낮춰 인앱 브라우저 메모리 멈춤 방지 */
-  const budget = mob ? 2.4e6 : 9e6;
+  /* 백버퍼 픽셀 예산: 모바일 2.4M / 데스크톱 16M — 초과하면 배율을 낮춰 인앱 브라우저 메모리 멈춤 방지.
+     9M이던 시절엔 2K 이상 창(레티나)에서 배율이 2→1.75/1.5로 깎여 화면 전체가 흐릿하게 확대됐다. UI는 CSS px 기준이라 크기 변화 없음 */
+  const budget = mob ? 2.4e6 : 16e6;
   while (d > 1 && innerWidth * innerHeight * d * d > budget) d = Math.max(1, d - .25);
   const W = Math.round(innerWidth * d), H = Math.round(innerHeight * d);
   if (W === cv.width && H === cv.height && d === dpr) { cvW = innerWidth; cvH = innerHeight; return; } /* 치수 동일 → 재할당 생략 */
@@ -4414,7 +4415,7 @@ resize();
 
 /* ================= 월드 텍스처 (프리렌더) ================= */
 /* 지형 텍스처 슈퍼샘플링 배율 — 확대/레티나에서 나무·바위·길이 뭉개지지 않게 원본을 크게 굽는다 */
-const WSS = innerWidth <= 640 ? 1.0 : 2; /* 모바일은 화면을 축소(z≈0.48)해 보여 1.0으로 충분 — 1.5는 지형 텍스처 메모리만 55% 더 먹었다 */
+const WSS = innerWidth <= 640 ? 1.0 : (innerWidth >= 1500 ? 2.75 : 2); /* 넓은 화면은 월드(1600px)를 화면 가득 늘려 보여 2배 텍스처로는 texel이 모자랐다 → 2.75배(메모리는 아래 texCap 1장으로 상쇄) */
 const worldTex = document.createElement('canvas');
 worldTex.width = Math.round(WORLD.w * WSS); worldTex.height = Math.round(WORLD.h * WSS);
 
@@ -5049,7 +5050,7 @@ function getTex(mp) {
   if (!t) {
     t = buildZoneWorld(n); /* 구역별 지형(팔레트·물·장식·충돌체) */
     bioTexCache.set(n, t);
-    const texCap = innerWidth <= 640 ? 1 : 2; while (bioTexCache.size > texCap) { const old = bioTexCache.keys().next().value; bioTexCache.delete(old); } /* 모바일은 지형 텍스처 1개만 캐시 */
+    const texCap = (innerWidth <= 640 || WSS > 2) ? 1 : 2; while (bioTexCache.size > texCap) { const old = bioTexCache.keys().next().value; bioTexCache.delete(old); } /* 모바일·고배율 텍스처는 1장만 캐시(메모리 상쇄) */
   }
   return t;
 }

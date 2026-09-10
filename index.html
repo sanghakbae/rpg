@@ -403,6 +403,55 @@
   .stbtn.rec { outline: 1.5px solid #ffd700; box-shadow: 0 0 7px rgba(255,215,0,.45); } /* 직업 추천 스탯 */
   #stBtns { display: contents; } /* 버튼들이 statPtsRow flex에 직접 참여 */
 
+
+  /* 쇄도(생존 웨이브) */
+  .hdIntro { font-size: 12.5px; color: #b9c2d0; line-height: 1.6; margin-bottom: 10px; }
+  .hdRec { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+  .hdRec div { background: rgba(255,255,255,.04); border: 1px solid #2c3444; border-radius: 6px; padding: 7px 9px; }
+  .hdRec span { display: block; font-size: 10.5px; color: #7d879a; margin-bottom: 2px; }
+  .hdRec b { font-size: 15px; color: #ffd700; }
+  .hdRules { font-size: 11.5px; color: #8b93a4; line-height: 1.75; margin: 0 0 12px; padding-left: 16px; }
+  .hdRules li { list-style: '· '; }
+  .hdGo { width: 100%; padding: 11px; font-size: 14px; font-weight: bold; border-radius: 7px; color: #fff;
+    background: linear-gradient(#c0392b, #7b241c); box-shadow: 0 0 12px rgba(231,76,60,.35); }
+  .hdGo:disabled { background: #333a49; color: #7d879a; box-shadow: none; cursor: default; }
+  #hordeHud { display: none; position: fixed; left: 50%; transform: translateX(-50%); top: 10px; z-index: 40;
+    background: rgba(12,16,24,.82); border: 1px solid #6b2230; border-radius: 10px; padding: 7px 14px 8px; min-width: 260px;
+    box-shadow: 0 0 18px rgba(200,40,40,.28); pointer-events: none; }
+  .hhTop { display: flex; align-items: baseline; gap: 10px; justify-content: center; font-size: 11.5px; color: #aab2c0; }
+  .hhTop .hhT { font-size: 19px; color: #ff6b5a; letter-spacing: 1px; font-variant-numeric: tabular-nums; }
+  .hhBar { height: 3px; background: #2a3040; border-radius: 2px; margin: 6px 0 5px; overflow: hidden; }
+  .hhBar i { display: block; height: 100%; background: linear-gradient(90deg, #f2c94c, #ff7043); }
+  .hhBuffs { display: flex; flex-wrap: wrap; gap: 4px 7px; justify-content: center; font-size: 12px; color: #e6e9f0; }
+  .hhBuffs em { font-style: normal; } .hhBuffs em b { font-size: 10px; color: #ffd700; }
+  .hhNone { font-size: 10.5px; color: #6b7385; }
+  #hordePick, #hordeEnd { display: none; position: fixed; inset: 0; z-index: 120; background: rgba(6,9,14,.78);
+    align-items: center; justify-content: center; }
+  #hordePick.open, #hordeEnd.open { display: flex; }
+  .hpBox, .heBox { background: #141a25; border: 1px solid #3a4256; border-radius: 12px; padding: 18px 20px; max-width: 92vw; }
+  .hpBox h3, .heBox h3 { font-size: 16px; color: #ffd700; margin-bottom: 14px; text-align: center; }
+  .hpBox h3 small { color: #7d879a; font-size: 11px; font-weight: normal; margin-left: 6px; }
+  .hpCards { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+  .hpCard { width: 150px; padding: 16px 12px; border-radius: 10px; border: 1px solid #3a4256; background: linear-gradient(#1d2534, #161c28);
+    display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+  .hpCard:hover { border-color: #ffd700; transform: translateY(-3px); box-shadow: 0 6px 18px rgba(255,215,0,.18); }
+  .hpCard i { font-size: 30px; font-style: normal; }
+  .hpCard b { font-size: 13.5px; color: #fff; }
+  .hpCard span { font-size: 11.5px; color: #99a2b3; line-height: 1.45; }
+  .heBox { width: 300px; text-align: center; }
+  .heTime { font-size: 30px; color: #ff8a65; font-variant-numeric: tabular-nums; margin-bottom: 12px; }
+  .heTime b { font-size: 12px; color: #ffd700; display: block; margin-top: 2px; }
+  .heBox ul { list-style: none; margin-bottom: 14px; }
+  .heBox li { display: flex; justify-content: space-between; font-size: 12.5px; color: #98a1b2; padding: 5px 2px; border-bottom: 1px solid #232a38; }
+  .heBox li b { color: #ffd700; }
+  .heBox li small { color: #6b7385; }
+  #heClose { width: 100%; padding: 10px; border-radius: 7px; background: #2b3547; color: #dfe4ee; font-size: 13px; }
+  #heClose:hover { background: #3a4658; }
+  @media (max-width: 640px) {
+    .hpCard { width: 88px; padding: 12px 6px; } .hpCard i { font-size: 22px; } .hpCard b { font-size: 11.5px; } .hpCard span { font-size: 10px; }
+    #hordeHud { top: 96px; min-width: 210px; padding: 5px 10px 6px; } .hhTop .hhT { font-size: 16px; }
+  }
+
   /* 랭킹 */
   #rankPanel { position: fixed; right: 12px; top: 148px; width: 185px; z-index: 10; padding: 9px 11px; }
   #rankPanel h3 { font-size: 11px; color: #aaa; margin-bottom: 6px; letter-spacing: 1px; cursor: pointer; }
@@ -517,7 +566,7 @@
     /* 좌측 아이콘 → 모바일에서는 스킬창(핫바) 바로 위 가로 한 줄로 배치 */
     #dockL { left: 0; right: 0; top: auto; bottom: calc(72px + env(safe-area-inset-bottom)); transform: none;
       flex-direction: row; justify-content: center; gap: 5px; padding: 0 6px; }
-    #dockL button { width: calc((100vw - 60px) / 8); max-width: 52px; height: auto; aspect-ratio: 1; gap: 1px;
+    #dockL button { width: calc((100vw - 56px) / 9); max-width: 52px; height: auto; aspect-ratio: 1; gap: 1px;
       font-size: min(26px, 6.2vw); border-radius: 12px; }
     #dockL .dki { width: 58%; }
     #dockL button span { font-size: 8px; } #dockL button span kbd { display: none; }
@@ -596,6 +645,7 @@
   <button data-p="worldMap" title="세계지도 [V]"><i class="dki" style="--i:url(assets/icons/ui/treasure-map.svg)"></i><span>지도<kbd>V</kbd></span></button>
   <button data-p="dexPanel" title="도감 [C]"><i class="dki" style="--i:url(assets/icons/ui/open-book.svg)"></i><span>도감<kbd>C</kbd></span></button>
   <button data-p="achvPanel" title="업적 [G]"><i class="dki" style="--i:url(assets/icons/ui/trophy.svg)"></i><span>업적<kbd>G</kbd></span><em class="dkbadge" id="achvBadge" hidden></em></button>
+  <button data-p="hordePanel" title="쇄도 [K]"><i class="dki" style="--i:url(assets/icons/ui/round-star.svg)"></i><span>쇄도<kbd>K</kbd></span></button>
   <button data-p="chat" title="채팅 [L]"><i class="dki" style="--i:url(assets/icons/ui/chat-bubble.svg)"></i><span>채팅<kbd>L</kbd></span></button>
 </div>
 <div id="modalDim"></div>
@@ -610,6 +660,11 @@
 <div id="shopPanel" class="sidepanel panel">
   <header><b>⚔ 스킬 샵</b><span id="shopGold" class="hgold">💰 0 G</span><button data-close="shopPanel">✕</button></header>
   <div class="spbody" id="shopBody"></div>
+</div>
+
+<div id="hordePanel" class="sidepanel panel">
+  <header><b>🌀 쇄도</b><button data-close="hordePanel">✕</button></header>
+  <div class="spbody" id="hordeBody"></div>
 </div>
 
 <div id="questPanel" class="sidepanel panel">
@@ -763,7 +818,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=148"
+<script type="module" src="game.js?v=149"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

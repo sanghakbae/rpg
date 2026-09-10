@@ -1189,6 +1189,9 @@ function fxFlash(rgb, ms, str = .35) { flashes.push({ rgb, t: 0, max: ms, str, x
 let othersPrev = {}, mePrev = { x: SPAWN.x, y: SPAWN.y }, meMovingNow = false;
 let mouseDown = false, dest = null, attackTargetSimId = null;
 /* 설정(로컬 저장) + 자동 사냥 */
+let horde = null; /* 쇄도(생존 웨이브) 런 상태 — 아래 쇄도 섹션 참고 */
+const hordeOn = () => !!horde && horde.st === 'run';
+const hb = k => (horde && horde.st === 'run' && horde.b[k]) || 0; /* 각인 배율(런 밖에서는 0) */
 let autoHunt = false, autoSkillT = 0, autoPotT = 0, targetT0 = 0; const simSkip = {}; /* 자동 사냥: 8초 안에 못 닿는 몬스터는 20초 제외 */
 const settings = { autoPotHp: 45, autoPotMp: 20, dmgText: true, screenShake: true, autoSell: {} }; /* autoSell: 등급별 자동 판매 on/off */
 try { const sv = JSON.parse(localStorage.getItem('settings') || '{}'); Object.assign(settings, sv); } catch (e) {}
@@ -1440,16 +1443,16 @@ function skillMp(id, def) {
 const passSum = f => Object.keys(SKILLS).reduce((a, id) => a + (SKILLS[id][f] || 0) * skillLv(id), 0);
 const eqStats = f => Object.values(me.equipped || {}).reduce((a, id) => a + (getItem(id)[f] || 0), 0);
 const cdef = () => CLASSES[myCls] || CLASSES.warrior;
-const totalAtk = () => Math.round(((me.atk || 10) + (me.stAtk || 0) * 2 + eqStats('atk') + passSum('atk') + setBonus().b.atk) * (1 + setBonus().b.atkMul));
+const totalAtk = () => Math.round(((me.atk || 10) + (me.stAtk || 0) * 2 + eqStats('atk') + passSum('atk') + setBonus().b.atk) * (1 + setBonus().b.atkMul) * (1 + hb('atk')));
 const totalDef = () => Math.round(((me.stDef || 0) + eqStats('def') + passSum('def') + setBonus().b.def) * (1 + setBonus().b.defMul));
-const totalCrit = () => cdef().crit + (me.stCrit || 0) * .01 + passSum('crit') + eqStats('crit') + setBonus().b.crit;
+const totalCrit = () => Math.min(.95, cdef().crit + (me.stCrit || 0) * .01 + passSum('crit') + eqStats('crit') + setBonus().b.crit + hb('crit'));
 const skillPow = () => 1 + (me.stWis || 0) * .03; /* 지혜: 스킬 피해/회복 +3%씩 */
 const critDmgMul = () => (1.6 + (me.stCritDmg || 0) * .06) * (1 + setBonus().b.critDmgMul); /* 치명피해(세트 증폭) */
-const atkCdOf = () => cdef().atkCd * Math.max(.5, 1 - (me.stAspd || 0) * .02); /* 공속 */
-const atkRange = () => cdef().range + (me.stRange || 0) * 6;   /* 사거리 */
+const atkCdOf = () => cdef().atkCd * Math.max(.5, 1 - (me.stAspd || 0) * .02) / (1 + hb('aspd')); /* 공속 */
+const atkRange = () => cdef().range + (me.stRange || 0) * 6 + hb('range');   /* 사거리 */
 const mpCostOf = base => Math.max(1, Math.round(base * Math.max(.4, 1 - (me.stMana || 0) * .02))); /* 절약 */
 const evadeChance = () => Math.min(.35, (me.stEvade || 0) * .01); /* 회피 */
-const moveSpd = () => cdef().speed + (me.stSpd || 0) * 4 + passSum('spd') + eqStats('spd') + setBonus().b.spd;
+const moveSpd = () => (cdef().speed + (me.stSpd || 0) * 4 + passSum('spd') + eqStats('spd') + setBonus().b.spd) * (1 + hb('spd'));
 const classActiveId = () => Object.keys(SKILLS).find(k => SKILLS[k].cls === myCls && SKILLS[k].type === 'active');
 /* 번호키 슬롯: 1·2 = 직업 액티브, 3 = 회복술 */
 const classActiveIds = () => Object.keys(SKILLS).filter(k => SKILLS[k].cls === myCls && SKILLS[k].type === 'active');
@@ -1921,6 +1924,7 @@ async function dropLoot(type, x, y) {
 function dealDamage(sim, dmg, kill) {
   /* 처치 확정만 서버에 쓴다. 중간 피해는 로컬 HP(attackResult)가 권위 */
   if (!kill) return Promise.resolve(false);
+  if (sim.horde) return Promise.resolve(true); /* 쇄도 몬스터는 서버에 존재하지 않음 */
   return runTx(db, async tx => {
     const ref = doc(db, 'monsters', sim.id);
     const g = await tx.get(ref);
@@ -1939,6 +1943,7 @@ function dealDamage(sim, dmg, kill) {
 }
 
 async function handleKill(sim) {
+  if (sim.horde) return hordeKill(sim); /* 쇄도: 보상은 런 누적으로만(서버 쓰기 0) */
   const d2 = sdef(sim);
   const gold = Math.round((d2.gold || 0) * rand(.8, 1.25));
   float(sim.x, sim.y - d2.r - 30, `+${d2.exp} EXP`, '#3498db');
@@ -2002,10 +2007,8 @@ async function attackResult(sim, dmg, crit) {
   /* 즉시 시각 피드백 (로컬 예측) */
   sim.hp = Math.max(0, (typeof sim.hp === 'number' ? sim.hp : sim.maxHp) - dmg);
   sim.hitFlash = Date.now();
-  if (me.stLife && !me.dead && me.hp < maxHpOf()) { /* 흡혈: 가한 피해의 1%/pt 회복 */
-    me.hp = Math.min(maxHpOf(), me.hp + dmg * me.stLife * .01);
-    hpDirty = true;
-  }
+  { const lf = (me.stLife || 0) * .01 + hb('life'); /* 흡혈: 스탯 1%/pt + 쇄도 각인 */
+    if (lf && !me.dead && me.hp < maxHpOf()) { me.hp = Math.min(maxHpOf(), me.hp + dmg * lf); hpDirty = true; } }
   sim.angry = true;
   const kdx = sim.x - me.x, kdy = sim.y - me.y, kd = Math.hypot(kdx, kdy) || 1;
   sim.kbx = kdx / kd * (crit ? 7 : 4.2);
@@ -2127,7 +2130,7 @@ function autoCombat(now) {
     }
   }
 }
-function toggleAuto() { autoHunt = !autoHunt; if (autoHunt) { dest = null; } updateAutoBtn(); toast(autoHunt ? '⚔️ 자동 사냥 켜짐 — 이동 키를 누르면 해제' : '자동 사냥 꺼짐', 'sysq'); sfx('click'); }
+function toggleAuto() { if (hordeOn()) { toast('🌀 쇄도 중에는 자동 사냥을 쓸 수 없습니다 (평타는 자동으로 나갑니다)'); return; } autoHunt = !autoHunt; if (autoHunt) { dest = null; } updateAutoBtn(); toast(autoHunt ? '⚔️ 자동 사냥 켜짐 — 이동 키를 누르면 해제' : '자동 사냥 꺼짐', 'sysq'); sfx('click'); }
 function updateAutoBtn() { const b = $('autoBtn'); if (b) b.classList.toggle('on', autoHunt); }
 function tryAttack(now, forced = null) {
   if (!ready || me.dead || worldMapOpen() || paused) return; /* 지도 오버레이 뒤에서 눈먼 전투 방지 */
@@ -3735,6 +3738,7 @@ function updateSims(now, dt) {
   if (ready && !me.dead) targets.push({ x: me.x, y: me.y, mine: true });
 
   for (const s of sims) {
+    if (s.horde) { if (s.alive) hordeSimTick(s, now, dt); continue; } /* 쇄도 몬스터: 리스폰·홈 복귀 없이 항상 추격 */
     if (!s.alive) {
       if (!s.respawnAt && s.deadT) s.respawnAt = s.deadT + (sdef(s).respawn || 15000); /* 로컬 처치 후 서버 확정 전이라도 리스폰 예약 */
       if (s.respawnAt > 0 && now > s.respawnAt) {
@@ -3838,7 +3842,7 @@ function monsterHitMe(s, now) {
     return;
   }
   const takenMul = setBonus().b.takenMul || 0;
-  const dmg = Math.max(1, Math.round((Math.round(sdef(s).atk * rand(.85, 1.15)) - totalDef()) * (1 - Math.min(.6, takenMul)))); /* 세트: 받는 피해 감소 */
+  const dmg = Math.max(1, Math.round((Math.round(sdef(s).atk * rand(.85, 1.15)) - totalDef()) * (1 - Math.min(.6, takenMul)) * (1 - Math.min(.7, hb('dr'))))); /* 세트·각인: 받는 피해 감소 */
   hurtUntil = now + 300;
   heroHurtT = now; /* 피격 플린치 모션 트리거 */
   me.lastHurtAt = now;
@@ -3846,6 +3850,7 @@ function monsterHitMe(s, now) {
   sfx('hurt');
   float(me.x, me.y - 30, String(dmg), '#ff6b6b');
   const nhp = (me.hp || 0) - dmg;
+  if (nhp <= 0 && hordeOn()) { hordeEnd('death'); return; } /* 쇄도에서 쓰러지면 사망 패널티 없이 런만 종료 */
   if (nhp <= 0 && !me.dead) {
     me.dead = true; me.hp = 0; me.deadUntil = now + 1800000;
     updX(meRef, { dead: true, deadUntil: me.deadUntil, hp: 0, 'q.deaths': inc(1) }).catch(() => {});
@@ -5076,6 +5081,7 @@ function buildWorldM2() {
 }
 
 function gotoPage(n) {
+  if (hordeOn()) { toast('🌀 쇄도 중에는 구역을 이동할 수 없습니다'); return; } /* 런 도중 이탈 방지 */
   if (mapFading || n < 1 || n > MAX_PAGE) return;
   mapFading = true;
   const ov = $('mapFade');
@@ -5110,6 +5116,256 @@ function gotoPage(n) {
     } catch (e) {}
     setTimeout(() => { if (ov) ov.style.opacity = 0; mapFading = false; }, 300);
   }, 380);
+}
+
+/* ================= 쇄도(HORDE): 생존 웨이브 던전 =================
+   서버 쓰기 0회 — 몬스터·보상 전부 로컬에서 굴리고, 종료 시 한 번만 합산 지급한다.
+   30초마다 각인(임시 강화) 3장 중 1장을 고르고, 10분을 버티면 완주. 죽으면 그 자리에서 끝(사망 penalty 없음). */
+const HORDE_MS = 600000, HORDE_WAVE_MS = 30000, HORDE_R = 520, HORDE_C = { x: 800, y: 620 };
+const hordeCap = () => innerWidth <= 640 ? 18 : 32; /* 동시 생존 몬스터 상한 — 모바일 프레임 보호 */
+const HORDE_BUFFS = [
+  { id: 'rage',  n: '광폭', ic: '🔥', max: 6, k: 'atk',   v: .25, d: l => `공격력 +${25 * l}%` },
+  { id: 'haste', n: '신속', ic: '⚡', max: 5, k: 'aspd',  v: .18, d: l => `공격 속도 +${18 * l}%` },
+  { id: 'dash',  n: '질주', ic: '💨', max: 5, k: 'spd',   v: .12, d: l => `이동 속도 +${12 * l}%` },
+  { id: 'focus', n: '정밀', ic: '🎯', max: 5, k: 'crit',  v: .08, d: l => `치명타 +${8 * l}%` },
+  { id: 'reach', n: '확장', ic: '📏', max: 4, k: 'range', v: 30,  d: l => `사거리 +${30 * l}` },
+  { id: 'steel', n: '강철', ic: '🛡', max: 5, k: 'dr',    v: .10, d: l => `받는 피해 -${10 * l}%` },
+  { id: 'leech', n: '흡혈', ic: '🩸', max: 5, k: 'life',  v: .03, d: l => `가한 피해의 ${3 * l}% 회복` },
+  { id: 'boom',  n: '폭발', ic: '💥', max: 4, k: 'boom',  v: .5,  d: l => `처치 시 폭발 (공격력 ${50 * l}%)` },
+  { id: 'greed', n: '탐욕', ic: '💰', max: 4, k: 'greed', v: .4,  d: l => `골드 +${40 * l}%` },
+  { id: 'regen', n: '재생', ic: '💚', max: 5, k: 'regen', v: .015, d: l => `초당 최대 HP ${1.5 * l}% 회복` },
+];
+const hordeFmt = ms => { const s = Math.max(0, Math.round(ms / 1000)); return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
+
+function hordeStart() {
+  if (!ready || hordeOn()) return;
+  if (me.dead) { toast('⚠️ 부활 후 입장할 수 있습니다'); return; }
+  if ((me.lv || 1) < 5) { toast('⚠️ 쇄도는 Lv5부터 입장할 수 있습니다'); return; }
+  document.querySelectorAll('.sidepanel').forEach(p => p.classList.remove('open'));
+  /* 서버 구독 해제: 쇄도 동안 구역 몬스터·전리품·플레이어를 받지 않는다(쓰기·읽기 0) */
+  if (unsubMon) { try { unsubMon(); } catch (e) {} unsubMon = null; }
+  if (unsubLoot) { try { unsubLoot(); } catch (e) {} unsubLoot = null; }
+  if (unsubPlayers) { try { unsubPlayers(); } catch (e) {} unsubPlayers = null; }
+  sims = []; others = {}; othersPrev = {}; lootItems = {}; pickHide.clear(); attackTargetSimId = null; dest = null; /* 구역의 남은 전리품은 쇄도에 들고 들어가지 않음(복귀 시 구독으로 복원) */
+  if (autoHunt) { autoHunt = false; updateAutoBtn(); } /* 이동은 직접 — 대신 사거리 안의 적은 자동 공격(아래 hordeTick) */
+  horde = { st: 'run', left: HORDE_MS, waveLeft: HORDE_WAVE_MS, wave: 1, kills: 0, gold: 0, exp: 0,
+    b: {}, lv: {}, seq: 0, spawnT: 0, boomDepth: 0, hpBefore: me.hp };
+  me.hp = maxHpOf(); me.mp = maxMpOf(); hpDirty = true;
+  me.x = HORDE_C.x; me.y = HORDE_C.y; me.vx = 0; me.vy = 0; cam.x = me.x; cam.y = me.y;
+  fxFlash('255,90,60', 600, .4); sfx('boom'); doShake(8);
+  toast('🌀 <b>쇄도</b> 시작! 10분을 버티세요 — 30초마다 각인을 하나 얻습니다', 'sysq');
+  hordeHudShow(true);
+}
+
+function hordeEnd(reason) {
+  if (!horde || horde.st !== 'run') return;
+  horde.st = 'end';
+  const survived = clampN(HORDE_MS - horde.left, 0, HORDE_MS); /* 마지막 프레임에서 left가 음수가 될 수 있음 */
+  const rec = me.horde || {};
+  const bestBefore = rec.best || 0;
+  const isBest = survived > bestBefore;
+  const gems = Math.max(0, Math.floor(survived / 120000) - Math.floor(bestBefore / 120000)); /* 2분 단위 최고 기록 갱신분만 보석 */
+  const gold = horde.gold, exp = horde.exp, kills = horde.kills, wave = horde.wave;
+  me.horde = { best: Math.max(bestBefore, survived), kills: Math.max(rec.kills || 0, kills), runs: (rec.runs || 0) + 1, clears: (rec.clears || 0) + (reason === 'clear' ? 1 : 0) };
+  sims = sims.filter(s => !s.horde);
+  lootItems = {};
+  hordeHudShow(false);
+  /* 보상 지급: 런 전체를 한 번에(쓰기 1회 분량) */
+  if (exp > 0 || gold > 0) gainExp(exp, { type: 'horde', gold });
+  const upd = { horde: me.horde };
+  if (gems > 0) upd.gem = inc(gems);
+  updX(meRef, upd).catch(() => {});
+  me.hp = Math.max(1, Math.round(maxHpOf() * (reason === 'death' ? .35 : 1)));
+  hpDirty = true;
+  /* 구역 복귀 */
+  const sp = pageDef(pageNum()).spawn;
+  me.x = sp.x; me.y = sp.y; me.vx = 0; me.vy = 0; cam.x = sp.x; cam.y = sp.y;
+  attackTargetSimId = null; dest = null;
+  watchMonsters(); watchLoot(); watchPlayers();
+  trySync(true);
+  hordeResult({ reason, survived, kills, wave, gold, exp, gems, isBest });
+  horde = null;
+}
+
+function hordeSpawn() {
+  const pn = pageNum(), pd = pageDef(pn);
+  const min = (HORDE_MS - horde.left) / 60000;
+  const elite = horde.seq > 0 && horde.seq % 16 === 0;
+  const base = elite ? pd.boss : pd.kinds[horde.seq % 2];
+  const hpM = (elite ? 2.6 : .30) * (1 + min * .55);   /* 다수가 몰려오는 대신 개체는 물렁하게 */
+  const atkM = (elite ? 1.0 : .55) * (1 + min * .22);
+  const def = { ...base,
+    hp: Math.max(6, Math.round(base.hp * hpM)), atk: Math.max(1, Math.round(base.atk * atkM)),
+    exp: Math.max(1, Math.round(base.exp * (elite ? 2.5 : .40))), gold: Math.max(1, Math.round(base.gold * (elite ? 2.5 : .45))),
+    aggro: 4000, speed: Math.round(base.speed * (elite ? 1 : 1.18)), respawn: 999999 };
+  def.maxHp = def.hp;
+  const a = rand(0, Math.PI * 2), rr = HORDE_R + rand(30, 90);
+  const x = clampN(HORDE_C.x + Math.cos(a) * rr, 50, WORLD.w - 50), y = clampN(HORDE_C.y + Math.sin(a) * rr, 50, WORLD.h - 50);
+  sims.push({ id: 'hd_' + (horde.seq++), type: base.base, page: myMap(), map: myMap(), boss: false, horde: true, elite,
+    sprId: SPRITE_DEFS[base.base] ? kindSprId(base) : 'goblin', uniq: false, def, kind: base.name,
+    homeX: x, homeY: y, x, y, wa: rand(0, 6.28), off: rand(-.45, .45), nextWander: 0, atkCdUntil: 0,
+    alive: true, hp: def.hp, maxHp: def.hp, respawnAt: 0, dirA: Math.PI / 2, movingF: true, aggroF: true, angry: true, blink: rand(0, 4000) });
+}
+
+/* 쇄도 몬스터 AI: 홈 복귀·어그로 판정 없이 항상 플레이어로 직진 */
+function hordeSimTick(s, now, dt) {
+  if (s.kbx) {
+    s.x = clampN(s.x + s.kbx, 40, WORLD.w - 40); s.y = clampN(s.y + s.kby, 40, WORLD.h - 40);
+    s.kbx *= .8; s.kby *= .8;
+    if (Math.abs(s.kbx) < .3) { s.kbx = 0; s.kby = 0; }
+  }
+  if (me.dead) { s.movingF = false; return; }
+  const dx = me.x - s.x, dy = me.y - s.y, d = Math.hypot(dx, dy) || 1;
+  const rng = s.def.range || 34;
+  if (d > rng) {
+    s.cur = (s.cur ?? 0) + (s.def.speed - (s.cur ?? 0)) * Math.min(1, dt * .008);
+    const sp = s.cur * dt / 1000;
+    const ta = Math.atan2(dy, dx) + (d > 140 ? s.off : 0); /* 멀리서는 살짝 벌어져 접근(한 줄로 겹치는 것 완화) */
+    s.dirA = angLerp(s.dirA, ta, dt * .014);
+    s.movingF = true;
+    s.x = clampN(s.x + Math.cos(s.dirA) * sp, 40, WORLD.w - 40);
+    s.y = clampN(s.y + Math.sin(s.dirA) * sp, 40, WORLD.h - 40);
+  } else {
+    s.movingF = false;
+    s.dirA = angLerp(s.dirA, Math.atan2(dy, dx), dt * .02);
+    if (now >= s.atkCdUntil) {
+      s.atkCdUntil = now + (s.elite ? 1500 : 1150);
+      s.atkAnimT = now; s.swingT = now;
+      monsterHitMe(s, now);
+    }
+  }
+}
+
+function hordeKill(s) {
+  if (!horde || horde.st !== 'run') { s.alive = false; return; }
+  const d = sdef(s);
+  horde.kills++;
+  const g = Math.round((d.gold || 0) * (1 + (horde.b.greed || 0)));
+  const e = d.exp || 0;
+  horde.gold += g; horde.exp += e;
+  s.alive = false; s.deadT = Date.now();
+  spawnPoof(s);
+  if (s.elite) { float(s.x, s.y - d.r - 30, `정예 처치! +${g}G`, '#ffd700', true); doShake(7); }
+  const bm = horde.b.boom || 0;
+  if (bm && horde.boomDepth < 2) { /* 처치 폭발: 연쇄는 2단계까지만(무한 재귀 방지) */
+    horde.boomDepth++;
+    const dmg = Math.max(1, Math.round(totalAtk() * bm));
+    rings.push({ x: s.x, y: s.y, r: 110, t: 0, max: 320, color: '255,150,60' });
+    fxSparks(s.x, s.y, 14, '#ff9a3c', 190);
+    sfx('boom');
+    for (const o of sims) if (o.horde && o.alive && o !== s && Math.hypot(o.x - s.x, o.y - s.y) < 115) attackResult(o, dmg, false);
+    horde.boomDepth--;
+  }
+}
+
+function hordeTick(now, dt) {
+  if (!hordeOn()) return;
+  horde.left -= dt;
+  horde.waveLeft -= dt;
+  if (!me.dead && !paused) tryAttack(now); /* 사거리 안 자동 평타 — 사방에서 몰려오는 모드라 조준은 이동에 맡긴다 */
+  /* 재생 각인 */
+  const rg = horde.b.regen || 0;
+  if (rg && !me.dead && me.hp < maxHpOf()) { me.hp = Math.min(maxHpOf(), me.hp + maxHpOf() * rg * dt / 1000); hpDirty = true; }
+  /* 스폰: 경과 시간에 따라 목표 개체수·간격 조절 */
+  const min = (HORDE_MS - horde.left) / 60000;
+  let live = 0; for (const s of sims) if (s.horde && s.alive) live++;
+  const want = Math.min(hordeCap(), Math.round(5 + min * 5));
+  const gap = Math.max(140, 800 - min * 110);
+  if (live < want && now - horde.spawnT > gap) { horde.spawnT = now; hordeSpawn(); if (live < want - 4) hordeSpawn(); }
+  /* 시체 정리 */
+  if (sims.length > 8) sims = sims.filter(s => !s.horde || s.alive || now - (s.deadT || 0) < 700);
+  /* 각인 선택 */
+  if (horde.waveLeft <= 0) { horde.waveLeft = HORDE_WAVE_MS; horde.wave++; hordePick(); }
+  if (horde.left <= 0) { hordeEnd('clear'); return; }
+  hordeHudUpdate();
+}
+
+/* 아레나 경계: 원 밖으로 나가지 못하게 */
+function hordeConfine() {
+  const dx = me.x - HORDE_C.x, dy = me.y - HORDE_C.y, d = Math.hypot(dx, dy);
+  if (d > HORDE_R) { me.x = HORDE_C.x + dx / d * HORDE_R; me.y = HORDE_C.y + dy / d * HORDE_R; }
+}
+
+function drawHordeArena(now) {
+  const p = .5 + Math.sin(now / 700) * .5;
+  ctx.save();
+  ctx.globalCompositeOperation = 'multiply';
+  ctx.fillStyle = 'rgba(70,20,30,.55)'; /* 붉은 결계 안쪽 */
+  ctx.beginPath(); ctx.rect(0, 0, WORLD.w, WORLD.h); ctx.arc(HORDE_C.x, HORDE_C.y, HORDE_R, 0, 7, true); ctx.fill('evenodd');
+  ctx.restore();
+  ctx.save();
+  ctx.strokeStyle = `rgba(255,${90 + p * 60},70,${.55 + p * .3})`;
+  ctx.lineWidth = 4; ctx.setLineDash([26, 16]); ctx.lineDashOffset = -now / 26;
+  ctx.beginPath(); ctx.arc(HORDE_C.x, HORDE_C.y, HORDE_R, 0, 7); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.strokeStyle = `rgba(255,60,40,${.12 + p * .1})`; ctx.lineWidth = 26;
+  ctx.beginPath(); ctx.arc(HORDE_C.x, HORDE_C.y, HORDE_R + 14, 0, 7); ctx.stroke();
+  ctx.restore();
+}
+
+/* ---- 쇄도 UI ---- */
+function hordeEl(id, cls, parent) {
+  let el = document.getElementById(id);
+  if (!el) { el = document.createElement('div'); el.id = id; if (cls) el.className = cls; (parent || document.body).appendChild(el); }
+  return el;
+}
+function hordeHudShow(on) {
+  const el = hordeEl('hordeHud');
+  el.style.display = on ? 'block' : 'none';
+  if (on) hordeHudUpdate();
+}
+function hordeHudUpdate() {
+  if (!hordeOn()) return;
+  const el = document.getElementById('hordeHud'); if (!el) return;
+  const marks = Object.entries(horde.lv).map(([id, l]) => { const B = HORDE_BUFFS.find(b => b.id === id); return `<em title="${B.n} ${l} — ${esc(B.d(l))}">${B.ic}<b>${l}</b></em>`; }).join('');
+  const sig = `${Math.round(horde.left / 1000)}|${horde.kills}|${marks.length}|${Math.round(horde.waveLeft / 500)}`;
+  if (el._sig === sig) return; /* 매 프레임 DOM 쓰기 방지 */
+  el._sig = sig;
+  el.innerHTML = `<div class="hhTop"><b class="hhT">${hordeFmt(horde.left)}</b><span>웨이브 ${horde.wave}</span><span>처치 ${horde.kills}</span><span>💰${horde.gold}</span></div>`
+    + `<div class="hhBar"><i style="width:${Math.max(0, Math.min(100, 100 - horde.waveLeft / HORDE_WAVE_MS * 100)).toFixed(1)}%"></i></div>`
+    + `<div class="hhBuffs">${marks || '<span class="hhNone">각인 없음</span>'}</div>`;
+}
+function hordePick() {
+  const pool = HORDE_BUFFS.filter(b => (horde.lv[b.id] || 0) < b.max);
+  if (!pool.length) return;
+  const pick = [];
+  while (pick.length < Math.min(3, pool.length)) { const c = pool[Math.floor(Math.random() * pool.length)]; if (!pick.includes(c)) pick.push(c); }
+  const el = hordeEl('hordePick');
+  el.innerHTML = `<div class="hpBox"><h3>각인 선택 <small>웨이브 ${horde.wave}</small></h3><div class="hpCards">`
+    + pick.map(b => { const nl = (horde.lv[b.id] || 0) + 1; return `<button class="hpCard" data-b="${b.id}"><i>${b.ic}</i><b>${b.n} ${nl}</b><span>${esc(b.d(nl))}</span></button>`; }).join('')
+    + `</div></div>`;
+  el.classList.add('open');
+  sfx('levelup');
+  el.querySelectorAll('.hpCard').forEach(btn => btn.onclick = () => {
+    const B = HORDE_BUFFS.find(b => b.id === btn.dataset.b);
+    if (B && horde) { horde.lv[B.id] = (horde.lv[B.id] || 0) + 1; horde.b[B.k] = (horde.b[B.k] || 0) + B.v; }
+    el.classList.remove('open');
+    sfx('buy');
+    float(me.x, me.y - 44, `${B.ic} ${B.n} ${horde.lv[B.id]}`, '#ffd700', true);
+    hordeHudUpdate();
+  });
+}
+function hordeResult(r) {
+  const el = hordeEl('hordeEnd');
+  el.innerHTML = `<div class="heBox"><h3>${r.reason === 'clear' ? '🏆 쇄도 완주!' : '💀 쇄도 종료'}</h3>`
+    + `<div class="heTime">${hordeFmt(r.survived)}${r.isBest ? ' <b>최고 기록!</b>' : ''}</div>`
+    + `<ul><li>웨이브 <b>${r.wave}</b></li><li>처치 <b>${r.kills}</b></li><li>골드 <b>+${r.gold}</b></li><li>경험치 <b>+${r.exp}</b></li>`
+    + (r.gems ? `<li>보석 <b>+${r.gems}</b> <small>(2분 단위 기록 갱신 보상)</small></li>` : '')
+    + `</ul><button id="heClose">확인</button></div>`;
+  el.classList.add('open');
+  sfx(r.reason === 'clear' ? 'levelup' : 'die');
+  el.querySelector('#heClose').onclick = () => { el.classList.remove('open'); sfx('click'); };
+}
+function renderHorde() {
+  const body = document.getElementById('hordeBody'); if (!body) return;
+  const rec = me.horde || {};
+  const lv5 = (me.lv || 1) >= 5;
+  body.innerHTML = `<div class="hdIntro">사방에서 몰려오는 적을 <b>10분</b> 동안 버팁니다. 30초마다 <b>각인</b> 3장 중 1장을 골라 그 판에서만 강해집니다.<br>평타는 <b>자동</b>으로 나갑니다 — 이동과 스킬에 집중하세요.</div>`
+    + `<div class="hdRec"><div><span>최고 기록</span><b>${hordeFmt(rec.best || 0)}</b></div><div><span>최다 처치</span><b>${rec.kills || 0}</b></div><div><span>도전</span><b>${rec.runs || 0}회</b></div><div><span>완주</span><b>${rec.clears || 0}회</b></div></div>`
+    + `<div class="hdRules"><li>몬스터·전리품은 서버에 기록하지 않아 저장 한도를 쓰지 않습니다</li><li>골드·경험치는 종료 시 합산 지급</li><li>2분마다 최고 기록을 갱신하면 보석 1개</li><li>쓰러져도 사망 패널티 없이 종료됩니다</li></div>`
+    + `<button id="hdGo" class="hdGo" ${lv5 ? '' : 'disabled'}>${lv5 ? '🌀 입장' : 'Lv5부터 입장 가능'}</button>`;
+  const go = document.getElementById('hdGo');
+  if (go && lv5) go.onclick = () => { sfx('click'); hordeStart(); };
 }
 
 /* ================= 엔티티 드로잉 ================= */
@@ -8064,6 +8320,7 @@ function draw(now) {
   ctx.translate(-cx + shx / z, -cy + shy / z);
   ctx.drawImage(getTex(myMap()), 0, 0, WORLD.w, WORLD.h);
   drawWaterFx(now); /* 물/용암 반짝임 */
+  if (hordeOn()) drawHordeArena(now); /* 쇄도 결계 */
 
   drawLootItems(now);
   drawPickFlights(now);
@@ -8099,8 +8356,10 @@ function draw(now) {
     ctx.fillStyle = locked ? '#9a9aa8' : `rgb(${pc2})`;
     outlinedText((locked ? '🔒 ' : (dirRight ? '▶ ' : '◀ ')) + label, px, 546, 3.5);
   };
-  if (pn < MAX_PAGE) drawPortal(1490, pageDef(pn + 1).name, !(me.conq || {})[pn], true);
-  if (pn > 1) drawPortal(100, pageDef(pn - 1).name, false, false);
+  if (!hordeOn()) { /* 쇄도 중에는 구역 관문을 감춘다(입장 불가 상태라 혼동만 준다) */
+    if (pn < MAX_PAGE) drawPortal(1490, pageDef(pn + 1).name, !(me.conq || {})[pn], true);
+    if (pn > 1) drawPortal(100, pageDef(pn - 1).name, false, false);
+  }
 
   for (const s of sims) {
     if (!s.alive || s.map !== myMap()) continue;
@@ -8559,6 +8818,7 @@ function togglePanel(id) {
     if (id === 'treePanel') renderTree();
     if (id === 'dexPanel') renderDex();
     if (id === 'achvPanel') renderAchv();
+    if (id === 'hordePanel') renderHorde();
   }
 }
 const rb2 = $('reviveBtn');
@@ -8736,6 +8996,7 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyG') { sfx('click'); togglePanel('achvPanel'); }
   if (e.code === 'KeyP') toggleAuto();
   if (e.code === 'KeyC') { sfx('click'); toggleDex(); }
+  if (e.code === 'KeyK') { sfx('click'); togglePanel('hordePanel'); }
 });
 addEventListener('keyup', e => keys[e.code] = false);
 /* 포커스 이탈/탭 전환 시 keyup 유실로 캐릭터가 계속 걷는 것 방지 */
@@ -9020,7 +9281,7 @@ requestAnimationFrame(loop);
 /* 중앙 모달 + 일시정지 (독/ESC 등 모든 토글은 MutationObserver가 자동 감지) */
 let paused = false, pauseStart = 0, chatVisible = true;
 function syncModal() {
-  const open = !!document.querySelector('#invPanel.open,.sidepanel.open,#worldMap.open,#enhModal,#enhMenu');
+  const open = !!document.querySelector('#invPanel.open,.sidepanel.open,#worldMap.open,#enhModal,#enhMenu,#hordePick.open,#hordeEnd.open');
   const dim = $('modalDim');
   if (dim) dim.classList.toggle('on', open);
   document.querySelectorAll('#dockL [data-p]').forEach(b => {
@@ -9179,7 +9440,8 @@ if (meRef) updX(meRef, { x: me.x, y: me.y, hp: me.hp, ...(me.mp != null ? { mp: 
   cam.x += ((me.x + (me.vx || 0) * lk) - cam.x) * ck;
   cam.y += ((me.y + (me.vy || 0) * lk) - cam.y) * ck;
 
-  if (!me.dead && !mapFading) {
+  if (hordeOn()) hordeConfine(); /* 쇄도: 결계 밖으로 못 나감 */
+  if (!me.dead && !mapFading && !hordeOn()) {
     const pn = pageNum();
     if (pn < MAX_PAGE && Math.hypot(me.x - 1490, me.y - 600) < 48) {
       if ((me.conq || {})[pn]) gotoPage(pn + 1);
@@ -9194,6 +9456,7 @@ if (meRef) updX(meRef, { x: me.x, y: me.y, hp: me.hp, ...(me.mp != null ? { mp: 
 
   floats = floats.filter(f => (f.t += dt) < 1000);
   if (ready) { try { updateAmbient(now, dt); } catch (e) {} }
+  try { hordeTick(now, dt); } catch (e) { window.__lastErr = { at: Date.now(), where: 'hordeTick', msg: String(e && e.message || e) }; }
   slashes = slashes.filter(s => (s.t += dt) < 180);
   bolts = bolts.filter(b => (b.t += dt) < b.max);
   meteors = meteors.filter(m => { m.t += dt; if (m.t >= m.max * .8 && !m.landed) { m.landed = true; try { m.onLand && m.onLand(); } catch (e) {} } return m.t < m.max * .8; });
@@ -9489,7 +9752,7 @@ async function init() {
   window.__PING = () => Promise.race([updateDoc(meRef, { lastSeen: Date.now() }).then(() => 'write-ok'), new Promise(r => setTimeout(() => r('write-timeout'), 8000))]).catch(e => 'write-error:' + (e.code || e.message)); /* 진단: 쓰기 채널 상태 */
   window.__MOB = async id => { const g = await getDoc(doc(db, 'monsters', id)); return g.exists() ? g.data() : null; };
   window.__give = async (id, slot = 17) => { await updX(meRef, { ['inv.' + slot]: id }); return 'ok'; }; /* 진단: 가방 슬롯에 아이템 넣기 */
-  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__tex = n => getTex(pageId(n)); window.__rank = () => rankCache; window.__waters = () => zoneWaters; window.__pageDef = pageDef; window.__view = () => ({ x: view.x, y: view.y, z: view.z, dpr }); window.__mkUniqAt = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; cam.x=s0.x; cam.y=s0.y; return {id:s0.id, kind:s0.kind, x:s0.x, y:s0.y}; }; window.__mkUniq = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; const me2=window.__me?me:me; me.x=s0.x; me.y=s0.y-80; cam.x=s0.x; cam.y=s0.y-40; return {id:s0.id, kind:s0.kind}; }; window.__useSkill = useSkill; window.__sheets2 = () => ({ total: Object.keys(HERO_SHEETS).length, mob: Object.keys(HERO_SHEETS).filter(k=>k.startsWith('mob_')&&HERO_SHEETS[k].img).length, wss: WSS, bioTex: bioTexCache.size }); window.__loadMob = base => heroSheet('mob_'+base); window.__openStats = openStats; window.__sortBag = sortBag; window.__toggleAuto = toggleAuto; window.__autoState = () => ({ auto: autoHunt, target: attackTargetSimId, dest, map: me.map, myMap: myMap(), nearLoot: (l => l ? { x: Math.round(l.x), y: Math.round(l.y), d: Math.round(Math.hypot(l.x - me.x, l.y - me.y)) } : null)(nearestLoot(280)) }); window.__clearTarget = () => { attackTargetSimId = null; dest = null; }; window.__auto = () => autoHunt; window.__settings = () => settings; window.__salvage = salvageBulk; window.__invRar = () => Object.entries(me.inv||{}).map(([k,v])=>({k, id:String(v).split(/[*~+]/)[0], rar:getItem(v).rarity, rank:RARITY_RANK[getItem(v).rarity]??0, slot:getItem(v).slot||'-'})); window.__claimAchv = claimAchv; window.__ownedTitles = ownedTitles; window.__paused = () => ({ paused, ready, dead: me.dead, wm: worldMapOpen() }); window.__unpause = () => { paused = false; }; window.__cdUntil = id => skillCdUntil[id]||0; window.__bound = boundId; window.__skillDef = skillDef; window.__mpc = id => { const d=skillDef(id); return d&&d.mp?mpCostOf(skillMp(id,d)):0; }; window.__castTree = castTreeSkill; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
+  window.__useBook = useSkillBook; window.__me = () => me; window.__OFF = () => ({ offline, since: offlineSince, pend: [...pendKeys], loot: Object.keys(lootItems).length }); window.__SYNC = () => trySync(true); window.__forceOff = () => enterOffline({ code: 'resource-exhausted' }); window.__LOOT = () => lootItems; window.__tex = n => getTex(pageId(n)); window.__rank = () => rankCache; window.__horde = () => horde; window.__hordeStart = hordeStart; window.__hordeEnd = () => hordeEnd('clear'); window.__hordeSkip = ms => { if (horde) horde.left -= (ms || 60000); }; window.__waters = () => zoneWaters; window.__pageDef = pageDef; window.__view = () => ({ x: view.x, y: view.y, z: view.z, dpr }); window.__mkUniqAt = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; cam.x=s0.x; cam.y=s0.y; return {id:s0.id, kind:s0.kind, x:s0.x, y:s0.y}; }; window.__mkUniq = () => { const s0 = sims.find(v=>v.alive && v.id!=='p1_boss'); if(!s0) return 'no'; s0.uniq=true; s0._ud=null; const me2=window.__me?me:me; me.x=s0.x; me.y=s0.y-80; cam.x=s0.x; cam.y=s0.y-40; return {id:s0.id, kind:s0.kind}; }; window.__useSkill = useSkill; window.__sheets2 = () => ({ total: Object.keys(HERO_SHEETS).length, mob: Object.keys(HERO_SHEETS).filter(k=>k.startsWith('mob_')&&HERO_SHEETS[k].img).length, wss: WSS, bioTex: bioTexCache.size }); window.__loadMob = base => heroSheet('mob_'+base); window.__openStats = openStats; window.__sortBag = sortBag; window.__toggleAuto = toggleAuto; window.__autoState = () => ({ auto: autoHunt, target: attackTargetSimId, dest, map: me.map, myMap: myMap(), nearLoot: (l => l ? { x: Math.round(l.x), y: Math.round(l.y), d: Math.round(Math.hypot(l.x - me.x, l.y - me.y)) } : null)(nearestLoot(280)) }); window.__clearTarget = () => { attackTargetSimId = null; dest = null; }; window.__auto = () => autoHunt; window.__settings = () => settings; window.__salvage = salvageBulk; window.__invRar = () => Object.entries(me.inv||{}).map(([k,v])=>({k, id:String(v).split(/[*~+]/)[0], rar:getItem(v).rarity, rank:RARITY_RANK[getItem(v).rarity]??0, slot:getItem(v).slot||'-'})); window.__claimAchv = claimAchv; window.__ownedTitles = ownedTitles; window.__paused = () => ({ paused, ready, dead: me.dead, wm: worldMapOpen() }); window.__unpause = () => { paused = false; }; window.__cdUntil = id => skillCdUntil[id]||0; window.__bound = boundId; window.__skillDef = skillDef; window.__mpc = id => { const d=skillDef(id); return d&&d.mp?mpCostOf(skillMp(id,d)):0; }; window.__castTree = castTreeSkill; window.__drawOnce = () => { const t0 = performance.now(); try { loopBody(performance.now()); } catch (e) { return 'ERR:' + (e.stack || e.message); } return Math.round((performance.now() - t0) * 100) / 100; }; window.__showCreate = () => showCreateUI(); window.__showLogin = () => { const p = waitForLoginClick(); return p; }; window.__pick = lid => pickup(lid, lootItems[lid]); window.__atk = (id, dmg) => { const sm = sims.find(v => v.id === id); if (!sm) return 'no-sim'; attackResult(sm, dmg, false); return { hp: sm.hp, alive: sm.alive }; }; window.__books = () => Object.keys(ITEMS).filter(k => k.startsWith('sb_')).length;
   window.__ITEMS = () => ({ items: Object.keys(ITEMS).length, sets: Object.keys(SETS).length, sample: Object.entries(ITEMS).filter(([k]) => /_b[0-9]$/.test(k)).slice(0, 3).map(([k, v]) => k + ':' + v.name) });
   window.__ZONETEX = n => { try { const t = getTex('p' + n); return { w: t.width, h: t.height, cols: (worldColliders['p' + n] || []).length }; } catch (e) { return { err: String(e && e.stack || e).slice(0, 300) }; } };
   window.__DBG = () => ({ page: myPage(), colliders: (worldColliders[myMap()] || []).length, frozenMs: hitStopUntil - Date.now(), activeIsChat: document.activeElement === chatInput, activeTag: document.activeElement && document.activeElement.tagName + '#' + document.activeElement.id, wmUp: worldMapOpen(), mouseDown, moveSpd: moveSpd(), atkRange: atkRange(), atkCdMs: atkCdOf(), sinceAtk: Date.now() - lastAttackAt, mapFading, snapN: window.__snapN || 0, snapAgoMs: window.__snapT ? Date.now() - window.__snapT : null, lastDmg: window.__lastDmg || null, lastErr: window.__lastErr || null, dead: !!me.dead, paused, ready, sheets: Object.fromEntries(Object.entries(HERO_SHEETS).map(([k, v]) => [k, v.img ? 'ok' : v.failed ? 'failed' : 'loading'])), target: attackTargetSimId, hover: hoverSimId, dest: dest && { x: Math.round(dest.x), y: Math.round(dest.y) }, zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),

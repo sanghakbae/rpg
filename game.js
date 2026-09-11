@@ -5066,7 +5066,8 @@ function drawWaterFx(now) {
   ctx.restore();
 }
 /* 바이옴 입자: 낙엽/눈/불씨/포자/먼지/반짝이/물방울 — 뷰포트 주변 월드 좌표에서 순환 */
-const gfx = () => settings.gfx || (MOBILE ? 'mid' : 'high'); /* 화질: 낮음이면 입자·틴트·비네트·흔들림을 끈다 */
+let gfxForce = ''; try { const g0 = new URLSearchParams(location.search).get('gfx'); if (['high','mid','low'].includes(g0)) gfxForce = g0; } catch (e) {} /* ?gfx=low 로 강제(저사양 기기·QA) */
+const gfx = () => gfxForce || settings.gfx || (MOBILE ? 'mid' : 'high'); /* 화질: 낮음이면 입자·틴트·비네트·흔들림을 끈다 */
 const ambCount = () => { const g = gfx(); return g === 'low' ? 0 : g === 'mid' ? 14 : 40; };
 let ambient = [], ambStyle = '';
 function ambientKind(style) { return { meadow: 'leaf', jungle: 'leaf', swamp: 'spore', snow: 'snow', volcano: 'ember', desert: 'dust', cave: 'drip', ruin: 'dust', abyss: 'spark', sky: 'spark' }[style] || 'leaf'; }

@@ -1193,7 +1193,7 @@ let mouseDown = false, dest = null, attackTargetSimId = null;
 let horde = null; /* 쇄도(생존 웨이브) 런 상태 — 아래 쇄도 섹션 참고 */
 const hordeOn = () => !!horde && horde.st === 'run';
 const hb = k => (horde && horde.st === 'run' && horde.b[k]) || 0; /* 각인 배율(런 밖에서는 0) */
-let autoHunt = false, autoSkillT = 0, autoPotT = 0, targetT0 = 0; const simSkip = {}; /* 자동 사냥: 8초 안에 못 닿는 몬스터는 20초 제외 */
+let autoHunt = false, autoSkillT = 0, autoPotT = 0, targetT0 = 0, targetBest = 1e9; const simSkip = {}; /* 자동 사냥: '가까워지지 않을 때만' 제외(멀어서 오래 걸리는 것과 구분) */
 const settings = { autoPotHp: 45, autoPotMp: 20, dmgText: true, screenShake: true, autoSell: {} }; /* autoSell: 등급별 자동 판매 on/off */
 try { const sv = JSON.parse(localStorage.getItem('settings') || '{}'); Object.assign(settings, sv); } catch (e) {}
 const saveSettings = () => { try { localStorage.setItem('settings', JSON.stringify(settings)); } catch (e) {} };
@@ -9852,10 +9852,11 @@ function loopBody(t) {
       const len = Math.hypot(dx, dy);
       glideToward(me.x + dx / len * 120, me.y + dy / len * 120, maxSpd, dt, 0);
     } else {
+      if (autoHunt && !attackTargetSimId && !dest && !nearestSim(9999, simSkip) && nearestSim(9999)) { for (const k in simSkip) delete simSkip[k]; } /* 모두 제외돼 대상이 없으면 초기화 — 캐릭터가 멈춰 서던 원인 */
       if (autoHunt && !attackTargetSimId && !dest) { /* 자동 사냥: 주변 루팅 먼저 → 없으면 가장 가까운 몬스터 */
         const loot = now < bagFullUntil ? null : nearestLoot(280); /* 가방 가득이면 루팅 경로 생략 → 사냥 계속 */
         if (loot) dest = { x: loot.x, y: loot.y, loot: loot.lid, t0: now };
-        else { const t = nearestSim(9999, simSkip); if (t) { attackTargetSimId = t.id; targetT0 = now; } }
+        else { const t = nearestSim(9999, simSkip); if (t) { attackTargetSimId = t.id; targetT0 = now; targetBest = 1e9; } }
       }
       if (autoHunt) autoCombat(now);
     }
@@ -9864,7 +9865,11 @@ function loopBody(t) {
       const s = sims.find(v => v.id === attackTargetSimId && v.map === myMap());
       if (!s || !s.alive) { attackTargetSimId = null; brake(dt); }
       else if (Math.hypot(s.x - me.x, s.y - me.y) > atkRange()) {
-        if (autoHunt) { if (!targetT0) targetT0 = now; else if (now - targetT0 > 8000) { simSkip[s.id] = now + 20000; attackTargetSimId = null; targetT0 = 0; } } /* 바위·연못 뒤 몬스터에 영원히 밀착하는 것 방지 */
+        if (autoHunt) { /* 진짜로 '막힌' 경우에만 제외 — 단순히 멀어서 오래 걸리는 몬스터까지 빼면 대상이 하나도 남지 않아 캐릭터가 멈춘다 */
+          const dNow = Math.hypot(s.x - me.x, s.y - me.y);
+          if (dNow < targetBest - 8) { targetBest = dNow; targetT0 = now; }   /* 가까워지는 중 → 계속 추격 */
+          else if (now - targetT0 > 5000) { simSkip[s.id] = now + 15000; attackTargetSimId = null; targetT0 = 0; targetBest = 1e9; } /* 5초 동안 한 발짝도 못 좁힘 */
+        }
         const w = navStep(s.x, s.y); glideToward(w.x, w.y, maxSpd, dt, 0);
       }
       else { targetT0 = now; brake(dt); tryAttack(now, s); }

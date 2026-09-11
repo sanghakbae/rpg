@@ -1082,7 +1082,8 @@ const QUESTS = [
 
 /* ================= 헬퍼 ================= */
 /* 최대 100레벨 · 100구역: "구역 번호 ≈ 적정 레벨" 페이싱 — 요구는 lv², 구역 보상은 완만한 2차 가속(pageExp) */
-const expNeed = lv => Math.floor(200 * lv * lv);
+const EXP_SCALE = 2; /* 레벨업 속도 1/2 (2026-09-11 밸런스): 필요 경험치 2배 */
+const expNeed = lv => Math.floor(200 * lv * lv * EXP_SCALE);
 const maxHpOf = () => Math.round(cdef().hp + ((me.lv || 1) - 1) * 10 + (me.stHp || 0) * 15 + setBonus().b.hp);
 const maxMpOf = () => (cdef().mp || 100) + ((me.lv || 1) - 1) * 5 + (me.stWis || 0) * 12 + setBonus().b.mp; /* 직업별 기본 MP: 마법사 150 · 아처 90 · 로그 80 · 전사 70 */
 const clampN = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -4519,6 +4520,9 @@ const mm = $('minimap'), mctx = mm.getContext('2d');
    시트 절반축소·시트 상한·지형 디테일·DPR 제한 등 모바일 최적화가 전부 꺼진 채 돌았다. */
 const MOBILE = (() => {
   try {
+    const q = new URLSearchParams(location.search).get('mobile'); /* ?mobile=1 강제 / ?mobile=0 해제 — 태블릿·검증용 */
+    if (q === '1') return true;
+    if (q === '0') return false;
     const coarse = matchMedia('(pointer: coarse)').matches;
     const shortSide = Math.min(screen.width || innerWidth, screen.height || innerHeight);
     if (/iPhone|iPod|Android.*Mobile|Windows Phone/i.test(navigator.userAgent)) return true;
@@ -9624,7 +9628,7 @@ requestAnimationFrame(loop);
   const _t0 = perfOn ? performance.now() : 0;
   try {
     loopBody(t);
-    if (perfOn) perfTick(performance.now() - _t0);
+    if (perfOn) perfTick(performance.now() - _t0, t);
     if (loopErrMsg) loopErrMsg = '';
   } catch (err) {
     loopErrMsg = String(err && err.message || err);
@@ -9632,7 +9636,8 @@ requestAnimationFrame(loop);
   }
 }
 /* 중앙 모달 + 일시정지 (독/ESC 등 모든 토글은 MutationObserver가 자동 감지) */
-let paused = false, pauseStart = 0, chatVisible = true;
+const isLandscapePhone = () => { try { return matchMedia('(pointer: coarse) and (orientation: landscape) and (max-height: 520px)').matches; } catch (e) { return false; } };
+let paused = false, pauseStart = 0, chatVisible = !((() => { try { return matchMedia('(pointer: coarse) and (orientation: landscape) and (max-height: 520px)').matches; } catch (e) { return false; } })()); /* 가로 모드에서는 채팅을 접고 시작 */
 function syncModal() {
   const open = !!document.querySelector('#invPanel.open,.sidepanel.open,#worldMap.open,#enhModal,#enhMenu,#hordePick.open,#hordeEnd.open,#pvpPlay.open');
   const dim = $('modalDim');
@@ -9654,7 +9659,53 @@ function syncModal() {
 }
 if (typeof MutationObserver !== 'undefined') new MutationObserver(() => { try { syncModal(); } catch (e) {} }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['class'], childList: true });
 function toggleChat() { chatVisible = !chatVisible; $('chatBox').style.display = chatVisible ? '' : 'none'; syncModal(); }
+try { const cb0 = $('chatBox'); if (cb0 && !chatVisible) cb0.style.display = 'none'; } catch (e) {}
+addEventListener('orientationchange', () => setTimeout(() => { try { const cb = $('chatBox'); if (!cb) return; if (isLandscapePhone()) { chatVisible = false; cb.style.display = 'none'; } syncModal(); resize(); } catch (e) {} }, 250)); /* 가로 전환 시 채팅 접고 캔버스 재계산 */
 function toggleTree() { togglePanel('treePanel'); if ($('treePanel').classList.contains('open')) renderTree(); }
+
+/* ================= 새 버전 감지 =================
+   설치형(PWA)은 캐시 때문에 옛 코드를 계속 쓰기 쉽다. 실제 서버의 index.html을 캐시 없이 읽어
+   지금 실행 중인 game.js 버전과 비교하고, 다르면 배너로 알린다. */
+const GAME_VER = (() => { try { return new URL(import.meta.url).searchParams.get('v') || '0'; } catch (e) { return '0'; } })();
+let updBar = null, updBusy = false;
+async function checkUpdate(manual) {
+  try {
+    const html = await fetch('index.html?t=' + Date.now(), { cache: 'no-store' }).then(r => r.ok ? r.text() : Promise.reject(r.status));
+    const m = /game\.js\?v=(\d+)/.exec(html);
+    if (!m) return;
+    if (m[1] !== GAME_VER) showUpdateBar(m[1]);
+    else if (manual) toast(`최신 버전입니다 (v${GAME_VER})`);
+  } catch (e) { if (manual) toast('업데이트 확인 실패 — 네트워크를 확인하세요'); }
+}
+function showUpdateBar(newVer) {
+  if (updBar) return;
+  updBar = document.createElement('div');
+  updBar.id = 'updBar';
+  updBar.innerHTML = `<span>🆕 새 버전 <b>v${esc(newVer)}</b>이 있습니다 <em>(현재 v${esc(GAME_VER)})</em></span><button id="updGo">업데이트</button><button id="updNo">나중에</button>`;
+  document.body.appendChild(updBar);
+  updBar.querySelector('#updNo').onclick = () => { updBar.remove(); updBar = null; };
+  updBar.querySelector('#updGo').onclick = () => applyUpdate();
+}
+async function applyUpdate() {
+  if (updBusy) return;
+  updBusy = true;
+  try { if (pendKeys.size) await trySync(true); } catch (e) {} /* 진행분 먼저 저장 */
+  try { for (const k of await caches.keys()) await caches.delete(k); } catch (e) {}
+  try { const rs = await navigator.serviceWorker.getRegistrations(); for (const r of rs) { try { await r.update(); } catch (e) {} } } catch (e) {}
+  location.replace(location.pathname + '?r=' + Date.now()); /* 캐시 우회 재시작 */
+}
+/* 서비스워커가 새 버전을 설치하면 즉시 알림 */
+try {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistration().then(r => {
+      if (!r) return;
+      r.addEventListener('updatefound', () => { const w = r.installing; if (!w) return; w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) checkUpdate(false); }); });
+    }).catch(() => {});
+  }
+} catch (e) {}
+setTimeout(() => checkUpdate(false), 4000);
+setInterval(() => checkUpdate(false), 600000); /* 10분마다 */
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(false); }); /* 앱을 다시 열 때 */
 
 /* ================= 홈 화면 설치(PWA) 안내 =================
    크롬/엣지는 beforeinstallprompt를 잡아 직접 설치 버튼을 띄우고,
@@ -9721,7 +9772,7 @@ async function doInstall() {
 
 /* ================= 성능 진단 오버레이 (?perf=1) =================
    실제 기기에서 무엇이 느린지 보기 위한 것. 프레임 시간 분포와 메모리·시트 상태를 화면에 띄운다. */
-let perfOn = false, perfEl = null, perfBuf = [], perfLast = 0, perfWorst = 0, perfStalls = 0;
+let perfOn = false, perfEl = null, perfBuf = [], perfGap = [], perfPrevT = 0, perfLast = 0, perfWorst = 0, perfWorstGap = 0, perfStalls = 0, perfDrops = 0;
 function perfInit() {
   try { perfOn = new URLSearchParams(location.search).get('perf') === '1'; } catch (e) {}
   if (!perfOn) return;
@@ -9730,23 +9781,33 @@ function perfInit() {
   perfEl.style.cssText = 'position:fixed;left:6px;top:6px;z-index:300;background:rgba(0,0,0,.78);color:#9f9;font:11px/1.45 monospace;padding:6px 8px;border-radius:6px;white-space:pre;pointer-events:none;max-width:70vw;';
   document.body.appendChild(perfEl);
 }
-function perfTick(ms) {
+function perfTick(ms, t) {
   if (!perfOn) return;
   perfBuf.push(ms);
+  if (perfPrevT) { /* 실제 프레임 간격 — 화면이 몇 번 갱신됐는지(끊김의 진짜 지표) */
+    const gap = t - perfPrevT;
+    perfGap.push(gap);
+    if (gap > 33) perfDrops++;            /* 30fps 미만으로 떨어진 프레임 */
+    if (gap > perfWorstGap) perfWorstGap = gap;
+  }
+  perfPrevT = t;
   if (ms > 50) perfStalls++;
   if (ms > perfWorst) perfWorst = ms;
   const now = Date.now();
   if (now - perfLast < 500 || !perfEl) return;
   perfLast = now;
   const a = [...perfBuf].sort((x, y) => x - y); perfBuf = [];
+  const g = [...perfGap].sort((x, y) => x - y); perfGap = [];
   if (!a.length) return;
   const p = q => a[Math.min(a.length - 1, Math.floor(a.length * q))];
+  const pg = q => g.length ? g[Math.min(g.length - 1, Math.floor(g.length * q))] : 0;
+  const fps = g.length ? Math.round(1000 / Math.max(1, pg(.5))) : 0;
   const sh = (() => { try { return sheetBytes(); } catch (e) { return 0; } })();
   const mem = performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) + 'MB' : '-';
   perfEl.textContent =
     `MOBILE=${MOBILE ? 'Y' : 'N'}  ${innerWidth}x${innerHeight} dpr${dpr}\n` +
-    `frame  med ${p(.5).toFixed(1)}  p95 ${p(.95).toFixed(1)}  max ${perfWorst.toFixed(0)}ms\n` +
-    `stalls(>50ms) ${perfStalls}   fps~${Math.round(1000 / Math.max(1, p(.5)))}\n` +
+    `FPS ${fps}   간격 p50 ${pg(.5).toFixed(0)} p95 ${pg(.95).toFixed(0)} max ${perfWorstGap.toFixed(0)}ms\n` +
+    `끊김(>33ms) ${perfDrops}   연산 med ${p(.5).toFixed(1)} p95 ${p(.95).toFixed(1)} max ${perfWorst.toFixed(0)}ms\n` +
     `sheets ${Object.keys(HERO_SHEETS).filter(k => HERO_SHEETS[k].img).length} (${sh}MB)  hue ${hueSheetCache.size}\n` +
     `wss ${WSS} tex ${bioTexCache.size}  sims ${sims.filter(s => s.alive).length}  heap ${mem}`;
 }
@@ -10393,7 +10454,7 @@ async function init() {
       name: myName, base: baseName, cls, x: SPAWN.x, y: SPAWN.y,
       lv: 1, exp: 0, hp: c.hp, maxHp: c.hp, atk: c.atk,
       gold: 100, inv: {}, equipped: {}, skills: {}, q: {}, qc: {},
-      dead: false, color: colorOf(uid), map: 'p1', conq: {}, dex: {}, statPts: 0, lastSeen: Date.now(), mp: maxMpOf(), gem: 0, achv: {}, title: '', daily: {},
+      dead: false, color: colorOf(uid), map: 'p1', conq: {}, dex: {}, statPts: 0, lastSeen: Date.now(), mp: maxMpOf(), gem: 0, achv: {}, title: '', daily: {}, balV: 2,
     }); } catch (e) { loadFail(e); return; }
     me = { ...me, cls, map: 'p1', gold: 100, hp: c.hp, maxHp: c.hp, atk: c.atk, lv: 1, exp: 0, inv: {}, equipped: {}, skills: {}, conq: {}, dex: {}, achv: {}, q: {}, statPts: 0, gem: 0, title: '' }; /* 스냅샷 도착 전 로컬 동기화 */
     await sysMsg(`${myName}님이 월드에 입장했습니다.`);
@@ -10414,6 +10475,16 @@ async function init() {
     me.y = Number.isFinite(d.y) ? d.y : SPAWN.y;
     me.hp = Number.isFinite(d.hp) ? clampN(d.hp, 1, maxHpOf()) : maxHpOf(); /* 저장된 HP 복원(이전엔 항상 기본값 100) */
     cam.x = me.x; cam.y = me.y;
+    /* 2026-09-11 밸런스 조정: 모든 캐릭터 레벨을 절반으로(1회만). 보안 규칙상 남의 문서는 못 고치므로
+       각 사용자가 접속할 때 자기 문서에 적용하고 balV로 중복 적용을 막는다. 정복 기록·장비·골드는 그대로 둔다. */
+    if ((d.balV || 0) < 2) {
+      const oldLv = Math.max(1, d.lv || 1);
+      const newLv = Math.max(1, Math.ceil(oldLv / 2));
+      me.lv = newLv; me.exp = 0; me.balV = 2;
+      if (Number.isFinite(me.hp)) me.hp = Math.min(me.hp, maxHpOf());
+      await updX(meRef, { lv: newLv, exp: 0, balV: 2, hp: me.hp }).catch(() => {});
+      if (newLv < oldLv) toast(`⚖️ 밸런스 조정: 레벨 ${oldLv} → ${newLv} (레벨업에 필요한 경험치도 2배가 되었습니다)`, 'sysq');
+    }
     restorePend(d); /* 이전 세션에서 서버에 못 올린 진행분(서버 lastSeen보다 새로울 때만) */
     await updX(meRef, { lastSeen: Date.now(), dead: false, ...(d.mp == null ? { mp: maxMpOf() } : {}) }).catch(() => {}); /* 한도 초과여도 로그인은 계속 */
     /* 로그인 1회 실제 서버 기록: 접속 시각·레벨·전투력 — 절약 모드에서는 보류 변경이 없으면 서버에 아무것도 안 실려 랭킹 ⚔이 옛값/0으로 남았다 */

@@ -9719,6 +9719,7 @@ function openSettings() {
   $('setHp').value = settings.autoPotHp; $('setHpVal').textContent = settings.autoPotHp;
   $('setMp').value = settings.autoPotMp; $('setMpVal').textContent = settings.autoPotMp;
   document.querySelectorAll('#setAutoSell [data-rar]').forEach(b => b.classList.toggle('on', !!(settings.autoSell || {})[b.dataset.rar]));
+  { const v = $('setVerNow'); if (v) v.textContent = 'v' + GAME_VER; }
   updateInstallUI();
   syncGfxUI();
   { /* 멈춤 기록 — 원인 추적용. 'js'가 작고 '간격'만 크면 브라우저(메모리·디코드) 쪽이다 */
@@ -9732,6 +9733,10 @@ function openSettings() {
 { const hs = $('hudSettings'); if (hs) hs.onclick = e => { e.stopPropagation(); openSettings(); }; }
 { const sc = $('setClose'); if (sc) sc.onclick = () => { $('settingsModal').hidden = true; }; }
 { const ib = $('setInstall'); if (ib) ib.onclick = () => { sfx('click'); doInstall(); }; }
+/* 홈 화면(PWA)에 옛 버전이 물려 있으면 자동 확인이 캐시된 index.html 을 보고 '최신'이라고 판단할 수 있다.
+   직접 확인하고, 그래도 안 되면 코드 캐시를 비우고 다시 받는 길을 설정에 둔다. */
+{ const cb = $('setChkUpd'); if (cb) cb.onclick = () => { sfx('click'); cb.disabled = true; cb.textContent = '확인 중...'; Promise.resolve(checkUpdate(true)).finally(() => { cb.disabled = false; cb.textContent = '업데이트 확인'; }); }; }
+{ const fb = $('setForceUpd'); if (fb) fb.onclick = () => { sfx('click'); fb.disabled = true; fb.textContent = '받는 중...'; applyUpdate(); }; }
 { const sm = $('settingsModal'); if (sm) sm.onclick = e => { if (e.target === sm) sm.hidden = true; }; }
 { const el = $('setSound'); if (el) el.onchange = () => { if (el.checked === muted) toggleMute(); }; }
 { const el = $('setAuto'); if (el) el.onchange = () => { if (el.checked !== autoHunt) toggleAuto(); }; }
@@ -10125,7 +10130,7 @@ async function checkUpdate(manual) {
     const html = await fetch('index.html?t=' + Date.now(), { cache: 'no-store' }).then(r => r.ok ? r.text() : Promise.reject(r.status));
     const m = /game\.js\?v=(\d+)/.exec(html);
     if (!m) return;
-    if (m[1] !== GAME_VER) showUpdateBar(m[1]);
+    if ((+m[1] || 0) > (+GAME_VER || 0)) showUpdateBar(m[1]);
     else if (manual) toast(`최신 버전입니다 (v${GAME_VER})`);
   } catch (e) { if (manual) toast('업데이트 확인 실패 — 네트워크를 확인하세요'); }
 }

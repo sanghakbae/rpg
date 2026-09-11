@@ -506,6 +506,8 @@
   }
 
   /* 홈 화면 설치 */
+  #setChkUpd, #setForceUpd { padding: 5px 10px; font-size: 11.5px; border-radius: 6px; background: #2b3547; color: #dfe4ee; white-space: nowrap; }
+  #setForceUpd { background: linear-gradient(#c9a227, #8f6f14); color: #fff; font-weight: bold; }
   #setInstall { padding: 5px 14px; font-size: 12px; font-weight: bold; border-radius: 6px; color: #fff;
     background: linear-gradient(#2e7d46, #1d5730); }
   #setInstall:hover { filter: brightness(1.15); }
@@ -1050,6 +1052,9 @@
       <button data-rar="legend" style="--rc:#ffd700">전설</button>
       <button data-rar="unique" style="--rc:#ff4d4d">유니크</button>
     </div>
+    <div class="setrow" id="setVerRow"><span>🆕 버전 <b id="setVerNow" style="color:#ffd700">-</b></span>
+      <span style="display:flex;gap:6px"><button id="setChkUpd">업데이트 확인</button><button id="setForceUpd">새로 받기</button></span></div>
+    <div class="setNote" id="setVerNote">홈 화면에서 실행하면 옛 버전이 남아 있을 수 있습니다. 안 바뀌면 <b>새로 받기</b>를 누르세요(진행은 먼저 저장됩니다).</div>
     <div class="setrow" id="setInstallRow" hidden><span>📱 홈 화면에 설치</span><button id="setInstall">설치</button></div>
     <div class="setNote" id="setInstallNote" hidden></div>
     <div class="setNote">자동 사냥: 가장 가까운 몬스터를 찾아 이동·공격하고, 주변 아이템을 주우며, 스킬·물약을 자동 사용합니다. 이동 키를 누르면 해제됩니다.<br>저장: 진행은 기기에 즉시 기록되고 1분마다(레벨업·구역 이동·종료 시엔 즉시) 서버에 저장됩니다.</div>
@@ -1145,7 +1150,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=209"
+<script type="module" src="game.js?v=210"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

@@ -10197,14 +10197,22 @@ async function checkUpdate(manual) {
     if (manual) toast('업데이트 확인 실패 — ' + updLast.err);
   }
 }
+/* 화면 가운데 팝업으로 띄운다. 예전에는 하단에 작은 띠라 게임 화면에 묻혀 못 보고 지나쳤다. */
 function showUpdateBar(newVer) {
   if (updBar) return;
   updBar = document.createElement('div');
-  updBar.id = 'updBar';
-  updBar.innerHTML = `<span>🆕 새 버전 <b>v${esc(newVer)}</b>이 있습니다 <em>(현재 v${esc(GAME_VER)})</em></span><button id="updGo">업데이트</button><button id="updNo">나중에</button>`;
+  updBar.id = 'updModal';
+  updBar.innerHTML = `<div class="umBox">
+      <div class="umTitle">🆕 새 버전 v${esc(newVer)}</div>
+      <div class="umSub">지금 v${esc(GAME_VER)} · 업데이트하면 진행을 먼저 저장하고 다시 시작합니다</div>
+      <div class="umRow"><button id="updGo">지금 업데이트</button><button id="updNo">나중에</button></div>
+    </div>`;
   document.body.appendChild(updBar);
-  updBar.querySelector('#updNo').onclick = () => { updBar.remove(); updBar = null; };
-  updBar.querySelector('#updGo').onclick = () => applyUpdate();
+  const close = () => { if (updBar) { updBar.remove(); updBar = null; } };
+  updBar.querySelector('#updNo').onclick = close;
+  updBar.querySelector('#updGo').onclick = () => { const b = updBar.querySelector('#updGo'); b.disabled = true; b.textContent = '받는 중...'; applyUpdate(); };
+  updBar.onclick = e => { if (e.target === updBar) close(); };
+  try { sfx('levelup'); } catch (e) {}
 }
 async function applyUpdate() {
   if (updBusy) return;
@@ -10224,7 +10232,8 @@ try {
     }).catch(() => {});
   }
 } catch (e) {}
-setTimeout(() => checkUpdate(false), 4000);
+setTimeout(() => checkUpdate(false), 2000);
+setTimeout(() => checkUpdate(false), 20000); /* 첫 접속 직후 배포가 막 올라간 경우를 한 번 더 잡는다 */
 setInterval(() => checkUpdate(false), 600000); /* 10분마다 */
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(false); }); /* 앱을 다시 열 때 */
 

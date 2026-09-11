@@ -2064,6 +2064,9 @@ const rankVal = p => rankMode === 'lv' ? (p.lv || 1) : rankMode === 'pvp' ? ((p.
 let rankCache = [];
 const curPower = () => { try { return Math.round(totalAtk() * (1 + totalCrit()) * skillPow()) || 0; } catch (e) { return 0; } };
 function renderRank() {
+  /* 랭킹판이 화면에 없으면(모바일 세로에서는 항상) 그리지 않는다 —
+     예전에는 로컬 값이 바뀔 때마다 보이지도 않는 목록 DOM을 다시 만들었다 */
+  { const rp = $('rankPanel'); if (!rp || getComputedStyle(rp).display === 'none') return; }
   /* 내 행은 로컬 값(레벨·전투력)을 즉시 반영 — 서버에는 1분 주기/레벨업 때 실린다 */
   let src = rankCache.map(p => p._id === uid ? { ...p, lv: me.lv || p.lv, power: curPower(), pvp: me.pvp || p.pvp } : p);
   if (rankCls !== 'all') src = src.filter(p => (p.cls || 'warrior') === rankCls); /* 직업별 보기 */
@@ -2088,12 +2091,36 @@ function renderRank() {
   if (t2) t2.style.background = rankMode === 'atk' ? '#c9a227' : '#2b3547';
   if (t3) t3.style.background = rankMode === 'pvp' ? '#c9a227' : '#2b3547';
 }
+/* 랭킹: 예전에는 상위 30명 문서를 '계속 구독'했다.
+   플레이어 문서는 가방·정복·도감·업적까지 들어 있어 한 건이 수십 KB다.
+   그 중 누구 하나라도 값이 바뀌면 스냅샷이 다시 와서 30건을 전부 역직렬화했고,
+   그 일이 렌더 루프 밖에서 돌기 때문에 화면만 멎고 원인은 안 보였다.
+   랭킹판은 세로 모바일에서 아예 숨겨져 있는데도 이 비용을 내고 있었다.
+   → 구독을 끊고, 필요한 순간(랭킹판·투기장을 열 때)에만 60초 캐시로 읽는다. */
+let rankAt = 0, rankLoading = false;
+function loadRank(force) {
+  if (rankLoading) return Promise.resolve(rankCache);
+  if (!force && Date.now() - rankAt < 60000 && rankCache.length) return Promise.resolve(rankCache);
+  rankLoading = true;
+  const t0 = performance.now();
+  return withTimeout(getDocs(query(collection(db, 'players'), orderBy('lv', 'desc'), limit(30))), 10000)
+    .then(snap => {
+      rankCache = [];
+      snap.forEach(dc => rankCache.push({ ...dc.data(), _id: dc.id }));
+      rankAt = Date.now();
+      outMark('랭킹읽기', t0);
+      try { renderRank(); } catch (e) {}
+      return rankCache;
+    })
+    .catch(() => rankCache)
+    .finally(() => { rankLoading = false; });
+}
 function watchRank() {
-  onSnapSafe('rank', query(collection(db, 'players'), orderBy('lv', 'desc'), limit(30)), snap => {
-    rankCache = [];
-    snap.forEach(dc => rankCache.push({ ...dc.data(), _id: dc.id }));
-    renderRank();
-  }, () => {});
+  /* 랭킹판이 화면에 보이는 환경(PC)에서만 주기 갱신. 모바일 세로는 숨겨져 있어 읽지 않는다. */
+  const visible = () => { const el = $('rankPanel'); return el && getComputedStyle(el).display !== 'none'; };
+  if (!visible()) return;
+  setTimeout(() => loadRank(true), 3000);
+  setInterval(() => { if (visible()) loadRank(true); }, 300000);
 }
 
 function watchChat() {
@@ -9616,7 +9643,7 @@ function togglePanel(id) {
     if (id === 'dexPanel') renderDex();
     if (id === 'achvPanel') renderAchv();
     if (id === 'hordePanel') renderHorde();
-    if (id === 'pvpPanel') { renderPvp(); pvpLoadFoes(); }
+    if (id === 'pvpPanel') { renderPvp(); loadRank().then(() => pvpLoadFoes()); } /* 상대 목록은 랭킹 캐시에서 뽑는다 */
   }
 }
 const rb2 = $('reviveBtn');
@@ -9650,6 +9677,7 @@ $('hudTop').onclick = () => {
 };
 try { if (localStorage.getItem('hudMini')) $('hud').classList.add('mini'); } catch (e) {}
 function toggleInv() { sfx('click'); $('invPanel').classList.toggle('open'); if ($('invPanel').classList.contains('open')) renderInvUI(); } /* 열 때 밀린 갱신 반영 */
+{ const rp = document.querySelector('#rankPanel h3'); if (rp) rp.addEventListener('click', () => loadRank()); } /* 랭킹판을 열 때 채운다 */
 document.querySelector('#rankPanel h3').addEventListener('click', e => {
   if (e.target.tagName === 'BUTTON') return;
   sfx('click');

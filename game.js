@@ -1130,7 +1130,7 @@ let ldCur = 0, ldTo = 0, ldTimer = 0;
 const ldT0 = Date.now(), ldMarks = []; /* 단계별 소요 시간 — 어느 구간이 오래 걸리는지 실기에서 확인용 */
 function ldPaint() { const b = $('ldBar'); if (b) b.style.width = ldCur.toFixed(1) + '%'; }
 function ldStep() {
-  if (ldCur >= ldTo) return;
+  if (ldCur >= ldTo) { clearInterval(ldTimer); ldTimer = 0; return; } /* 구간 끝까지 올라갔으면 타이머를 쉰다(다음 ldProg가 다시 켠다) */
   ldCur = Math.min(ldTo, ldCur + Math.max(0.05, (ldTo - ldCur) * 0.05)); /* 최소 속도가 있어 어떤 단계에서도 멈춰 보이지 않는다 */
   ldPaint();
 }
@@ -1147,14 +1147,15 @@ function ldProg(from, to, msg) {
 }
 function ldShow(from, to, msg) { const ld = $('loading'); if (ld) ld.style.display = 'flex'; ldProg(from, to, msg); }
 function ldHide() { const ld = $('loading'); if (ld) ld.style.display = 'none'; }
-let ldOff = false; /* 로딩이 끝났음을 프레임 루프도 알 수 있게 — 타이머가 씹혀도 검은 화면에 갇히지 않는다 */
+let ldOff = false, ldErr = false; /* ldOff: 로딩 끝(프레임 루프가 검은 화면을 걷어낸다) · ldErr: 오류 안내 표시 중(걷어내면 안 된다) */
 function ldDone(msg) { /* 100%까지 채운 뒤 곧바로 사라진다 */
-  ldCur = ldTo = 100; ldPaint();
-  if (msg) { const m = $('ldMsg'); if (m) m.textContent = msg; }
   if (ldTimer) { clearInterval(ldTimer); ldTimer = 0; }
   ldOff = true;
+  if (ldErr) return; /* 로딩 중 오류 안내가 떠 있으면 지우지 않는다 — 예전엔 안내가 조용히 사라지고 반쯤 망가진 상태로 들어갔다 */
+  ldCur = ldTo = 100; ldPaint();
+  if (msg) { const m = $('ldMsg'); if (m) m.textContent = msg; }
   ldHide();
-  setTimeout(ldHide, 200); /* 이 시점에 다른 코드가 다시 띄웠어도 확실히 내린다 */
+  setTimeout(() => { if (!ldErr) ldHide(); }, 200); /* 이 시점에 다른 코드가 다시 띄웠어도 확실히 내린다 */
 }
 /* 무거운 동기 작업(지형 굽기) 전에 한 프레임 양보 — 그래야 방금 올린 진행바가 실제로 그려진다 */
 const ldYield = () => new Promise(r => { let d = false; const f = () => { if (d) return; d = true; setTimeout(r, 0); }; requestAnimationFrame(f); setTimeout(f, 50); });
@@ -1174,6 +1175,12 @@ window.__ldMarks = () => ldMarks.map((v, i) => `${v.at}ms +${v.at - (i ? ldMarks
 window.__ld = (f, t, m) => { if (f != null) ldProg(f, t, m); return { cur: +ldCur.toFixed(1), to: ldTo, msg: ($('ldMsg') || {}).textContent }; }; /* 진단: 진행바 상태/강제 이동 */
 function ldFail(html) { /* 오류는 진행바를 걷어내고 안내만 남긴다 */
   if (ldTimer) { clearInterval(ldTimer); ldTimer = 0; }
+  if (ldOff) { /* 이미 플레이 가능한 상태다 — 잘 돌아가는 게임을 검은 오류 화면으로 덮지 않는다 */
+    try { toast(html.replace(/<br\s*\/?>/gi, ' '), 'sysq'); } catch (e) {}
+    return;
+  }
+  ldErr = true;
+  for (const id of ['loginScreen', 'create']) { const el = $(id); if (el) el.style.display = 'none'; } /* 로그인/생성 화면이 위(z-index 100·101)에 있으면 안내가 가려진다 */
   const ld = $('loading'); if (!ld) return;
   ld.style.display = 'flex'; ld.innerHTML = html;
 }
@@ -1360,7 +1367,12 @@ function savePend() {
       if (!uid) return;
       if (!pendKeys.size) { localStorage.removeItem(PEND_KEY()); return; }
       const snap = {}; for (const k of pendKeys) if (me[k] !== undefined) snap[k] = me[k];
-      snap.x = me.x; snap.y = me.y; snap.hp = me.hp; if (me.mp != null) snap.mp = Math.round(me.mp);
+      /* 쇄도 중에는 입장 전 체력·좌표를 저장한다 — 서버 저장(trySyncInner)과 같은 규칙.
+         예전에는 여기만 현재값을 써서, 회복된 채로 리로드하면 런을 공짜로 무르고 체력도 가득 찬 상태가 됐다. */
+      const h = hordeOn() ? horde : null;
+      snap.x = h ? h.backX : me.x; snap.y = h ? h.backY : me.y;
+      snap.hp = h ? h.hpBefore : me.hp;
+      if (me.mp != null && !h) snap.mp = Math.round(me.mp);
       localStorage.setItem(PEND_KEY(), JSON.stringify({ keys: [...pendKeys], me: snap, ts: Date.now() }));
     } catch (e) {}
   }, 150);
@@ -1397,7 +1409,9 @@ function applyLocalSim(id, upd) {
   if ('maxHp' in upd) s.maxHp = upd.maxHp;
   if ('hp' in upd) s.hp = upd.hp;
   if ('respawnAt' in upd) s.respawnAt = upd.respawnAt;
-  s.srvHp = s.hp;
+  /* srvHp는 '마지막으로 서버에서 본 hp'라는 뜻이어야 한다.
+     여기서 로컬 값으로 덮으면 다음 스냅샷이 '서버 값이 바뀌었다'고 오판해,
+     방금 로컬로 리스폰시킨 몬스터의 HP를 옛 서버 값으로 되돌렸다. */
 }
 const snapOf = (data, id) => ({ id, exists: () => data != null, data: () => data == null ? undefined : JSON.parse(JSON.stringify(data)) });
 /* 가짜 트랜잭션: 읽기는 로컬 상태, 쓰기는 콜백이 끝난 뒤 로컬에 반영 */
@@ -1453,7 +1467,7 @@ function addLoot(data) {
   return withTimeout(addDoc(collection(db, 'loot'), data), UPD_TIMEOUT).catch(err => { if (isQuotaErr(err)) { enterOffline(err); local(); } });
 }
 /* 보류분 동기화 시도 — 로컬 모드이거나 보류 필드가 있으면 45초마다 (실패한 쓰기는 한도를 소비하지 않음) */
-let syncing = false, syncQueued = false, syncP = null; const dirtyDuringSync = new Set();
+let syncing = false, syncQueued = false, syncP = null, syncFails = 0; const dirtyDuringSync = new Set();
 async function trySync(force) {
   if (!meRef || !uid) return false;
   if (syncing) { if (force) syncQueued = true; return syncP || false; } /* 전송 중 강제 요청(종료·구역이동)은 큐에 넣고 같은 약속을 돌려줘 await 가능 */
@@ -1464,7 +1478,7 @@ async function trySync(force) {
   syncing = true;
   syncP = (async () => {
     try {
-      let r = await trySyncInner(now);
+      let r = await trySyncInner(now, force);
       for (let i = 0; i < 3 && r && syncQueued; i++) { syncQueued = false; if (pendKeys.size) r = await trySyncInner(Date.now()); }
       syncQueued = false;
       return r;
@@ -1472,8 +1486,11 @@ async function trySync(force) {
   })();
   return syncP;
 }
-async function trySyncInner(now) {
-  if (!offline && !pendKeys.size) return true;
+async function trySyncInner(now, force) {
+  /* 강제 저장(구역 이동·부활·로그아웃)은 보류 키가 없어도 써야 한다.
+     x/y/hp/map/lastSeen 같은 휘발 필드는 pendKeys에 들어가지 않으므로, 예전에는
+     '구역 이동 즉시 저장'이 아무것도 쓰지 않고 끝나 재접속하면 이전 구역으로 돌아갔다. */
+  if (!offline && !pendKeys.size && !force) return true;
   const payload = {};
   for (const k of pendKeys) if (me[k] !== undefined) payload[k] = me[k];
   payload.x = me.x; payload.y = me.y;
@@ -1487,7 +1504,7 @@ async function trySyncInner(now) {
     if (offline) /* 실패했던 것과 같은 종류(트랜잭션)로 시험 — 단순 update만 통하는 상태에서 온라인으로 오판하면 다음 처치가 또 8초 매달린다 */
       await withTimeout(runTransaction(db, async tx => { await tx.get(meRef); tx.update(meRef, payload); }), 12000);
     else await withTimeout(updateDoc(meRef, payload), 12000); /* 절약 모드 주기 저장: 쓰기 1회 */
-    lastSyncAt = now;
+    lastSyncAt = now; syncFails = 0;
     const was = offline;
     offline = false;
     for (const k of sent) if (!dirtyDuringSync.has(k)) pendKeys.delete(k); /* 전송 중 다시 바뀐 키는 보류 유지 → 다음 저장에 실림 */
@@ -1498,7 +1515,13 @@ async function trySyncInner(now) {
     return true;
   } catch (err) {
     if (isQuotaErr(err)) { if (!offline) enterOffline(err); }
-    else window.__lastErr = { at: now, where: 'trySync', code: err && err.code, msg: String(err && err.message || err) };
+    else {
+      window.__lastErr = { at: now, where: 'trySync', code: err && err.code, msg: String(err && err.message || err) };
+      /* 한도 오류가 아닌 실패(permission-denied 등)는 로컬 모드로 넘어가지 않는다.
+         lastSyncAt을 그대로 두면 변경이 있을 때마다 1.2초 간격으로 영원히 재시도했다 → 지수 백오프(최대 5분). */
+      syncFails++;
+      lastSyncAt = now - ECO_SYNC_MS + Math.min(300000, 5000 * Math.pow(2, Math.min(6, syncFails)));
+    }
     return false;
   }
 }
@@ -1553,7 +1576,11 @@ const localSys = []; /* 절약/로컬 모드에서 서버에 쓰지 않은 시�
 function sysLocal(text, k) {
   localSys.push({ text, k }); while (localSys.length > 8) localSys.shift();
   const log = $('chatLog'); if (!log) return;
-  const d = document.createElement('div'); d.className = k === 'q' ? 'sysq' : 'sys'; d.textContent = text; log.appendChild(d); log.scrollTop = log.scrollHeight;
+  const d = document.createElement('div'); d.className = k === 'q' ? 'sysq' : 'sys'; d.textContent = text; log.appendChild(d);
+  /* 절약 모드에서는 서버 채팅 스냅샷이 거의 오지 않아 이 목록이 초기화되지 않는다.
+     처치마다 한 줄씩 쌓여 자동 사냥 한 시간이면 수천 노드가 되어 스크롤·레이아웃이 무거워졌다. */
+  while (log.childElementCount > 60) log.removeChild(log.firstChild);
+  log.scrollTop = log.scrollHeight;
 }
 async function sysMsg(text, k = '') {
   if (offline || ecoOn()) { sysLocal(text, k); return; } /* 처치마다 채팅 문서를 쓰던 것 제거 — 절약 모드에선 내 화면에만 */
@@ -1601,7 +1628,15 @@ async function ensureWorld() {
   try { await batch.commit(); } catch (e) {}
 }
 
-async function ensurePage(n) {
+const ensurePageP = {}; /* 같은 구역을 동시에 두 번 시드하지 않게 — 감시자 재시도와 로그인 경로가 겹쳐 26건을 쓰고 몬스터가 순간이동했다 */
+function ensurePage(n) {
+  const pid = pageId(n);
+  if (ensurePageP[pid]) return ensurePageP[pid];
+  const p = ensurePageInner(n).finally(() => { delete ensurePageP[pid]; });
+  ensurePageP[pid] = p;
+  return p;
+}
+async function ensurePageInner(n) {
   if (offline) return;
   const pid = pageId(n);
   const flag = doc(db, 'world', 'init_' + pid);
@@ -1887,7 +1922,9 @@ function watchMonsters() {
       if (s.alive && !d.alive) s.deadT = Date.now(); /* 사망 애니메이션 시작 시각 */
       const aliveChanged = s.alive !== !!d.alive;
       s.alive = !!d.alive;
-      s.uniq = !!d.uniq;
+      /* 유니크 여부는 리스폰 때 로컬에서 정해진다(절약 모드에선 서버에 쓰지 않는다).
+         매 스냅샷마다 서버 값을 덮어쓰면 갓 리스폰한 유니크가 곧바로 평범한 몬스터로 바뀌었다. */
+      { const du = !!d.uniq; if (s.srvUniq === undefined || s.srvUniq !== du) { s.srvUniq = du; s.uniq = du; s._ud = null; } }
       /* 몬스터 HP는 클라이언트가 권위(서버 쓰기는 처치/리스폰만) — 서버 hp 값이 실제로 바뀌었거나 생사 전환일 때만 덮어쓴다.
          (매 스냅샷마다 덮어쓰면 다른 문서 변경 때문에 내가 깎아 둔 HP가 만피로 되돌아간다) */
       if (aliveChanged || s.srvHp !== d.hp || s.srvHp === undefined) {
@@ -1927,6 +1964,7 @@ function watchPlayers() {
 }
 
 let unsubLoot = null;
+const lootTaken = new Set(); /* 이번 세션에서 이미 주운 서버 루팅 id — 삭제 실패 시 재등장 방지 */
 function watchLoot() {
   /* 현재 구역만 구독 — 전체 컬렉션 구독은 읽기 쿼터를 세계 전체 드랍에 비례해 소모 */
   if (unsubLoot) unsubLoot();
@@ -1934,7 +1972,7 @@ function watchLoot() {
   const sub = () => unsubLoot = onSnapshot(query(collection(db, 'loot'), where('map', '==', myPage())), snap => {
     const keep = {}; for (const [k, v] of Object.entries(lootItems)) if (k.startsWith('local_')) keep[k] = v; /* 로컬 모드에서 떨어진 루팅 유지 */
     lootItems = keep;
-    snap.forEach(dc => lootItems[dc.id] = dc.data());
+    snap.forEach(dc => { if (!lootTaken.has(dc.id)) lootItems[dc.id] = dc.data(); });
   }, err => { console.error('[loot]', err); noteErr(err); setTimeout(() => { if (unsubLoot) watchLoot(); }, 5000); });
   sub();
 }
@@ -2259,8 +2297,11 @@ function angLerp(a, b, t) {
 const NAV_G = 16, NAV_PAD = 13; /* 격자 16px, 플레이어 반경 여유 */
 const navGrids = {};
 function navGrid() {
-  const pid = myMap(), cols = worldColliders[pid] || [];
+  const pid = myMap(), cols = worldColliders[pid];
   let g = navGrids[pid];
+  /* 지형 재빌드 중에는 worldColliders[pid]가 잠깐 null이다.
+     예전에는 그 틈에 '장애물 0개' 격자를 만들어 캐시해 버려서, 그 사이 클릭 이동이 강·절벽을 관통했다. */
+  if (!cols) return g || { b: new Uint8Array(Math.ceil(WORLD.w / NAV_G) * Math.ceil(WORLD.h / NAV_G)), gw: Math.ceil(WORLD.w / NAV_G), gh: Math.ceil(WORLD.h / NAV_G), n: -1 };
   if (g && g.n === cols.length) return g;
   const gw = Math.ceil(WORLD.w / NAV_G), gh = Math.ceil(WORLD.h / NAV_G);
   const b = new Uint8Array(gw * gh);
@@ -2340,7 +2381,9 @@ function navStep(tx, ty) {
     navPath = navFind(me.x, me.y, tx, ty) || [{ x: tx, y: ty }]; /* 실패도 캐시 — 예전엔 매 프레임 전체 BFS가 다시 돌았다 */
   }
   while (navPath.length > 1 && Math.hypot(navPath[0].x - me.x, navPath[0].y - me.y) < 26) navPath.shift();
-  if (navPath.length > 1 && !navClear(me.x, me.y, navPath[0].x, navPath[0].y)) navAt = 0; /* 밀려나서 다음 지점이 벽 뒤가 됐으면 다음 프레임에 다시 계산 */
+  /* 밀려나서 다음 지점이 벽 뒤가 됐으면 다시 계산하되, 0.5초 이상 간격을 둔다.
+     navAt=0으로 두면 바위에 붙어 걷는 내내 매 프레임 전체 BFS가 돌아 모바일이 끊겼다. */
+  if (navPath.length > 1 && !navClear(me.x, me.y, navPath[0].x, navPath[0].y)) navAt = Math.min(navAt, now - 2500);
   return navPath[0] || { x: tx, y: ty };
 }
 
@@ -2820,7 +2863,7 @@ function buyPotion(itemId = 'potion') {
     tx.update(meRef, { gold: p.gold - pcost, inv: sortInvMap(inv) });
     return true;
   }).then(ok => {
-    if (ok) { sfx('buy'); toast(`🧪 ${ITEMS[itemId].name} 구매`); flashInv(); renderShop(); }
+    if (ok) { sfx('buy'); toast(`🧪 ${esc(ITEMS[itemId].name)} 구매`); flashInv(); renderShop(); }
     else toast('구매 실패 (골드/가방 확인)');
   }).catch(() => {});
 }
@@ -3175,7 +3218,11 @@ async function pickup(lid, l) {
       tx.update(meRef, r.upd);
       item = { ...cand, itemId: giveId }; res = r.res; soldG = r.sold || 0;
     });
-    if (item && res !== 'full' && !lid.startsWith('local_')) deleteDoc(doc(db, 'loot', lid)).catch(() => {}); /* 서버 루팅 문서(구버전 드롭)는 실제로 지워야 스냅샷마다 되살아나 무한 획득되지 않음 */
+    if (item && res !== 'full' && !lid.startsWith('local_')) {
+      lootTaken.add(lid); /* 삭제가 실패해도(한도·권한·오프라인) 다음 스냅샷이 같은 드랍을 되살려 무한 획득되지 않게 */
+      if (lootTaken.size > 400) { const it0 = lootTaken.values(); for (let i = 0; i < 200; i++) lootTaken.delete(it0.next().value); }
+      deleteDoc(doc(db, 'loot', lid)).catch(() => {}); /* 서버 루팅 문서(구버전 드롭)는 실제로 지워야 스냅샷마다 되살아나 무한 획득되지 않음 */
+    }
     if (!item && res === null) { /* 루팅 문서가 이미 사라진 유령 항목: 자동 사냥이 그 자리에서 맴돌지 않게 건너뛰고, 로컬 항목이면 제거 */
       lootSkip[lid] = Date.now() + 5000;
       delete lootItems[lid]; /* 서버에 실제로 있으면 루팅 스냅샷이 다시 채운다 */
@@ -3307,7 +3354,7 @@ function slotClick(rawId) {
       if (selPotKey !== selK || Date.now() - selPotT > 1500) {
         selPotKey = selK; selPotT = Date.now();
         setTimeout(() => {
-          toast(`${it.heal ? '🧪' : '💧'} ${it.name} (${it.heal ? 'HP +' + it.heal : 'MP +' + it.mana}) — 한 번 더 누르면 사용`);
+          toast(`${it.heal ? '🧪' : '💧'} ${esc(it.name)} (${it.heal ? 'HP +' + (+it.heal || 0) : 'MP +' + (+it.mana || 0)}) — 한 번 더 누르면 사용`); /* 이름은 서버 문서에서 올 수 있다 — toast는 innerHTML */
           sfx('click');
         }, 0);
         return;
@@ -3395,7 +3442,8 @@ function useSkillBook(rawId) {
     rings.push({ x: me.x, y: me.y, r: 90, t: 0, max: 600, color: '255,215,0' });
     fxSparks(me.x, me.y - 10, 26, '#ffd700', 200);
     const nm = esc(d.name);
-    toast(`${skillIconHtml(sid, d)} <b>${nm}</b> ${r === 'learn' ? '습득!' : r === 'lvup' ? `Lv ${skillLv(sid) + 1}!` : `강화 +${(((me.skillEnh || {})[sid]) || 0) + 1}!`}`, 'sysq');
+    /* 트랜잭션이 이미 로컬에 적용돼 있다 — +1을 또 더하면 실제보다 한 단계 높게 표시된다 */
+    toast(`${skillIconHtml(sid, d)} <b>${nm}</b> ${r === 'learn' ? '습득!' : r === 'lvup' ? `Lv ${skillLv(sid)}!` : `강화 +${((me.skillEnh || {})[sid]) || 0}!`}`, 'sysq');
     float(me.x, me.y - 40, `${d.name} ${r === 'learn' ? '습득!' : '강화!'}`, '#ffd700', true);
     setTimeout(() => { if ($('shopPanel')?.classList.contains('open')) renderShop(); if ($('treePanel')?.classList.contains('open')) renderTree(); }, 300);
   }).catch(err => { window.__lastErr = { at: Date.now(), where: 'useSkillBook', code: err && err.code, msg: String(err && err.message || err) }; if (err && err.code === 'resource-exhausted') onQuotaExceeded(); });
@@ -3696,7 +3744,7 @@ function enhanceItem(itemId, grade = 'normal') {
       updX(meRef, { 'q.enh': inc(1) }).catch(() => {}); /* 업적: 강화 성공 카운트 — updX가 1회만 반영 */
       sfx('levelup');
       enhFxFx(true);
-      toast(`🔨 강화 성공! <b style="color:${RARITY_COLOR[getItem(r.nid).rarity]}">${getItem(r.nid).name}</b>`, 'sysq');
+      toast(`🔨 강화 성공! <b style="color:${RARITY_COLOR[getItem(r.nid).rarity] || '#fff'}">${esc(getItem(r.nid).name)}</b>`, 'sysq');
       float(me.x, me.y - 40, '강화 성공!', '#ffd700');
       rings.push({ x: me.x, y: me.y, r: 70, t: 0, max: 450, color: '255,215,0' });
       fxSparks(me.x, me.y - 10, 14, '#ffd700', 140);
@@ -4615,7 +4663,7 @@ const cv = $('game'), ctx = cv.getContext('2d');
 const mm = $('minimap'), mctx = mm.getContext('2d');
 /* 백버퍼를 기기 픽셀비만큼 키워 렌더 — cvW/cvH는 CSS 픽셀 기준(기존 코드 의미 유지) */
 let dpr = 1, cvW = 0, cvH = 0, resizeT = 0;
-let wssT = 0;
+let wssT = 0, wssWant = 0;
 const DQ = MOBILE ? .45 : 1; /* 모바일 지형 디테일 계수 — 구역을 옮길 때마다 지형을 새로 굽는 비용(아이폰 100ms+)이 화면을 멈추게 했다. 축소 화면이라 밀도를 줄여도 차이가 거의 없다 */
 const dq = n => n > 0 ? Math.max(1, Math.round(n * DQ)) : 0;
 let WSS = 2; /* 지형 텍스처 배율 — 아래 calcWSS()가 해상도에 맞춰 정하고, resize마다 갱신된다(함수 선언은 호이스팅되므로 첫 resize에서도 안전) */
@@ -4629,7 +4677,10 @@ function resize() {
   const W = Math.round(innerWidth * d), H = Math.round(innerHeight * d);
   if (W === cv.width && H === cv.height && d === dpr) { cvW = innerWidth; cvH = innerHeight; return; } /* 치수 동일 → 재할당 생략 */
   dpr = d; cvW = innerWidth; cvH = innerHeight;
-  { const nw = calcWSS(); if (nw !== WSS) { WSS = nw; clearTimeout(wssT); wssT = setTimeout(() => { try { bioTexCache.clear(); worldColliders[myMap()] = null; delete navGrids[myMap()]; } catch (e) {} }, 600); } } /* 해상도가 바뀌면 지형 배율도 따라가되, 창을 끌 때 매 단계 재굽지 않게 0.6초 뒤에 한 번만 */
+  /* 해상도가 바뀌면 지형 배율도 따라가되, 창을 끄는 동안 매 단계 재굽지 않게 0.6초 뒤에 한 번만.
+     예전에는 WSS를 즉시 바꿔 getTex가 곧바로 다시 굽고, 0.6초 뒤 타이머가 그 결과를 버려 같은 지형을 두 번 구웠다.
+     (그 사이 worldColliders를 null로 만들어 한 프레임 동안 충돌이 사라지기도 했다) */
+  { const nw = calcWSS(); if (nw !== WSS && nw !== wssWant) { wssWant = nw; clearTimeout(wssT); wssT = setTimeout(() => { if (wssWant !== WSS) { WSS = wssWant; try { delete navGrids[myMap()]; } catch (e) {} texGen++; } }, 600); } } /* 배율만 바꾸면 getTex가 스스로 다시 굽는다 */
   cv.width = W; cv.height = H;
   cv.style.width = cvW + 'px'; cv.style.height = cvH + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -5077,7 +5128,8 @@ function buildZoneWorld(n) {
     c.fillStyle = 'rgba(0,0,0,.3)'; c.beginPath(); c.ellipse(x + 9 * s, y + 16 * s, 28 * s, 10 * s, 0, 0, 7); c.fill();
     c.fillStyle = P.trunk; c.beginPath(); c.moveTo(x - 6.5 * s, y + 15 * s); c.quadraticCurveTo(x - 4 * s, y, x - 3.5 * s, y - 16 * s); c.lineTo(x + 3.5 * s, y - 16 * s); c.quadraticCurveTo(x + 4 * s, y, x + 6.5 * s, y + 15 * s); c.closePath(); c.fill();
     if (pine) { for (let L = 2; L >= 0; L--) { const ly = y - 14 * s - L * 15 * s, lw = (26 - L * 6.5) * s; c.fillStyle = P.leaf[L]; c.beginPath(); c.moveTo(x - lw, ly + 14 * s); c.quadraticCurveTo(x, ly - 4 * s, x + lw, ly + 14 * s); c.quadraticCurveTo(x, ly + 8 * s, x - lw, ly + 14 * s); c.closePath(); c.fill(); c.strokeStyle = 'rgba(0,0,0,.22)'; c.lineWidth = 1.4; c.stroke(); } }
-    else { const cy = y - 32 * s; const blob = (bx, by, br, col) => { c.fillStyle = col; c.beginPath(); c.arc(bx, by, br, 0, 7); c.fill(); }; blob(x - 16 * s, cy + 7 * s, 18 * s, P.leaf[0]); blob(x + 16 * s, cy + 7 * s, 18 * s, P.leaf[0]); blob(x, cy + 10 * s, 19 * s, P.leaf[1]); blob(x, cy - 4 * s, 22 * s, P.leaf[2]); blob(x - 12 * s, cy - 12 * s, 14 * s, P.leaf[3]); blob(x + 12 * s, cy - 10 * s, 13 * s, P.leaf[3]); blob(x - 2 * s, cy - 16 * s, 12 * s, P.leaf[4]); for (let L2 = 0; L2 < 10; L2++) { const a = rng() * 6.283, rr2 = 10 + rng() * 16; blob(x + Math.cos(a) * rr2 * s * 1.15, cy - 4 * s + Math.sin(a) * rr2 * s * .6, 2.6 * s, 'rgba(255,255,255,.18)'); } }
+    else { const cy = y - 32 * s; const blob = (bx, by, br, col) => { c.fillStyle = col; c.beginPath(); c.arc(bx, by, br, 0, 7); c.fill(); }; blob(x - 16 * s, cy + 7 * s, 18 * s, P.leaf[0]); blob(x + 16 * s, cy + 7 * s, 18 * s, P.leaf[0]); blob(x, cy + 10 * s, 19 * s, P.leaf[1]); blob(x, cy - 4 * s, 22 * s, P.leaf[2]); blob(x - 12 * s, cy - 12 * s, 14 * s, P.leaf[3]); blob(x + 12 * s, cy - 10 * s, 13 * s, P.leaf[3]); blob(x - 2 * s, cy - 16 * s, 12 * s, P.leaf[4]); /* 위치 해시(sr)로 뽑는다 — rng()를 쓰면 폴백일 때만 난수가 20번 더 소비돼 스프라이트 로드 뒤 재빌드에서 지형 전체가 튄다 */
+      for (let L2 = 0; L2 < 10; L2++) { const a = sr(x * 0.37 + y * 0.11 + L2) * 6.283, rr2 = 10 + sr(x * 0.53 + y * 0.29 + L2 + 97) * 16; blob(x + Math.cos(a) * rr2 * s * 1.15, cy - 4 * s + Math.sin(a) * rr2 * s * .6, 2.6 * s, 'rgba(255,255,255,.18)'); } }
   };
   const rock = (x, y, s) => { cols.push({ x, y, r: 10 * s }); if (drawPropTex(c, pick(PS.rocks), x, y + 6 * s, 26 * s, PS.tint, rng() < .5)) return; c.fillStyle = 'rgba(0,0,0,.28)'; c.beginPath(); c.ellipse(x + 3, y + 8 * s, 14 * s, 6 * s, 0, 0, 7); c.fill(); const g = c.createLinearGradient(x - 11 * s, y - 12 * s, x + 11 * s, y + 8 * s); g.addColorStop(0, P.rock[2]); g.addColorStop(.5, P.rock[0]); g.addColorStop(1, P.rock[1]); c.fillStyle = g; c.beginPath(); c.moveTo(x - 12 * s, y + 6 * s); c.lineTo(x - 9 * s, y - 8 * s); c.lineTo(x - 1 * s, y - 13 * s); c.lineTo(x + 9 * s, y - 7 * s); c.lineTo(x + 13 * s, y + 4 * s); c.lineTo(x + 6 * s, y + 9 * s); c.closePath(); c.fill(); c.strokeStyle = 'rgba(0,0,0,.45)'; c.lineWidth = 1.2; c.stroke(); };
   const bush = (x, y, s) => { cols.push({ x, y, r: 8 * s }); if (drawPropTex(c, pick(PS.bushes), x, y + 5 * s, 22 * s, PS.tint, rng() < .5)) return; c.fillStyle = 'rgba(0,0,0,.22)'; c.beginPath(); c.ellipse(x + 3 * s, y + 7 * s, 13 * s, 5 * s, 0, 0, 7); c.fill(); c.fillStyle = P.leaf[2]; c.beginPath(); c.arc(x - 6 * s, y, 8 * s, 0, 7); c.arc(x + 6 * s, y - 1 * s, 9 * s, 0, 7); c.arc(x, y - 6 * s, 8 * s, 0, 7); c.fill(); c.fillStyle = P.leaf[4]; c.beginPath(); c.arc(x - 2 * s, y - 5 * s, 5.5 * s, 0, 7); c.fill(); if (((x * 7 + y * 13) | 0) % 2) { c.fillStyle = P.flowers[0]; c.beginPath(); c.arc(x + 4 * s, y - 7 * s, 1.6 * s, 0, 7); c.arc(x - 5 * s, y - 3 * s, 1.6 * s, 0, 7); c.fill(); } };
@@ -5086,7 +5138,15 @@ function buildZoneWorld(n) {
   const crystal = (x, y, s) => { c.fillStyle = P.flowers[i2 % 4]; c.shadowColor = P.flowers[0]; c.shadowBlur = 10; c.beginPath(); c.moveTo(x, y - 18 * s); c.lineTo(x + 5 * s, y - 4 * s); c.lineTo(x + 2 * s, y + 4 * s); c.lineTo(x - 3 * s, y + 4 * s); c.lineTo(x - 6 * s, y - 6 * s); c.closePath(); c.fill(); c.shadowBlur = 0; c.fillStyle = 'rgba(255,255,255,.5)'; c.beginPath(); c.moveTo(x, y - 16 * s); c.lineTo(x + 2 * s, y - 6 * s); c.lineTo(x - 1 * s, y - 6 * s); c.closePath(); c.fill(); };
   const pillar = (x, y, s, broken) => { cols.push({ x, y, r: 9 * s }); if (drawPropTex(c, broken ? 'statue_columnDamaged' : 'statue_column', x, y + 4 * s, 52 * s, PS.tint, false)) return; c.fillStyle = 'rgba(0,0,0,.3)'; c.beginPath(); c.ellipse(x + 4, y + 6 * s, 14 * s, 5 * s, 0, 0, 7); c.fill(); const h = (broken ? 22 : 46) * s; c.fillStyle = P.rock[0]; c.fillRect(x - 7 * s, y - h, 14 * s, h); c.fillStyle = P.rock[2]; c.fillRect(x - 7 * s, y - h, 4 * s, h); c.fillStyle = P.rock[1]; c.fillRect(x + 3 * s, y - h, 4 * s, h); c.fillStyle = P.rock[2]; c.fillRect(x - 9 * s, y - 4 * s, 18 * s, 5 * s); if (!broken) c.fillRect(x - 9 * s, y - h - 4 * s, 18 * s, 5 * s); else { c.fillStyle = P.rock[1]; c.beginPath(); c.moveTo(x - 7 * s, y - h); c.lineTo(x - 2 * s, y - h - 8 * s); c.lineTo(x + 3 * s, y - h - 3 * s); c.lineTo(x + 7 * s, y - h); c.closePath(); c.fill(); } };
   let i2 = 0;
-  const place = (count, fn, pad, sMin, sMax) => { let tries = 0; for (let k = 0; k < count && tries < count * 6; tries++) { const x = 70 + rng() * (WORLD.w - 140), y = 90 + rng() * (WORLD.h - 180); if (isBlocked(x, y, pad)) continue; if (cols.some(o => Math.hypot(o.x - x, o.y - y) < 36)) continue; i2++; fn(x, y, sMin + rng() * (sMax - sMin)); k++; } };
+  /* 후보마다 cols 전체(최대 ~1000개)를 훑던 것을 36px 격자 해시로 교체 — 구역 하나당 hypot 200만 번이 사라진다 */
+  const CG = 40, cgrid = new Map();
+  const cgKey = (x, y) => ((x / CG) | 0) + ',' + ((y / CG) | 0);
+  const cgAdd = (x, y) => { const k = cgKey(x, y); let a = cgrid.get(k); if (!a) cgrid.set(k, a = []); a.push({ x, y }); };
+  const cgNear = (x, y) => { const gx = (x / CG) | 0, gy = (y / CG) | 0;
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) { const a = cgrid.get((gx + dx) + ',' + (gy + dy)); if (!a) continue; for (const o of a) if (Math.hypot(o.x - x, o.y - y) < 36) return true; }
+    return false; };
+  for (const o of cols) cgAdd(o.x, o.y); /* 벽 등 이미 놓인 것 반영 */
+  const place = (count, fn, pad, sMin, sMax) => { let tries = 0; for (let k = 0; k < count && tries < count * 6; tries++) { const x = 70 + rng() * (WORLD.w - 140), y = 90 + rng() * (WORLD.h - 180); if (isBlocked(x, y, pad)) continue; if (cgNear(x, y)) continue; cgAdd(x, y); i2++; fn(x, y, sMin + rng() * (sMax - sMin)); k++; } };
   if (P.walls) { /* 동굴/폐허: 가장자리 벽 덩이 */
     for (let k = 0; k < 26; k++) { const side = k % 4, t = rng(); const x = side === 0 ? 40 + rng() * 60 : side === 1 ? WORLD.w - 40 - rng() * 60 : 60 + t * (WORLD.w - 120), y = side === 2 ? 40 + rng() * 50 : side === 3 ? WORLD.h - 40 - rng() * 50 : 60 + t * (WORLD.h - 120); if (isBlocked(x, y, 40)) continue; const r = 26 + rng() * 30; c.fillStyle = P.rock[1]; c.beginPath(); c.arc(x, y, r, 0, 7); c.fill(); c.fillStyle = P.rock[0]; c.beginPath(); c.arc(x - r * .2, y - r * .25, r * .6, 0, 7); c.fill(); cols.push({ x, y, r: r * .85 }); }
   }
@@ -5121,7 +5181,7 @@ function buildZoneWorld(n) {
     for (const g2 of gates) if (PS.dress.includes('sign')) drawPropTex(c, 'sign', g2.x + (g2.x < 800 ? 46 : -46), g2.y - 40, 30, PS.tint, g2.x > 800);
     const fenceKey = PS.dress.find(k => k.startsWith('fence'));
     if (fenceKey) for (let k = 0; k < 6; k++) { const x = 300 + k * 44, y = 130 + Math.sin(k) * 4; if (!isBlocked(x, y, 0)) drawPropTex(c, fenceKey, x, y, 22, PS.tint, false); }
-    for (const dk of PS.dress.filter(k => !/tent|campfire|sign|fence/.test(k)).slice(0, 2)) { const x = 200 + rng() * 1200, y = 180 + rng() * 800; if (!isBlocked(x, y, 40)) { const dh0 = dk === 'log' ? 13 : dk.startsWith('stump') ? 18 : 40; /* 통나무·그루터기는 납작해 작게 */ if (drawPropTex(c, dk, x, y, dh0, PS.tint, false)) cols.push({ x, y: y - 6, r: dh0 < 20 ? 10 : 16 }); } }
+    for (const dk of PS.dress.filter(k => !/tent|campfire|sign|fence/.test(k)).slice(0, 2)) { const x = 200 + rng() * 1200, y = 180 + rng() * 800; if (!isBlocked(x, y, 40)) { const dh0 = dk === 'log' ? 13 : dk.startsWith('stump') ? 18 : 40; /* 통나무·그루터기는 납작해 작게 */ drawPropTex(c, dk, x, y, dh0, PS.tint, false); cols.push({ x, y: y - 6, r: dh0 < 20 ? 10 : 16 }); } } /* 충돌체는 스프라이트 로드 여부와 무관하게 — 안 그러면 프롭이 도착하는 순간 서 있던 자리에 충돌체가 생긴다 */
   }
   /* 6) 테두리 */
   try { drawBrickBorder(c, P.style === 'volcano' ? 15 : P.style === 'abyss' ? 280 : P.style === 'snow' ? 205 : P.style === 'desert' ? 40 : 30, P.style === 'cave' ? 12 : 30); } catch (e) {}
@@ -5189,7 +5249,7 @@ let propRebuildT = 0;
 function onPropLoaded() { /* 프롭이 로드되면 현재 구역 지형을 다시 구워 벡터 폴백을 스프라이트로 교체 */
   clearTimeout(propRebuildT);
   const allDone = PROP_KEYS.every(k => { const e = HERO_SHEETS['prop_' + k.toLowerCase()]; return e && (e.img || e.failed); });
-  propRebuildT = setTimeout(() => { try { bioTexCache.delete(pageNum()); worldColliders[myMap()] = null; delete navGrids[myMap()]; } catch (e) {} }, allDone ? 0 : 1500); /* 46장이 따로따로 도착해도 재빌드는 한 번(전부 도착 시 즉시, 아니면 1.5초 정지 후) */
+  propRebuildT = setTimeout(() => { try { bioTexCache.delete(pageNum()); worldColliders[myMap()] = null; delete navGrids[myMap()]; texGen++; } catch (e) {} }, allDone ? 0 : 1500); /* 46장이 따로따로 도착해도 재빌드는 한 번(전부 도착 시 즉시, 아니면 1.5초 정지 후) */
 }
 /* 바이옴별 프롭 세트 */
 const PROP_SETS = {
@@ -5214,8 +5274,9 @@ function drawPropTex(c, key, x, y, h, tint, flip) {
   c.fillStyle = 'rgba(0,0,0,.28)'; c.beginPath(); c.ellipse(x + h * .08, y + 2, h * .30, h * .11, 0, 0, 7); c.fill();
   if (flip) { c.translate(x * 2, 0); c.scale(-1, 1); }
   if (tint) { /* 바이옴 색조: 스프라이트 알파에만 틴트 */
-    propTintCv.width = F; propTintCv.height = F; const g = propTintCv.getContext('2d');
-    g.clearRect(0, 0, F, F); g.drawImage(sh.img, 0, 0, F, F, 0, 0, F, F); g.globalCompositeOperation = 'source-atop'; g.fillStyle = tint; g.fillRect(0, 0, F, F);
+    if (propTintCv.width !== F || propTintCv.height !== F) { propTintCv.width = F; propTintCv.height = F; } /* 크기가 같으면 재할당하지 않는다 — 구역 하나에 256x256 캔버스를 300번씩 새로 잡고 있었다 */
+    const g = propTintCv.getContext('2d');
+    g.globalCompositeOperation = 'source-over'; g.clearRect(0, 0, F, F); g.drawImage(sh.img, 0, 0, F, F, 0, 0, F, F); g.globalCompositeOperation = 'source-atop'; g.fillStyle = tint; g.fillRect(0, 0, F, F);
     c.drawImage(propTintCv, dx, dy, dw, dh);
   } else c.drawImage(sh.img, 0, 0, F, F, dx, dy, dw, dh);
   c.restore();
@@ -5411,8 +5472,10 @@ function gotoPage(n) {
   sfx('boom');
   doShake(5);
   setTimeout(async () => {
-    await ensurePage(n);
+   try { /* 이 안에서 하나라도 던지면 mapFading이 true로 남아 화면이 영영 검은 채로 멈춘다 */
+    await ensurePage(n).catch(e => noteErr && noteErr(e)); /* 몬스터 시드는 실패해도 이동은 진행 */
     me.map = pageId(n);
+    try { localStorage.setItem('lastPage', String(n)); } catch (e) {} /* 다음 접속 때 이 구역 프롭을 미리 받기 위해 */
     const sp = pageDef(n).spawn;
     me.x = sp.x; me.y = sp.y;
     dest = null; attackTargetSimId = null;
@@ -5426,7 +5489,7 @@ function gotoPage(n) {
     watchMonsters();
     watchLoot(); /* 루팅도 구역별 구독 재설정 */
     watchPlayers(); /* 플레이어 구독도 새 구역 기준으로 재설정 */
-    sysMsg(`${myName}님이 ${pageDef(n).name}(으)로 이동했습니다.`);
+    sysMsg(`${myName}님이 ${pageDef(n).name}(으)로 이동했습니다.`).catch(() => {});
     try {
       const b = bandOfPage(n);
       const seen = JSON.parse(localStorage.getItem('seenBands_' + uid) || '[]');
@@ -5437,7 +5500,8 @@ function gotoPage(n) {
         if (sets.length) toast(`📍 ${BIOMES[b].name}: ${sets.map(sid => `◈${SETS[sid].name}`).join(' ')} 세트 드랍 지역!`, 'sysq');
       }
     } catch (e) {}
-    setTimeout(() => { if (ov) ov.style.opacity = 0; mapFading = false; }, 300);
+   } catch (e) { noteErr && noteErr(e); }
+   finally { setTimeout(() => { if (ov) ov.style.opacity = 0; mapFading = false; }, 300); }
   }, 380);
 }
 
@@ -5471,9 +5535,10 @@ function hordeStart() {
   if (unsubLoot) { try { unsubLoot(); } catch (e) {} unsubLoot = null; }
   if (unsubPlayers) { try { unsubPlayers(); } catch (e) {} unsubPlayers = null; }
   sims = []; others = {}; othersPrev = {}; lootItems = {}; pickHide.clear(); attackTargetSimId = null; dest = null; /* 구역의 남은 전리품은 쇄도에 들고 들어가지 않음(복귀 시 구독으로 복원) */
+  dmgQueue.clear(); /* 쇄도 id(hd_N)는 런마다 처음부터 다시 쓰므로, 지난 런의 대기 피해가 남으면 새 몬스터가 안 죽는다 */
   if (autoHunt) { autoHunt = false; updateAutoBtn(); } /* 이동은 직접 — 대신 사거리 안의 적은 자동 공격(아래 hordeTick) */
   horde = { st: 'run', left: HORDE_MS, waveLeft: HORDE_WAVE_MS, wave: 1, kills: 0, gold: 0, exp: 0,
-    b: {}, lv: {}, seq: 0, spawnT: 0, boomDepth: 0, hpBefore: me.hp };
+    b: {}, lv: {}, seq: 0, spawnT: 0, boomDepth: 0, hpBefore: me.hp, backX: me.x, backY: me.y }; /* backX/Y: 결계 좌표가 저장에 새지 않게(입장 전 위치) */
   me.hp = maxHpOf(); me.mp = maxMpOf(); hpDirty = true;
   me.x = HORDE_C.x; me.y = HORDE_C.y; me.vx = 0; me.vy = 0; cam.x = me.x; cam.y = me.y;
   fxFlash('255,90,60', 600, .4); sfx('boom'); doShake(8);
@@ -5494,6 +5559,7 @@ function hordeEnd(reason) {
   try {
   me.horde = { best: Math.max(bestBefore, survived), kills: Math.max(rec.kills || 0, kills), runs: (rec.runs || 0) + 1, clears: (rec.clears || 0) + (reason === 'clear' ? 1 : 0) };
   sims = sims.filter(s => !s.horde);
+  dmgQueue.clear();
   lootItems = {};
   hordeHudShow(false);
   /* 보상 지급: 런 전체를 한 번에(쓰기 1회 분량) */
@@ -5577,14 +5643,18 @@ function hordeKill(s) {
   spawnPoof(s);
   if (s.elite) { float(s.x, s.y - d.r - 30, `정예 처치! +${g}G`, '#ffd700', true); doShake(7); }
   const bm = horde.b.boom || 0;
-  if (bm && horde.boomDepth < 2) { /* 처치 폭발: 연쇄는 2단계까지만(무한 재귀 방지) */
-    horde.boomDepth++;
+  /* 연쇄 폭발 제한. 예전에는 boomDepth++/-- 를 같은 프레임에 껐다 켰는데,
+     연쇄 처치는 flushDamage의 await를 한 번 거쳐 다음 마이크로태스크에 도착해서 깊이가 항상 0이었다.
+     → 결계 전체가 한 번에 터지고 모든 몬스터의 보상이 들어왔다. 시간 창 기준으로 센다. */
+  const nowB = Date.now();
+  if (nowB - (horde.boomT || 0) > 250) { horde.boomT = nowB; horde.boomN = 0; }
+  if (bm && (horde.boomN || 0) < 6) {
+    horde.boomN = (horde.boomN || 0) + 1;
     const dmg = Math.max(1, Math.round(totalAtk() * bm));
     rings.push({ x: s.x, y: s.y, r: 110, t: 0, max: 320, color: '255,150,60' });
     fxSparks(s.x, s.y, 14, '#ff9a3c', 190);
     sfx('boom');
     for (const o of sims) if (o.horde && o.alive && o !== s && Math.hypot(o.x - s.x, o.y - s.y) < 115) attackResult(o, dmg, false);
-    horde.boomDepth--;
   }
 }
 
@@ -6289,7 +6359,9 @@ const sheetManifestP = fetch(`assets/sprites/manifest.json?v=${SHEET_VER}`).then
   .then(list => { sheetManifest = new Set(list); }).catch(() => { sheetManifest = false; })
   .finally(() => { try {
     /* 프롭은 현재 구역에 쓰이는 것만 미리 받는다 — 예전엔 46종을 전부 받아 로그인 요청이 90건 넘었다(나머지는 필요할 때 자동 로드) */
-    if (sheetManifest) { try { const PS = PROP_SETS[(BIOME_PAL[Math.min(9, Math.floor((pageNum() - 1) / 10))] || BIOME_PAL[0]).style] || PROP_SETS.meadow; for (const k of new Set([...PS.trees, ...PS.bushes, ...PS.rocks, ...PS.extra, ...PS.dress])) propSheet(k); } catch (e) {} }
+    /* pageNum()은 아직 내 문서가 병합되기 전이라 항상 1구역이다 — 지난 접속의 구역을 기억해 그 바이옴 프롭을 받는다 */
+    const lastN = (() => { try { const v = +localStorage.getItem('lastPage'); return v >= 1 && v <= 100 ? v : pageNum(); } catch (e) { return pageNum(); } })();
+    if (sheetManifest) { try { const PS = PROP_SETS[(BIOME_PAL[Math.min(9, Math.floor((lastN - 1) / 10))] || BIOME_PAL[0]).style] || PROP_SETS.meadow; for (const k of new Set([...PS.trees, ...PS.bushes, ...PS.rocks, ...PS.extra, ...PS.dress])) propSheet(k); } catch (e) {} }
     for (const k of (MOBILE ? [selectedCls] : ['warrior', 'archer', 'rogue', 'mage'])) { if (sheetManifest && sheetManifest.has(k)) heroSheet(k); /* 모바일은 고른 직업만(나머지는 벡터 초상화) */
       else { const el = document.querySelector(`#loginScreen .lp[data-cls="${k}"] img`); if (el) el.src = heroPortrait(k); } }
   } catch (e) {} });
@@ -7982,9 +8054,12 @@ function uiInsets(now) {
       /* HUD 실측 높이를 CSS 변수로 발행 — 장비패널(top)·모바일 카운터/미니맵이 CSS에서 따라감 */
       const hb = Math.round(h.bottom);
       if (hb !== uiInsetCache.hb) { uiInsetCache.hb = hb; document.documentElement.style.setProperty('--hudB', hb + 'px'); }
-      if (isMobileUI()) T = h.bottom + 8;
+      if (isMobileUI() && !isLandscapePhone()) T = h.bottom + 8;
     }
-    if (isMobileUI()) {
+    /* 가로 모드에서는 HUD·핫바가 왼쪽, 독이 오른쪽 세로줄이라 화면 가운데가 비어 있다 → 상하 인셋 없음.
+       예전에는 세로 기준 그대로 독의 top(화면 중앙 근처)을 하단 UI로 잡아 B가 300px이 되고,
+       남는 높이가 음수가 되면서 캐릭터가 화면 맨 위에 붙어 버렸다. */
+    if (isMobileUI() && !isLandscapePhone()) {
       /* 하단 고정 UI(핫바·좌측독 가로줄·모바일바) 중 가장 위쪽을 기준으로 캐릭터가 가려지지 않게 */
       let top = Infinity;
       for (const id of ['mobileBar', 'hotbar', 'dockL']) {
@@ -8098,14 +8173,14 @@ function drawLootItems(now) {
   }
 }
 /* 미니맵 — draw() + 3D씬 공용 */
-let miniBase = null, miniKey = '', miniAt = 0;
+let miniBase = null, miniKey = '', miniAt = 0, texGen = 0; /* texGen: 지형을 다시 구울 때마다 증가 — 같은 구역·같은 크기로 다시 구워도 미니맵이 갱신되게 */
 function updateMinimap(now) {
   /* 지형은 구역이 바뀔 때만 160x120으로 한 번 줄여 캐시한다.
      예전에는 매 프레임 월드 텍스처(최대 4400x3300)를 통째로 축소해 그려서 아이폰이 슬로우 모션이 됐다. */
   if (MOBILE && now - miniAt < 100) return; /* 모바일은 10fps로 충분 */
   miniAt = now;
   const t = getTex(myMap());
-  const key = myMap() + '|' + t.width;
+  const key = myMap() + '|' + t.width + '|' + texGen;
   if (miniKey !== key) {
     if (!miniBase) { miniBase = document.createElement('canvas'); miniBase.width = 160; miniBase.height = 120; }
     const g = miniBase.getContext('2d');
@@ -9369,7 +9444,7 @@ for (const [hbId, kind] of [['hbHp', 'hp'], ['hbMp', 'mp']]) {
     if ((kind === 'hp' && !it.heal) || (kind === 'mp' && !it.mana) || it.scroll) { toast('🧪 여기에 둘 수 없는 아이템입니다'); return; }
     updX(meRef, { [`potPref.${kind}`]: bid }).catch(() => {});
     me.potPref = { ...(me.potPref || {}), [kind]: bid };
-    toast(`${kind === 'hp' ? '🧪' : '💧'} 퀵슬롯 지정: ${it.name}`);
+    toast(`${kind === 'hp' ? '🧪' : '💧'} 퀵슬롯 지정: ${esc(it.name)}`);
     sfx('click');
   };
 }
@@ -9793,7 +9868,8 @@ async function applyUpdate() {
   if (updBusy) return;
   updBusy = true;
   try { if (pendKeys.size) await trySync(true); } catch (e) {} /* 진행분 먼저 저장 */
-  try { for (const k of await caches.keys()) await caches.delete(k); } catch (e) {}
+  /* 코드 캐시만 비운다 — 스프라이트(-asset, 모바일 23MB)까지 지우면 업데이트 때마다 전부 다시 받는다 */
+  try { for (const k of await caches.keys()) if (!/-asset$/.test(k)) await caches.delete(k); } catch (e) {}
   try { const rs = await navigator.serviceWorker.getRegistrations(); for (const r of rs) { try { await r.update(); } catch (e) {} } } catch (e) {}
   location.replace(location.pathname + '?r=' + Date.now()); /* 캐시 우회 재시작 */
 }
@@ -9846,8 +9922,11 @@ function updateInstallUI() {
 function showInstallTip(force) {
   const st = installState();
   if (st === 'done' || st === 'none') { if (force) toast('이 브라우저에서는 설치를 지원하지 않습니다'); return; }
-  if (!force) { try { if (localStorage.getItem('pwaTip')) return; } catch (e) {} }
-  try { localStorage.setItem('pwaTip', '1'); } catch (e) {}
+  /* 예전에는 '1'을 한 번 쓰고 영원히 다시 안 떴다 — 놓치거나 닫으면 안내를 볼 방법이 없었다.
+     이제 마지막으로 보여준 시각을 저장하고 7일 뒤 다시 안내한다(설치하면 st==='done'이라 애초에 안 뜬다). */
+  const TIP_AGAIN = 7 * 24 * 3600 * 1000;
+  if (!force) { try { const t = +localStorage.getItem('pwaTip') || 0; if (t && Date.now() - t < TIP_AGAIN) return; } catch (e) {} }
+  try { localStorage.setItem('pwaTip', String(Date.now())); } catch (e) {}
   const el = document.getElementById('installTip') || Object.assign(document.createElement('div'), { id: 'installTip' });
   const body = st === 'prompt' ? '홈 화면에 설치하면 전체화면으로 실행되고, 이미지가 저장돼 다음 접속이 훨씬 빨라집니다.'
     : st === 'ios' ? '아이폰은 자동 설치 창이 없습니다.<br>하단 <b>공유</b> 버튼 → <b>홈 화면에 추가</b>를 누르면 앱처럼 실행됩니다.'
@@ -9926,7 +10005,7 @@ perfInit();
 
 function loopBody(t) {
   const now = Date.now();
-  if (ldOff) { const _ld = $('loading'); if (_ld && _ld.style.display !== 'none') _ld.style.display = 'none'; } /* 안전장치: 준비가 끝났는데 로딩 화면이 남아 있으면 즉시 내린다 */
+  if (ldOff && !ldErr) { const _ld = $('loading'); if (_ld && _ld.style.display !== 'none') _ld.style.display = 'none'; } /* 안전장치: 준비가 끝났는데 로딩 화면이 남아 있으면 즉시 내린다 */
   const dt = Math.min(100, t - lastT); /* 프레임이 느릴 때 게임 시간까지 느려지던 것(20fps 아래 = 슬로우 모션) 완화 — 10fps까지는 실시간으로 진행 */
   lastT = t;
   if (!ready) {
@@ -10156,7 +10235,9 @@ function addStat(k) {
 }
 
 /* ================= 캐릭터 생성 ================= */
-let selectedCls = 'warrior';
+/* 저장된 선택을 선언 시점에 복원한다 — 시트 프리페치(manifest .finally)가 init보다 먼저 돌아서,
+   예전에는 모바일에서 늘 전사 시트를 받고 진짜 내 직업은 로그인 후 처음부터 다시 받았다. */
+let selectedCls = (() => { try { const c = localStorage.getItem('selCls'); return ['warrior', 'archer', 'rogue', 'mage'].includes(c) ? c : 'warrior'; } catch (e) { return 'warrior'; } })();
 function buildCreateUI(resolve) {
   const grid = $('classGrid');
   const info = {
@@ -10188,7 +10269,7 @@ function buildCreateUI(resolve) {
     ldShow(34, 44, '캐릭터를 만드는 중...');
     resolve({ name: n, cls: selectedCls });
   }
-  $('nameInput').addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+  $('nameInput').onkeydown = e => { if (e.key === 'Enter') submit(); }; /* addEventListener면 생성 화면을 두 번 열 때 옛 submit이 남아 진행바가 뒤로 간다 */
 }
 
 /* ================= 직업별 캐릭터 =================
@@ -10320,7 +10401,7 @@ function renderPvp() {
   const rows = pvpFoes.length ? pvpFoes.map((f, i) => {
     const s = f._st;
     return `<div class="pvRow"><div class="pvWho"><b>${esc(nameOf(f))}</b>
-      <span>Lv${f.lv || 1} · ${(CLASSES[f.cls] && CLASSES[f.cls].icon) || ''} 전투력 ${s.power} · 점수 ${pvpPts(f.pvp)}</span></div>
+      <span>Lv${(f.lv | 0) || 1} · ${(CLASSES[f.cls] && CLASSES[f.cls].icon) || ''} 전투력 ${s.power | 0} · 점수 ${pvpPts(f.pvp) | 0}</span></div>
       <button data-foe="${i}" ${left > 0 ? '' : 'disabled'}>도전</button></div>`;
   }).join('') : `<div class="pvEmpty">${esc(pvpFoeErr || '상대를 찾는 중…')}</div>`;
   body.innerHTML = `<div class="pvMe"><div><span>투기장 점수</span><b>${pvpPts(r)}</b></div><div><span>전적</span><b>${r.win || 0}승 ${r.lose || 0}패</b></div>
@@ -10423,6 +10504,8 @@ function waitForLoginClick() {
   return new Promise((resolve, reject) => {
     ldHide();
     let scr = $('loginScreen');
+    /* 영웅 선택 화면이 같은 요소를 재사용해 마크업을 갈아끼운다 — 그대로 두면 #googleLoginBtn이 없어 아래에서 터진다 */
+    if (scr && !scr.querySelector('#googleLoginBtn')) { scr.remove(); scr = null; }
     if (!scr) {
       scr = document.createElement('div');
       scr.id = 'loginScreen';
@@ -10519,8 +10602,14 @@ async function init() {
     await setPersistence(auth, browserLocalPersistence);
     await getRedirectResult(auth);
   } catch (e) { /* 저장소 차단 환경 - 무시 */ }
+  /* 저장소가 막힌 환경(사생활 보호 모드·iframe 차단)에서는 관찰자가 영영 호출되지 않는다.
+     예전에는 여기서 12%인 채로 무한 대기했다 — 15초면 '로그인 안 됨'으로 보고 로그인 화면을 띄운다. */
   let user = await new Promise(resolve => {
-    const un = onAuthStateChanged(auth, u => { un(); resolve(u); });
+    let done = false;
+    const fin = u => { if (done) return; done = true; try { un && un(); } catch (e) {} resolve(u); };
+    const to = setTimeout(() => fin(null), 15000);
+    var un = onAuthStateChanged(auth, u => { clearTimeout(to); fin(u); });
+    if (done) { try { un(); } catch (e) {} } /* 동기 호출 대비 */
   });
   if (!user) {
     if (location.search.includes('dev=1')) {
@@ -10583,7 +10672,8 @@ async function init() {
   let snap;
   if (!primary || pickCls === primaryCls) snap = primarySnap; /* 대표 문서는 이미 받아 뒀다 */
   else { /* 위에서 한꺼번에 받아둔 스냅샷을 재사용 — 같은 문서를 두 번 읽지 않는다 */
-    const pre = primary ? all5[CLASS_KEYS.indexOf(pickCls) + 1] : null;
+    const pi = CLASS_KEYS.indexOf(pickCls); /* -1이면 all5[0](대표 문서)을 잘못 집는다 — 명시적으로 막는다 */
+    const pre = (primary && pi >= 0) ? all5[pi + 1] : null;
     if (pre && pre.status === 'fulfilled') snap = pre.value;
     else { try { snap = await getDoc(meRef); } catch (e) { loadFail(e); return; } }
   }
@@ -10622,15 +10712,16 @@ async function init() {
     cam.x = me.x; cam.y = me.y;
     /* 2026-09-11 밸런스 조정: 모든 캐릭터 레벨을 절반으로(1회만). 보안 규칙상 남의 문서는 못 고치므로
        각 사용자가 접속할 때 자기 문서에 적용하고 balV로 중복 적용을 막는다. 정복 기록·장비·골드는 그대로 둔다. */
+    restorePend(d); /* 이전 세션에서 서버에 못 올린 진행분(서버 lastSeen보다 새로울 때만) */
+    /* 보류분을 먼저 복원한 뒤에 환산한다 — 순서가 반대면 복원이 레벨을 되돌려 놓고 balV만 2로 남아 환산이 영영 사라졌다 */
     if ((d.balV || 0) < 2) {
-      const oldLv = Math.max(1, d.lv || 1);
+      const oldLv = Math.max(1, me.lv || d.lv || 1);
       const newLv = Math.max(1, Math.ceil(oldLv / 2));
       me.lv = newLv; me.exp = 0; me.balV = 2;
       if (Number.isFinite(me.hp)) me.hp = Math.min(me.hp, maxHpOf());
       await updX(meRef, { lv: newLv, exp: 0, balV: 2, hp: me.hp }).catch(() => {});
       if (newLv < oldLv) toast(`⚖️ 밸런스 조정: 레벨 ${oldLv} → ${newLv} (레벨업에 필요한 경험치도 2배가 되었습니다)`, 'sysq');
     }
-    restorePend(d); /* 이전 세션에서 서버에 못 올린 진행분(서버 lastSeen보다 새로울 때만) */
     await updX(meRef, { lastSeen: Date.now(), dead: false, ...(d.mp == null ? { mp: maxMpOf() } : {}) }).catch(() => {}); /* 한도 초과여도 로그인은 계속 */
     /* 로그인 1회 실제 서버 기록: 접속 시각·레벨·전투력 — 절약 모드에서는 보류 변경이 없으면 서버에 아무것도 안 실려 랭킹 ⚔이 옛값/0으로 남았다 */
     withTimeout(updateDoc(meRef, { lastSeen: Date.now(), dead: false, lv: me.lv || 1, power: curPower(), ...(nameFix || {}) }), UPD_TIMEOUT).catch(() => {});
@@ -10685,6 +10776,8 @@ async function init() {
     document.body.appendChild(dv);
   } } catch (e) {}
   loginAt = Date.now();
+  /* 여기부터는 이미 플레이 가능한 상태다 — 꼬리 작업이 던져도 게임을 오류 화면으로 덮지 않는다 */
+  try {
   window.__HIT = (sx, sy) => { const r = simAt(sx, sy); return { world: r.w, hit: r.s ? { id: r.s.id, kind: r.s.kind, x: Math.round(r.s.x), y: Math.round(r.s.y) } : null }; };
   window.__SIMS = () => sims.filter(v => v.alive && v.map === myMap()).slice(0, 8).map(v => ({ id: v.id, kind: v.kind, hp: v.hp, maxHp: v.maxHp, x: Math.round(v.x), y: Math.round(v.y), r: (sdef(v).r || 16), sx: Math.round((v.x - view.x) * (view.z || 1)), sy: Math.round((v.y - view.y) * (view.z || 1)) }));
   window.__itemThumb = itemThumb; window.__itemIconCanvas = itemIconCanvas; /* 진단: 아이콘 미리보기 */
@@ -10707,6 +10800,7 @@ window.__tex = n => getTex(pageId(n)); window.__nav = (tx, ty) => navFind(me.x, 
   const mn = $('mapName');
   if (mn) mn.textContent = pageDef(pageNum()).name;
   renderInvUI();
+  } catch (e) { noteErr && noteErr(e); console.error('[init tail]', e); }
 }
 
 buildWorld();
@@ -10736,7 +10830,7 @@ if (location.search.includes('dbg=1')) {
 }
 
 init().catch(err => {
-  ldFail('초기화 실패: ' + esc(err.message) +
+  ldFail('초기화 실패: ' + esc((err && (err.message || err.code)) || String(err)) +
     '<br><br>Firebase 콘솔에서 확인하세요:<br>1. Authentication &gt; Google 로그인 사용<br>2. Cloud Firestore 생성<br>3. 보안 규칙에서 로그인 사용자 읽기/쓰기 허용');
 });
 

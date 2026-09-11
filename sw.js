@@ -37,10 +37,20 @@ self.addEventListener('fetch', e => {
     return;
   }
   if (isCode(u)) {                                           /* 네트워크 우선 */
+    /* 캐시 키에서 쿼리를 뗀다. 예전에는 요청 URL 그대로 저장해서
+       업데이트 확인이 만드는 index.html?t=<시각>과 버전마다 다른 game.js?v=N이
+       삭제되지 않고 무한히 쌓였다(10분마다 한 건씩). */
+    const key = new Request(u.origin + u.pathname);
     e.respondWith(fetch(req).then(res => {
-      if (res && res.ok) { const cp = res.clone(); caches.open(SHELL).then(c => c.put(req, cp)).catch(() => {}); }
+      if (res && res.ok) {
+        const cp = res.clone();
+        caches.open(SHELL).then(async c => {
+          for (const k of await c.keys()) { try { if (new URL(k.url).pathname === u.pathname) await c.delete(k); } catch (err) {} } /* 같은 경로의 옛 항목 정리 */
+          await c.put(key, cp);
+        }).catch(() => {});
+      }
       return res;
-    }).catch(() => caches.match(req).then(hit => hit
+    }).catch(() => caches.match(key).then(hit => hit
       || (req.mode === 'navigate' ? caches.match('/index.html') : null)
       || Response.error()))); /* 문서가 아닌 요청에 HTML을 돌려주면 MIME 오류로 흰 화면이 된다 */
   }

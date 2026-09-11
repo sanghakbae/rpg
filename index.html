@@ -676,8 +676,11 @@
 
     /* 가방 = 하단 시트 (열림/닫힘 display 규칙은 기본 규칙 공용) */
     /* 모든 창: 화면 좌우 6px 안쪽에 고정 — transform/100vw 계산은 iOS Safari에서 어긋나 창이 화면 밖으로 밀려났다 */
-    #invPanel.open, .sidepanel.open { top: 78px !important; bottom: calc(148px + env(safe-area-inset-bottom));
-      left: 6px !important; right: 6px; width: auto; max-width: none; transform: none; overflow-x: hidden; }
+    #invPanel.open, .sidepanel.open { /* 화면의 80% 크기 · 하단 메뉴 위까지만 (transform 없이 좌우 인셋으로 중앙) */
+      top: auto !important; bottom: var(--botUI, 124px) !important;
+      left: 10vw !important; right: 10vw !important; width: auto !important; max-width: none !important;
+      height: min(80vh, calc(100vh - var(--botUI, 124px) - 12px)) !important; max-height: none !important;
+      transform: none !important; overflow-x: hidden; display: none; flex-direction: column; }
     #dexPanel.open { width: auto; } /* 데스크톱용 min(90vw,1000px) 폭 해제 → 좌우 6px 고정 */
     #dexBody { grid-template-columns: 1fr; }
     .dexmons { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -751,15 +754,7 @@
      --botUI = 하단 독·단축바가 차지하는 높이. 모든 창은 그 위 영역 안에서 80%로 잡힌다. */
   @media (pointer: coarse) {
     :root { --botUI: calc(124px + env(safe-area-inset-bottom)); --sideUI: 0px; }
-    .sidepanel, #invPanel {
-      left: 50% !important; right: auto !important; transform: translateX(-50%) !important;
-      top: auto !important; bottom: var(--botUI) !important;
-      width: 80vw !important; max-width: 80vw !important;
-      height: min(80vh, calc(100vh - var(--botUI) - 12px)) !important;
-      max-height: min(80vh, calc(100vh - var(--botUI) - 12px)) !important;
-      border-radius: 12px; display: none; flex-direction: column;
-    }
-    .sidepanel.open, #invPanel.open { display: flex !important; }
+    .sidepanel.open, #invPanel.open { display: flex !important; border-radius: 12px; }
     .sidepanel .spbody, #invPanel .spbody { flex: 1 1 auto; overflow-y: auto; }
     /* 전체 화면 오버레이형(설정·세계지도·각인·결과·투기장): 하단 메뉴 영역만큼 띄워서 중앙 정렬 */
     #settingsModal, #worldMap, #hordePick, #hordeEnd, #pvpPlay {
@@ -779,7 +774,7 @@
   }
   @media (pointer: coarse) and (orientation: landscape) and (max-height: 520px) {
     :root { --botUI: calc(56px + env(safe-area-inset-bottom)); --sideUI: 96px; } /* 가로: 독이 우측 세로 */
-    .sidepanel, #invPanel { left: calc(50% - var(--sideUI) / 2) !important; }
+    #invPanel.open, .sidepanel.open { left: 10vw !important; right: calc(10vw + var(--sideUI)) !important; }
   }
 
   /* 자동 사냥 버튼: 우측 상단(미니맵 아래) */
@@ -810,17 +805,15 @@
   }
 
 
-  /* 가방 창: 왼쪽 가방 · 오른쪽 착용 장비 2단 */
-  .invCols { display: flex; gap: 10px; align-items: flex-start; flex: 1 1 auto; min-height: 0; overflow: hidden; }
-  .invColL { flex: 1 1 62%; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
-  .invColR { flex: 0 0 36%; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
-  .invColL #invGrid, .invColR #equipGrid { overflow-y: auto; min-height: 0; }
-  .invColR #equipGrid { grid-template-columns: repeat(2, 1fr); }
+  /* 장비 영역: 왼쪽 세트 정보 · 오른쪽 장비 칸 (나란히) */
+  #equipWrap { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 8px; }
+  #setCol { flex: 1 1 auto; min-width: 0; }
+  #equipWrap #equipGrid { flex: 0 0 auto; margin-bottom: 0; }
+  #setCol #setRow { margin: 0 !important; }
   @media (max-width: 640px), (pointer: coarse) {
-    .invCols { gap: 6px; }
-    .invColR { flex: 0 0 38%; }
-    .invColR #equipGrid { grid-template-columns: repeat(2, 1fr); gap: 4px; }
-    .invColL h3, .invColR h3 { font-size: 11px; }
+    #equipWrap { gap: 6px; }
+    #equipWrap #equipGrid { grid-template-columns: repeat(3, minmax(0, 52px)); gap: 4px; }
+    #setCol #setRow { font-size: 9.5px !important; line-height: 1.5 !important; padding: 5px 7px !important; max-height: 160px; overflow-y: auto; }
   }
 
 
@@ -843,6 +836,23 @@
   @media (pointer: coarse) and (orientation: landscape) and (max-height: 520px) {
     #chatBox { width: 300px; bottom: calc(var(--botUI, 56px) + 6px) !important; }
     #chatLog { max-height: 64px; }
+  }
+
+
+  /* 아이콘과 칸 사이 여백 축소 + 세트 정보 가독성 */
+  .islot .ic { width: 86% !important; height: 86% !important; line-height: 1 !important; }
+  .eslot .eic { width: 74% !important; height: 74% !important; }
+  #invGrid { gap: 4px !important; }
+  #equipGrid { gap: 4px !important; }
+  #setCol #setRow { font-size: 11px; line-height: 1.45; }
+  #setCol #setRow b { display: inline; }
+  #setCol .setName { display: block; margin-top: 4px; }
+  @media (max-width: 640px), (pointer: coarse) {
+    .islot .ic { width: 88% !important; height: 88% !important; }
+    .eslot .eic { width: 70% !important; height: 70% !important; }
+    #invGrid { gap: 3px !important; }
+    .eslot .slbl { font-size: 7.5px !important; }
+    #setCol #setRow { font-size: 9.5px !important; line-height: 1.5 !important; white-space: normal; word-break: keep-all; }
   }
 
 </style>
@@ -901,16 +911,10 @@
 <div id="modalDim"></div>
 
 <div id="invPanel" class="panel">
-  <div class="invCols">
-  <div class="invColL">
+  <h3 class="tog" data-tog="equipWrap">장비 [더블클릭: 해제] <span class="arr">▾</span></h3>
+  <div id="equipWrap"><div id="setCol"></div><div id="equipGrid"></div></div>
   <h3 class="tog" data-tog="invGrid">가방 [클릭: 장착/사용] <span id="bagCount">0/18</span> <button id="sortBtn">정렬</button> <button id="bulkSellBtn">등급판매</button> <button id="salvageBtn">분해</button> <span class="arr">▾</span></h3>
   <div id="invGrid"></div>
-  </div>
-  <div class="invColR">
-  <h3 class="tog" data-tog="equipGrid">착용 장비 <span class="arr">▾</span></h3>
-  <div id="equipGrid"></div>
-  </div>
-  </div>
 </div>
 
 <div id="shopPanel" class="sidepanel panel">
@@ -1084,7 +1088,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=188"
+<script type="module" src="game.js?v=191"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

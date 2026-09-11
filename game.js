@@ -3924,7 +3924,7 @@ function renderInvUI() {
     setRow = document.createElement('div');
     setRow.id = 'setRow';
     setRow.style.cssText = 'margin:0 2px 8px;padding:7px 10px;background:rgba(255,215,0,.05);border:1px solid rgba(255,215,0,.22);border-radius:6px;font-size:11.5px;line-height:1.7;color:#cdb;display:none;';
-    eg.parentNode.insertBefore(setRow, eg);
+    const col = document.getElementById('setCol'); if (col) col.appendChild(setRow); else eg.parentNode.insertBefore(setRow, eg); /* 세트 정보는 장비 칸 왼쪽 열에 */
   }
   const sb2 = setBonus();
   const setHtml = Object.entries(sb2.counts).map(([sid, n]) => {

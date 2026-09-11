@@ -1194,7 +1194,7 @@ let horde = null; /* 쇄도(생존 웨이브) 런 상태 — 아래 쇄도 섹�
 const hordeOn = () => !!horde && horde.st === 'run';
 const hb = k => (horde && horde.st === 'run' && horde.b[k]) || 0; /* 각인 배율(런 밖에서는 0) */
 let autoHunt = false, autoSkillT = 0, autoPotT = 0, targetT0 = 0, targetBest = 1e9; const simSkip = {}; /* 자동 사냥: '가까워지지 않을 때만' 제외(멀어서 오래 걸리는 것과 구분) */
-const settings = { autoPotHp: 45, autoPotMp: 20, dmgText: true, screenShake: true, autoSell: {} }; /* autoSell: 등급별 자동 판매 on/off */
+const settings = { autoPotHp: 45, autoPotMp: 20, dmgText: true, screenShake: true, autoSell: {}, gfx: '' }; /* gfx: high|mid|low (빈값=기기 기본) */ /* autoSell: 등급별 자동 판매 on/off */
 try { const sv = JSON.parse(localStorage.getItem('settings') || '{}'); Object.assign(settings, sv); } catch (e) {}
 const saveSettings = () => { try { localStorage.setItem('settings', JSON.stringify(settings)); } catch (e) {} };
 const view = { x: 0, y: 0, z: 1 };
@@ -1491,7 +1491,7 @@ function flashInv() {
     p.classList.add('flash');
   }
 }
-function doShake(pow) { if (!settings.screenShake) return; shakePow = Math.max(shakePow, pow); shakeT = Date.now(); }
+function doShake(pow) { if (!settings.screenShake || gfx() === 'low') return; shakePow = Math.max(shakePow, pow); shakeT = Date.now(); }
 
 /* ================= 월드 초기화 ================= */
 async function ensureWorld() {
@@ -5066,14 +5066,18 @@ function drawWaterFx(now) {
   ctx.restore();
 }
 /* 바이옴 입자: 낙엽/눈/불씨/포자/먼지/반짝이/물방울 — 뷰포트 주변 월드 좌표에서 순환 */
-const AMB_N = MOBILE ? 18 : 40; let ambient = [], ambStyle = '';
+const gfx = () => settings.gfx || (MOBILE ? 'mid' : 'high'); /* 화질: 낮음이면 입자·틴트·비네트·흔들림을 끈다 */
+const ambCount = () => { const g = gfx(); return g === 'low' ? 0 : g === 'mid' ? 14 : 40; };
+let ambient = [], ambStyle = '';
 function ambientKind(style) { return { meadow: 'leaf', jungle: 'leaf', swamp: 'spore', snow: 'snow', volcano: 'ember', desert: 'dust', cave: 'drip', ruin: 'dust', abyss: 'spark', sky: 'spark' }[style] || 'leaf'; }
 function updateAmbient(now, dt) {
   const pn = pageNum(), style = (BIOME_PAL[Math.min(9, Math.floor((pn - 1) / 10))] || BIOME_PAL[0]).style; const kind = ambientKind(style); /* 팔레트 스타일 기준(BIOMES.style은 구형 meadow/grave 2종) */
   const vw = cvW / view.z, vh = cvH / view.z, x0 = view.x - 60, y0 = view.y - 80;
   if (ambStyle !== style) { ambStyle = style; ambient = []; }
   const spawnOne = () => ({ x: x0 + Math.random() * (vw + 120), y: kind === 'ember' ? y0 + vh + Math.random() * 60 : y0 - Math.random() * 60, vx: (Math.random() - .5) * 30 + (kind === 'leaf' ? 22 : kind === 'dust' ? 60 : 0), vy: kind === 'ember' ? -(30 + Math.random() * 40) : kind === 'spark' ? (Math.random() - .5) * 12 : (18 + Math.random() * 30) * (kind === 'snow' ? .8 : kind === 'drip' ? 3 : 1), r: kind === 'spark' ? 1.2 + Math.random() * 1.6 : 1.5 + Math.random() * 2.2, ph: Math.random() * 7, life: 0, col: kind === 'leaf' ? (Math.random() < .5 ? '#c9803a' : '#7fa34a') : kind === 'spore' ? '#a8e070' : kind === 'ember' ? '#ff9a3a' : kind === 'dust' ? '#e8d8b0' : kind === 'drip' ? '#9fd8ff' : kind === 'spark' ? (style === 'abyss' ? '#d9a3ff' : '#ffffff') : '#ffffff' });
+  const AMB_N = ambCount();
   while (ambient.length < AMB_N) ambient.push(spawnOne());
+  if (ambient.length > AMB_N) ambient.length = AMB_N;
   for (const p of ambient) {
     p.life += dt; p.x += (p.vx + Math.sin(now / 700 + p.ph) * (kind === 'snow' || kind === 'leaf' ? 18 : 6)) * dt / 1000; p.y += p.vy * dt / 1000;
     if (kind === 'spark') { p.x += Math.sin(now / 500 + p.ph) * 10 * dt / 1000; }
@@ -5530,6 +5534,7 @@ function hordeConfine() {
 }
 
 function drawHordeArena(now) {
+  if (gfx() === 'low') { ctx.save(); ctx.strokeStyle = 'rgba(255,90,70,.7)'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(HORDE_C.x, HORDE_C.y, HORDE_R, 0, 7); ctx.stroke(); ctx.restore(); return; } /* 낮음: 결계는 선만 */
   const p = .5 + Math.sin(now / 700) * .5;
   ctx.save();
   ctx.globalCompositeOperation = 'multiply';
@@ -6329,6 +6334,7 @@ const hueBakeQ = []; /* 굽는 중인 색조 시트 — 프레임마다 조금�
 /* 시트 전체(8~30MB)를 한 프레임에 색조 변환하면 아이폰에서 50ms 넘게 멈췄다(구역 이동·새 몬스터 등장 때마다).
    → 캔버스만 먼저 만들고 가로 띠 단위로 여러 프레임에 나눠 굽는다. 다 구워지기 전에는 원본 시트를 그대로 쓴다. */
 function hueSheet(base, sh, dh) {
+  if (gfx() === 'low') return sh.img; /* 낮음: 색조 변형 생략 */
   if (MOBILE && sh.img.width * sh.img.height > 6e6) return sh.img; /* 큰 시트는 모바일에서 틴트 생략 — 31MB 캔버스를 매번 새로 만들다 프레임이 무너졌다 */
   const key = base + '|' + dh + '|' + sh.img.width; /* 해상도가 바뀌면(회전 등) 다른 캐시 */
   const e = hueSheetCache.get(key);
@@ -9296,6 +9302,7 @@ function openSettings() {
   $('setMp').value = settings.autoPotMp; $('setMpVal').textContent = settings.autoPotMp;
   document.querySelectorAll('#setAutoSell [data-rar]').forEach(b => b.classList.toggle('on', !!(settings.autoSell || {})[b.dataset.rar]));
   updateInstallUI();
+  syncGfxUI();
   m.hidden = false;
 }
 { const hs = $('hudSettings'); if (hs) hs.onclick = e => { e.stopPropagation(); openSettings(); }; }
@@ -9306,6 +9313,8 @@ function openSettings() {
 { const el = $('setAuto'); if (el) el.onchange = () => { if (el.checked !== autoHunt) toggleAuto(); }; }
 { const el = $('setDmg'); if (el) el.onchange = () => { settings.dmgText = el.checked; saveSettings(); }; }
 { const el = $('setShake'); if (el) el.onchange = () => { settings.screenShake = el.checked; saveSettings(); }; }
+{ const box = $('setGfx'); if (box) box.querySelectorAll('[data-g]').forEach(b => b.onclick = () => { settings.gfx = b.dataset.g; saveSettings(); ambient = []; syncGfxUI(); sfx('click'); toast(`화질: ${b.textContent}`); }); }
+function syncGfxUI() { const box = $('setGfx'); if (!box) return; const g = gfx(); box.querySelectorAll('[data-g]').forEach(b => b.classList.toggle('on', b.dataset.g === g)); }
 { const el = $('setHp'); if (el) el.oninput = () => { settings.autoPotHp = +el.value; $('setHpVal').textContent = el.value; saveSettings(); }; }
 { const el = $('setMp'); if (el) el.oninput = () => { settings.autoPotMp = +el.value; $('setMpVal').textContent = el.value; saveSettings(); }; }
 document.querySelectorAll('#setAutoSell [data-rar]').forEach(b => b.onclick = () => { settings.autoSell = settings.autoSell || {}; settings.autoSell[b.dataset.rar] = !settings.autoSell[b.dataset.rar]; b.classList.toggle('on', settings.autoSell[b.dataset.rar]); saveSettings(); sfx('click'); });
@@ -10138,6 +10147,7 @@ function showCharSelect(chars, preferred) {
     scr.style.display = 'flex';
     paint();
     $('charGoBtn').onclick = done;
+    try { if (new URLSearchParams(location.search).get('go') === '1') setTimeout(done, 600); } catch (e) {} /* QA: 자동 진입 */
   });
 }
 
@@ -10403,8 +10413,25 @@ window.addEventListener('error', ev => {
   }
 });
 
+/* 성능 QA 모드(?solo=1): 로그인·서버 없이 실제 게임 루프를 돌린다. 실기(아이폰)에서 프레임을 재기 위한 것 */
+function soloMode() {
+  uid = 'qa_solo'; authUid = 'qa_solo'; myCls = 'warrior'; myName = 'QA(전사)';
+  meRef = doc(db, 'players', 'qa_solo');
+  offline = true; offlineSince = Date.now(); /* 서버 쓰기·구독 없이 로컬로만 */
+  const c = CLASSES.warrior;
+  me = { ...me, name: myName, base: 'QA', cls: 'warrior', lv: 20, exp: 0, hp: c.hp + 190, maxHp: c.hp + 190, atk: c.atk + 30,
+    mp: 300, gold: 9999, inv: {}, equipped: {}, skills: {}, q: {}, conq: {}, dex: {}, achv: {}, daily: {},
+    map: 'p2', x: 800, y: 600, dead: false, statPts: 0, gem: 0, title: '', balV: 2 };
+  cam.x = me.x; cam.y = me.y;
+  try { renderStatButtons(); } catch (e) {}
+  try { getTex(myMap()); } catch (e) {}
+  ready = true;
+  $('loading').style.display = 'none';
+  setTimeout(() => { try { hordeStart(); } catch (e) { toast('QA 시작 실패: ' + (e && e.message)); } }, 1200); /* 몬스터가 몰려오는 최대 부하 상황 */
+}
 async function init() {
   if (location.search.includes('stage=1')) { stageMode(); return; } /* 검증 스테이지: 로그인 건너뜀 */
+  if (location.search.includes('solo=1')) { soloMode(); return; }   /* 성능 QA: 서버 없이 실제 루프 */
   try {
     await setPersistence(auth, browserLocalPersistence);
     await getRedirectResult(auth);
@@ -10555,6 +10582,7 @@ window.__tex = n => getTex(pageId(n)); window.__nav = (tx, ty) => navFind(me.x, 
   $('loading').style.display = 'none';
   renderStatButtons();
   if (isMobileUI()) toast('💡 아이템은 가까이 가면 자동으로 줍습니다');
+  try { if (new URLSearchParams(location.search).get('auto') === '1' && !autoHunt) setTimeout(() => { try { toggleAuto(); } catch (e) {} }, 1500); } catch (e) {} /* QA: 자동 사냥 켜기 */
   setTimeout(() => { try { updateInstallUI(); showInstallTip(false); } catch (e) {} }, 6000); /* 접속 후 한 번만 홈 화면 추가 안내 */
   const mn = $('mapName');
   if (mn) mn.textContent = pageDef(pageNum()).name;

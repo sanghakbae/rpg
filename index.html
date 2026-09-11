@@ -108,6 +108,14 @@
   /* (캐릭터 생성 스타일은 위 타이틀 화면 블록과 공용) */
   #loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
     background: #000; color: #888; z-index: 99; font-size: 15px; white-space: pre-line; text-align: center; padding: 20px; }
+  #loading .ldBox { width: min(320px, 78vw); white-space: normal; }
+  #loading .ldTitle { font-size: 17px; letter-spacing: 5px; color: #f2c94c; margin-bottom: 14px; font-weight: bold; }
+  #loading .ldBarWrap { height: 6px; background: #1b2130; border-radius: 4px; overflow: hidden; }
+  /* transition을 쓰면 지형 굽기처럼 메인 스레드가 막히는 구간에서 애니메이션이 중간에 얼어붙어
+     실제 진행률보다 낮은 값이 그대로 남는다. 부드러움은 JS 쪽 이징이 맡는다. */
+  #loading .ldBarWrap i { display: block; height: 100%; width: 0%; border-radius: 4px;
+    background: linear-gradient(90deg, #c9a227, #f2c94c); }
+  #loading .ldMsg { margin-top: 9px; font-size: 12px; color: #8a93a6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   /* ===== HUD ===== */
   #hud { position: fixed; top: 12px; left: 12px; width: min(300px, 26vw); padding: 9px 14px 10px; z-index: 10; font-size: 15px; opacity: .92; }
@@ -224,12 +232,12 @@
   .dkbadge { position: absolute; top: 3px; right: 5px; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 8px; background: #e74c3c; color: #fff; font-size: 9px; font-weight: bold; line-height: 14px; text-align: center; font-style: normal; box-shadow: 0 0 6px rgba(231,76,60,.8); }
   #dockL button { position: relative; }
   #hudSettings { display: inline-block; background: none; border: none; font-size: 13px; padding: 0 4px; cursor: pointer; }
-  /* 채팅 버튼 바로 위(독 오른쪽 끝 위) — 예전 위치는 업적 패널의 수령 버튼을 가렸다 */
-  #dockL #autoBtn { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 58; display: flex; flex-direction: column; align-items: center; gap: 1px;
+  /* 모양만 여기서 정의하고, 위치는 아래 '미니맵 왼쪽' 규칙이 맡는다 */
+  #autoBtn { position: fixed; z-index: 58; display: flex; flex-direction: column; align-items: center; gap: 1px;
     width: 42px; height: 42px; justify-content: center; border-radius: 11px; border: 1px solid rgba(255,255,255,.18);
     background: linear-gradient(180deg, rgba(26,32,48,.95), rgba(10,14,22,.95)); color: #ccd; box-shadow: 0 4px 14px rgba(0,0,0,.45); }
   #autoBtn .ah { font-size: 16px; line-height: 1; } #autoBtn span:last-child { font-size: 8px; letter-spacing: 0; }
-  #dockL #autoBtn.on { border-color: #ffd700; color: #ffd700; box-shadow: 0 0 14px rgba(255,215,0,.55); animation: autopulse 1.2s ease-in-out infinite; }
+  #autoBtn.on { border-color: #ffd700; color: #ffd700; box-shadow: 0 0 14px rgba(255,215,0,.55); animation: autopulse 1.2s ease-in-out infinite; }
   @keyframes autopulse { 50% { box-shadow: 0 0 22px rgba(255,215,0,.8); } }
   .modalWrap { position: fixed; inset: 0; z-index: 130; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.6); }
   .modalWrap[hidden] { display: none; }
@@ -250,7 +258,7 @@
   .strow2 { display: flex; justify-content: space-between; padding: 6px 2px; font-size: 13px; color: #cde; border-bottom: 1px solid rgba(255,255,255,.05); }
   .stsetHd { color: #ffd700; font-size: 12px; font-weight: bold; margin: 10px 0 4px; }
   .stset { color: #9fd; font-size: 12px; padding: 2px 0; }
-  @media (max-width: 640px), (pointer: coarse) and (max-height: 520px) { #dockL #autoBtn { width: 36px; height: 36px; right: 6px; bottom: calc(100% + 5px); border-radius: 10px; } #autoBtn .ah { font-size: 14px; } #autoBtn span:last-child { font-size: 7px; } }
+  @media (max-width: 640px), (pointer: coarse) and (max-height: 520px) { #autoBtn { width: 36px; height: 36px; right: 6px; bottom: calc(100% + 5px); border-radius: 10px; } #autoBtn .ah { font-size: 14px; } #autoBtn span:last-child { font-size: 7px; } }
   .sgr { font-size: 10px; border: 1px solid; border-radius: 4px; padding: 0 4px; margin-left: 6px; vertical-align: 1px; }
   .skind { font-size: 10px; border-radius: 4px; padding: 0 5px; margin-left: 4px; vertical-align: 1px; }
   .skind.act { background: rgba(255,180,60,.2); color: #ffb347; }
@@ -711,7 +719,7 @@
      세로용 배치를 그대로 쓰면 높이 393px에 HUD·독·단축바·채팅이 겹쳐 '아이콘만 가득'해진다.
      좌상단 HUD(축소) · 좌하단 단축바 · 우측 세로 독 · 채팅 기본 숨김으로 화면 중앙을 비운다. */
   @media (pointer: coarse) and (orientation: landscape) and (max-height: 520px) {
-    #hud { width: 210px; left: 6px; right: auto; top: 4px; padding: 5px 8px 6px; border-radius: 10px;
+    #hud { width: 210px; left: calc(6px + env(safe-area-inset-left)); right: auto; top: 4px; padding: 5px 8px 6px; border-radius: 10px;
       border: 1px solid rgba(255,255,255,.12); font-size: 12px; }
     #hud .lv { font-size: 13px; } #hud .cls { font-size: 9px; }
     #hud .name { font-size: 11px; }
@@ -722,28 +730,29 @@
     .stbtn { font-size: 8.5px; padding: 2px 0; }
 
     /* 독: 우측 세로 2열 — 하단을 비워 전투 화면을 넓게 */
-    #dockL { left: auto; right: 4px; bottom: auto; top: 50%; transform: translateY(-50%);
+    /* 가로에서는 노치/다이내믹 아일랜드가 화면 옆면을 먹는다 — safe-area만큼 안쪽으로 */
+    #dockL { left: auto; right: calc(4px + env(safe-area-inset-right)); bottom: auto; top: 50%; transform: translateY(-50%);
       display: grid; grid-template-columns: repeat(2, auto); gap: 4px; justify-content: end; }
     #dockL button:not(#autoBtn) { width: 38px; height: 38px; border-radius: 9px; gap: 0; }
     #dockL button:not(#autoBtn) span { display: none; }   /* 글자 숨기고 아이콘만 */
     #dockL .dki { width: 62%; }
-    #dockL #autoBtn { position: static; width: 38px; height: 38px; border-radius: 9px; }
-    #dockL #autoBtn .ah { font-size: 15px; }
-    #dockL #autoBtn span:last-child { display: none; }
+    #autoBtn { width: 38px; height: 38px; border-radius: 9px; }
+    #autoBtn .ah { font-size: 15px; }
+    #autoBtn span:last-child { display: none; }
 
     /* 단축바: 좌하단 */
-    #hotbar { left: 6px; right: auto; transform: none; bottom: calc(6px + env(safe-area-inset-bottom)); gap: 4px; }
+    #hotbar { left: calc(6px + env(safe-area-inset-left)); right: auto; transform: none; bottom: calc(6px + env(safe-area-inset-bottom)); gap: 4px; }
     .hslot { width: 38px; height: 38px; } .hslot.pot { width: 30px; height: 30px; }
     .hslot .nm { display: none; }
 
     /* 채팅: 기본 숨김(채팅 버튼으로 열기), 열면 좌측 위로 */
-    #chatBox { left: 6px; width: 300px; bottom: calc(52px + env(safe-area-inset-bottom)); opacity: .92; }
+    #chatBox { left: calc(6px + env(safe-area-inset-left)); width: 300px; bottom: calc(52px + env(safe-area-inset-bottom)); opacity: .92; }
     #chatLog { max-height: 92px; }
 
-    #minimap { width: 78px; height: 58px; top: 4px; right: 92px; }
-    #onlineCnt { top: 6px; left: 224px; }
+    #minimap { width: 78px; height: 58px; top: 4px; right: calc(92px + env(safe-area-inset-right)); }
+    #onlineCnt { top: 6px; left: calc(224px + env(safe-area-inset-left)); }
     #rankPanel, #help, #footer { display: none !important; }
-    .sidepanel { top: 4px; bottom: 4px; left: auto; right: 88px; width: min(340px, 46vw); max-height: none; }
+    .sidepanel { top: 4px; bottom: 4px; left: auto; right: calc(88px + env(safe-area-inset-right)); width: min(340px, 46vw); max-height: none; }
     #invPanel { top: 4px; bottom: 4px; max-height: none; }
     #updBar { bottom: auto; top: 4px; }
   }
@@ -773,17 +782,17 @@
     #enhMenu { max-width: 80vw !important; }
   }
   @media (pointer: coarse) and (orientation: landscape) and (max-height: 520px) {
-    :root { --botUI: calc(56px + env(safe-area-inset-bottom)); --sideUI: 96px; } /* 가로: 독이 우측 세로 */
+    :root { --botUI: calc(56px + env(safe-area-inset-bottom)); --sideUI: calc(96px + env(safe-area-inset-right)); } /* 가로: 독이 우측 세로 + 노치 */
     #invPanel.open, .sidepanel.open { left: 10vw !important; right: calc(10vw + var(--sideUI)) !important; }
   }
 
-  /* 자동 사냥 버튼: 우측 상단(미니맵 아래) */
-  #dockL #autoBtn { position: fixed; right: 12px; top: 92px; bottom: auto; }
+  /* 자동 사냥 버튼: 우측 상단 — 미니맵 바로 왼쪽에 나란히 */
+  #autoBtn { position: fixed; right: 180px; top: 12px; bottom: auto; }  /* 미니맵 160px + 여백 */
   @media (max-width: 640px), (pointer: coarse) and (max-height: 520px) {
-    #dockL #autoBtn { right: 6px; top: calc(var(--hudB, 150px) + 78px); bottom: auto; }
+    #autoBtn { right: 102px; top: calc(var(--hudB, 150px) + 4px); bottom: auto; }  /* 미니맵 90px + 여백 */
   }
   @media (pointer: coarse) and (orientation: landscape) and (max-height: 520px) {
-    #dockL #autoBtn { right: 8px; top: 6px; bottom: auto; }
+    #autoBtn { right: calc(176px + env(safe-area-inset-right)); top: 4px; bottom: auto; }  /* 미니맵(right 92 + 78px) 왼쪽 */
   }
 
   /* ===== 모바일 단축바: 상단 독 아이콘과 같은 크기 · 이름/번호 숨김 (요청) ===== */
@@ -866,7 +875,13 @@
 <body>
 <canvas id="game"></canvas>
 
-<div id="loading">Firebase 연결 중...</div>
+<div id="loading">
+  <div class="ldBox">
+    <div class="ldTitle">바이브 아레나</div>
+    <div class="ldBarWrap"><i id="ldBar"></i></div>
+    <div class="ldMsg" id="ldMsg">준비 중...</div>
+  </div>
+</div>
 
 <div id="create" style="display:none">
   <div class="lgBg"><div class="lgStars"></div><div class="lgFog"></div><img class="lgArt" id="crArt" alt=""><div class="lgVig"></div></div>
@@ -905,9 +920,10 @@
   <button data-p="achvPanel" title="업적 [G]"><i class="dki" style="--i:url(assets/icons/ui/trophy.svg)"></i><span>업적<kbd>G</kbd></span><em class="dkbadge" id="achvBadge" hidden></em></button>
   <button data-p="hordePanel" title="쇄도 [K]"><i class="dki" style="--i:url(assets/icons/ui/round-star.svg)"></i><span>쇄도<kbd>K</kbd></span></button>
   <button data-p="pvpPanel" title="투기장 [J]"><i class="dki" style="--i:url(assets/icons/ui/laurel-crown.svg)"></i><span>투기장<kbd>J</kbd></span></button>
-  <button id="autoBtn" title="자동 사냥 [P]"><span class="ah">⚔️</span><span>자동</span></button>
   <button data-p="chat" title="채팅 [L]"><i class="dki" style="--i:url(assets/icons/ui/chat-bubble.svg)"></i><span>채팅<kbd>L</kbd></span></button>
 </div>
+<!-- 자동 사냥: 독 밖(고정 배치). #dockL은 transform을 쓰므로 그 안에서는 position:fixed가 화면 기준이 되지 않는다 -->
+<button id="autoBtn" title="자동 사냥 [P]"><span class="ah">⚔️</span><span>자동</span></button>
 <div id="modalDim"></div>
 
 <div id="invPanel" class="panel">
@@ -1088,7 +1104,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=191"
+<script type="module" src="game.js?v=192"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

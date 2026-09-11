@@ -1121,6 +1121,63 @@ const clampN = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const rand = (a, b) => a + Math.random() * (b - a);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const $ = id => document.getElementById(id);
+
+/* ================= 로딩 진행률 =================
+   접속은 '인증 → 캐릭터 조회 → 월드/구역 준비 → 지형 굽기 → 영웅 스프라이트' 순서로 진행된다.
+   예전에는 그 사이 내내 '월드에 접속 중...' 글자만 떠 있어 멈춘 것처럼 보였다.
+   각 단계가 바를 구간(from~to)만큼 밀어 올리고, 구간 안에서는 남은 폭을 향해 천천히 기어오른다. */
+let ldCur = 0, ldTo = 0, ldTimer = 0;
+const ldT0 = Date.now(), ldMarks = []; /* 단계별 소요 시간 — 어느 구간이 오래 걸리는지 실기에서 확인용 */
+function ldPaint() { const b = $('ldBar'); if (b) b.style.width = ldCur.toFixed(1) + '%'; }
+function ldStep() {
+  if (ldCur >= ldTo) return;
+  ldCur = Math.min(ldTo, ldCur + Math.max(0.05, (ldTo - ldCur) * 0.05)); /* 최소 속도가 있어 어떤 단계에서도 멈춰 보이지 않는다 */
+  ldPaint();
+}
+/* from: 이 단계 시작 시 최소 진행률, to: 이 단계가 끝나기 전까지 서서히 다가갈 상한 */
+function ldProg(from, to, msg) {
+  if (from > ldCur) ldCur = from;
+  if (to > ldTo) ldTo = to;
+  if (msg) {
+    const m = $('ldMsg'); if (m) m.textContent = msg;
+    if (!ldMarks.length || ldMarks[ldMarks.length - 1].msg !== msg) ldMarks.push({ msg, at: Date.now() - ldT0 });
+  }
+  if (!ldTimer) ldTimer = setInterval(ldStep, 60);
+  ldPaint();
+}
+function ldShow(from, to, msg) { const ld = $('loading'); if (ld) ld.style.display = 'flex'; ldProg(from, to, msg); }
+function ldHide() { const ld = $('loading'); if (ld) ld.style.display = 'none'; }
+let ldOff = false; /* 로딩이 끝났음을 프레임 루프도 알 수 있게 — 타이머가 씹혀도 검은 화면에 갇히지 않는다 */
+function ldDone(msg) { /* 100%까지 채운 뒤 곧바로 사라진다 */
+  ldCur = ldTo = 100; ldPaint();
+  if (msg) { const m = $('ldMsg'); if (m) m.textContent = msg; }
+  if (ldTimer) { clearInterval(ldTimer); ldTimer = 0; }
+  ldOff = true;
+  ldHide();
+  setTimeout(ldHide, 200); /* 이 시점에 다른 코드가 다시 띄웠어도 확실히 내린다 */
+}
+/* 무거운 동기 작업(지형 굽기) 전에 한 프레임 양보 — 그래야 방금 올린 진행바가 실제로 그려진다 */
+const ldYield = () => new Promise(r => { let d = false; const f = () => { if (d) return; d = true; setTimeout(r, 0); }; requestAnimationFrame(f); setTimeout(f, 50); });
+/* 필수 스프라이트가 도착할 때까지만(상한 있음) 기다리며 그 진척을 바에 반영한다.
+   몬스터 시트는 픽셀 폴백이 있으므로 기다리지 않고 백그라운드로 흘려보낸다. */
+async function ldWaitSheets(keys, capMs, from, to, msg) {
+  const t0 = Date.now();
+  for (const k of keys) { try { heroSheet(k); } catch (e) {} }
+  const doneN = () => keys.filter(k => { const e = HERO_SHEETS[k]; return e && (e.img || e.failed || e.missing); }).length;
+  while (doneN() < keys.length && Date.now() - t0 < capMs) {
+    ldProg(from + (to - from) * (doneN() / keys.length), to, msg);
+    await new Promise(r => setTimeout(r, 80));
+  }
+  ldProg(to, to, msg);
+}
+window.__ldMarks = () => ldMarks.map((v, i) => `${v.at}ms +${v.at - (i ? ldMarks[i - 1].at : 0)} ${v.msg}`);
+window.__ld = (f, t, m) => { if (f != null) ldProg(f, t, m); return { cur: +ldCur.toFixed(1), to: ldTo, msg: ($('ldMsg') || {}).textContent }; }; /* 진단: 진행바 상태/강제 이동 */
+function ldFail(html) { /* 오류는 진행바를 걷어내고 안내만 남긴다 */
+  if (ldTimer) { clearInterval(ldTimer); ldTimer = 0; }
+  const ld = $('loading'); if (!ld) return;
+  ld.style.display = 'flex'; ld.innerHTML = html;
+}
+ldProg(2, 8, '게임 데이터 준비 중...');
 function sr(n) { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); }
 function shade(hex, f) {
   const n = parseInt((hex || '#888888').slice(1), 16);
@@ -1548,8 +1605,8 @@ async function ensurePage(n) {
   if (offline) return;
   const pid = pageId(n);
   const flag = doc(db, 'world', 'init_' + pid);
-  const probe = await getDoc(doc(db, 'monsters', pid + '_z0_0'));
-  if ((await getDoc(flag)).exists() && probe.exists()) return;
+  const [probe, flagSnap] = await Promise.all([getDoc(doc(db, 'monsters', pid + '_z0_0')), getDoc(flag)]); /* 두 번의 왕복을 한 번으로 */
+  if (flagSnap.exists() && probe.exists()) return;
   const pd = pageDef(n);
   const batch = writeBatch(db);
   const zones = [{ cx: 540, cy: 430, spread: 150 }, { cx: 1060, cy: 770, spread: 150 }];
@@ -9869,6 +9926,7 @@ perfInit();
 
 function loopBody(t) {
   const now = Date.now();
+  if (ldOff) { const _ld = $('loading'); if (_ld && _ld.style.display !== 'none') _ld.style.display = 'none'; } /* 안전장치: 준비가 끝났는데 로딩 화면이 남아 있으면 즉시 내린다 */
   const dt = Math.min(100, t - lastT); /* 프레임이 느릴 때 게임 시간까지 느려지던 것(20fps 아래 = 슬로우 모션) 완화 — 10fps까지는 실시간으로 진행 */
   lastT = t;
   if (!ready) {
@@ -10127,8 +10185,7 @@ function buildCreateUI(resolve) {
     let n = $('nameInput').value.trim().slice(0, 12);
     if (!n) n = '모험가' + Math.floor(rand(1000, 9999));
     $('create').style.display = 'none';
-    $('loading').style.display = 'flex';
-    $('loading').textContent = '월드에 접속 중...';
+    ldShow(34, 44, '캐릭터를 만드는 중...');
     resolve({ name: n, cls: selectedCls });
   }
   $('nameInput').addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
@@ -10147,7 +10204,7 @@ function charIdOf(auth, cls, primaryCls) { return (!primaryCls || cls === primar
 /* 영웅 선택 화면 — 로그인 화면의 라인업을 재사용한다(직업별 레벨 표시, 없으면 '새 캐릭터') */
 function showCharSelect(chars, preferred) {
   return new Promise(resolve => {
-    $('loading').style.display = 'none';
+    ldHide();
     let scr = $('loginScreen');
     if (!scr) { scr = document.createElement('div'); scr.id = 'loginScreen'; document.body.appendChild(scr); }
     let sel = preferred && chars[preferred] ? preferred : (CLASS_KEYS.find(k => chars[k]) || preferred || 'warrior');
@@ -10169,7 +10226,7 @@ function showCharSelect(chars, preferred) {
       el.onclick = () => { sel = k; selectedCls = k; try { localStorage.setItem('selCls', k); } catch (e2) {} paint(); };
       el.ondblclick = () => { sel = k; done(); };
     });
-    const done = () => { scr.style.display = 'none'; const ld = $('loading'); if (ld) { ld.textContent = '월드에 접속 중...'; ld.style.display = 'flex'; } resolve(sel); }; /* 준비될 때까지 검은 화면 유지 */
+    const done = () => { scr.style.display = 'none'; ldShow(34, 44, '월드에 접속 중...'); resolve(sel); }; /* 준비될 때까지 검은 화면 유지 */
     scr.style.display = 'flex';
     paint();
     $('charGoBtn').onclick = done;
@@ -10354,7 +10411,7 @@ function pvpShow(A, B, res, won, reward) {
 
 function showCreateUI() {
   return new Promise(resolve => {
-    $('loading').style.display = 'none';
+    ldHide();
     $('create').style.display = 'flex';
     if (googleName) $('nameInput').value = googleName.slice(0, 12);
     $('nameInput').focus();
@@ -10364,7 +10421,7 @@ function showCreateUI() {
 
 function waitForLoginClick() {
   return new Promise((resolve, reject) => {
-    $('loading').style.display = 'none';
+    ldHide();
     let scr = $('loginScreen');
     if (!scr) {
       scr = document.createElement('div');
@@ -10394,14 +10451,13 @@ function waitForLoginClick() {
       btn.disabled = true;
       btn.textContent = '로그인 창 여는 중...';
       scr.style.display = 'none';
-      $('loading').style.display = 'flex';
-      $('loading').textContent = '구글 로그인 중...';
+      ldShow(8, 16, '구글 로그인 중...');
       try {
         resolve(await signInWithPopup(auth, new GoogleAuthProvider()).then(c => c.user));
       } catch (e) {
         if (['auth/popup-blocked', 'auth/operation-not-supported-in-this-environment'].includes(e.code)) {
           try {
-            $('loading').textContent = '구글 로그인 페이지로 이동 중...';
+            ldProg(10, 18, '구글 로그인 페이지로 이동 중...');
             await setPersistence(auth, browserLocalPersistence);
             await signInWithRedirect(auth, new GoogleAuthProvider());
             return;
@@ -10409,6 +10465,7 @@ function waitForLoginClick() {
         }
         btn.disabled = false;
         btn.innerHTML = '<span style="font-size:20px;">🅶</span>&nbsp; Google로 계속하기';
+        ldHide();
         reject(e);
       }
     };
@@ -10433,9 +10490,8 @@ window.addEventListener('unhandledrejection', ev => { try { const r = ev.reason;
 window.addEventListener('error', ev => {
   const el = $('loading');
   if (el && el.style.display !== 'none' && !String(ev.message).includes('favicon')) {
-    el.style.display = 'flex';
-    el.innerHTML = '오류 발생: ' + esc(ev.message || String(ev)) +
-      '<br><br><a href="javascript:location.reload()" style="color:#7fc7ff">새로고침</a>';
+    ldFail('오류 발생: ' + esc(ev.message || String(ev)) +
+      '<br><br><a href="javascript:location.reload()" style="color:#7fc7ff">새로고침</a>');
   }
 });
 
@@ -10452,12 +10508,13 @@ function soloMode() {
   try { renderStatButtons(); } catch (e) {}
   try { getTex(myMap()); } catch (e) {}
   ready = true;
-  $('loading').style.display = 'none';
+  ldDone('접속 완료!');
   setTimeout(() => { try { hordeStart(); } catch (e) { toast('QA 시작 실패: ' + (e && e.message)); } }, 1200); /* 몬스터가 몰려오는 최대 부하 상황 */
 }
 async function init() {
   if (location.search.includes('stage=1')) { stageMode(); return; } /* 검증 스테이지: 로그인 건너뜀 */
   if (location.search.includes('solo=1')) { soloMode(); return; }   /* 성능 QA: 서버 없이 실제 루프 */
+  ldProg(6, 12, '계정 확인 중...');
   try {
     await setPersistence(auth, browserLocalPersistence);
     await getRedirectResult(auth);
@@ -10467,7 +10524,7 @@ async function init() {
   });
   if (!user) {
     if (location.search.includes('dev=1')) {
-      $('loading').textContent = '테스트 계정으로 접속 중...';
+      ldProg(8, 16, '테스트 계정으로 접속 중...');
       const cred = await signInAnonymously(auth);
       user = cred.user;
       googleName = '테스터';
@@ -10475,45 +10532,62 @@ async function init() {
       try {
         user = await waitForLoginClick();
       } catch (e) {
-        $('loading').innerHTML =
+        ldFail(
           '구글 로그인 실패: ' + esc(e.code || e.message) +
           '<br><br>확인: Firebase 콘솔 &gt; Authentication &gt; 로그인 방법에서 <b>Google 사용</b>, ' +
           '설정 &gt; 승인된 도메인에 <b>rpg.sanghak.kr</b> 등록' +
-          '<br><br><a href="javascript:location.reload()" style="color:#7fc7ff">다시 시도</a>';
+          '<br><br><a href="javascript:location.reload()" style="color:#7fc7ff">다시 시도</a>');
         return;
       }
     }
   }
   authUid = user.uid;
   googleName = user.displayName || '';
+  ldShow(18, 24, '캐릭터 정보 불러오는 중...');
+  /* 월드 시드는 내 캐릭터와 무관하다 — 캐릭터 조회·영웅 선택과 동시에 굴려 대기 시간을 겹친다 */
+  const worldP = Promise.all([ensureWorld().catch(e => noteErr && noteErr(e)), ensureWorldM2().catch(e => noteErr && noteErr(e))]);
   /* 계정의 직업별 캐릭터를 모두 조회 — 처음 만든 캐릭터는 players/{uid}, 나머지는 players/{uid}__{cls} */
   const primaryRef = doc(db, 'players', authUid);
   const loadFail = e => { /* 읽기 실패를 '캐릭터 없음'으로 오해하면 setDoc이 기존 캐릭터를 덮어쓴다 → 로그인을 중단하고 재시도를 안내 */
-    $('loading').style.display = '';
-    $('loading').innerHTML = '계정 정보를 불러오지 못했습니다: ' + esc((e && (e.code || e.message)) || e) +
-      '<br><br><a href="javascript:location.reload()" style="color:#7fc7ff">다시 시도</a>';
+    ldFail('계정 정보를 불러오지 못했습니다: ' + esc((e && (e.code || e.message)) || e) +
+      '<br><br><a href="javascript:location.reload()" style="color:#7fc7ff">다시 시도</a>');
   };
-  let primarySnap;
-  try { primarySnap = await getDoc(primaryRef); } catch (e) { loadFail(e); return; }
+  /* 5개 문서(대표 + 직업별 4개)를 한 번에 요청한다.
+     예전에는 대표를 받은 뒤 나머지를 하나씩 순서대로 받아, 왕복 지연이 4번 쌓여 모바일에서 수십 초가 걸렸다. */
+  let done5 = 0;
+  const tick5 = () => ldProg(24 + (++done5) * 1.6, 33, `캐릭터 정보 불러오는 중... (${done5}/5)`);
+  const rd = ref => getDoc(ref).then(r => { tick5(); return r; }, e => { tick5(); throw e; });
+  const all5 = await Promise.allSettled([rd(primaryRef), ...CLASS_KEYS.map(k => rd(doc(db, 'players', `${authUid}__${k}`)))]);
+  if (all5[0].status !== 'fulfilled') { loadFail(all5[0].reason); return; }
+  const primarySnap = all5[0].value;
   const primary = primarySnap.exists() ? primarySnap.data() : null;
   const primaryCls = primary ? (primary.cls || 'warrior') : null;
   const chars = {};
   if (primary) {
     chars[primaryCls] = primary;
-    for (const k of CLASS_KEYS) {
+    for (let i = 0; i < CLASS_KEYS.length; i++) {
+      const k = CLASS_KEYS[i], r = all5[i + 1];
       if (k === primaryCls) continue;
-      let sn; try { sn = await getDoc(doc(db, 'players', `${authUid}__${k}`)); } catch (e) { loadFail(e); return; }
-      if (sn.exists()) chars[k] = sn.data();
+      if (r.status !== 'fulfilled') { loadFail(r.reason); return; } /* 읽기 실패를 '없음'으로 오해하면 아래에서 덮어쓴다 */
+      if (r.value.exists()) chars[k] = r.value.data();
     }
   }
+  ldProg(33, 34, '캐릭터 정보 불러오는 중...');
   /* 캐릭터가 하나도 없으면 생성 화면, 있으면 영웅 선택 화면 */
   try { const sc = localStorage.getItem('selCls'); if (sc && CLASS_KEYS.includes(sc)) selectedCls = sc; } catch (e) {} /* 리다이렉트 로그인으로 선택이 날아가는 것 방지 */
   let pickCls = primary ? await showCharSelect(chars, chars[selectedCls] ? selectedCls : primaryCls) : null;
   uid = primary ? charIdOf(authUid, pickCls, primaryCls) : authUid;
   meRef = doc(db, 'players', uid);
 
+  ldProg(44, 50, '캐릭터 데이터 불러오는 중...');
   let snap;
-  try { snap = (primary && pickCls === primaryCls) ? primarySnap : await getDoc(meRef); } catch (e) { loadFail(e); return; }
+  if (!primary || pickCls === primaryCls) snap = primarySnap; /* 대표 문서는 이미 받아 뒀다 */
+  else { /* 위에서 한꺼번에 받아둔 스냅샷을 재사용 — 같은 문서를 두 번 읽지 않는다 */
+    const pre = primary ? all5[CLASS_KEYS.indexOf(pickCls) + 1] : null;
+    if (pre && pre.status === 'fulfilled') snap = pre.value;
+    else { try { snap = await getDoc(meRef); } catch (e) { loadFail(e); return; } }
+  }
+  ldProg(50, 54, '캐릭터 데이터 불러오는 중...');
   if (!snap.exists()) {
     let baseName, cls;
     if (primary) { baseName = baseNameOf(primary); cls = pickCls; } /* 다른 직업 캐릭터는 같은 이름으로 즉시 생성 */
@@ -10528,7 +10602,7 @@ async function init() {
       dead: false, color: colorOf(uid), map: 'p1', conq: {}, dex: {}, statPts: 0, lastSeen: Date.now(), mp: maxMpOf(), gem: 0, achv: {}, title: '', daily: {}, balV: 2,
     }); } catch (e) { loadFail(e); return; }
     me = { ...me, cls, map: 'p1', gold: 100, hp: c.hp, maxHp: c.hp, atk: c.atk, lv: 1, exp: 0, inv: {}, equipped: {}, skills: {}, conq: {}, dex: {}, achv: {}, q: {}, statPts: 0, gem: 0, title: '' }; /* 스냅샷 도착 전 로컬 동기화 */
-    await sysMsg(`${myName}님이 월드에 입장했습니다.`);
+    sysMsg(`${myName}님이 월드에 입장했습니다.`).catch(() => {}); /* 입장 알림은 기다리지 않는다 */
   } else {
     const d = snap.data();
     myCls = d.cls || 'warrior';
@@ -10563,7 +10637,10 @@ async function init() {
     if (pendKeys.size) trySync(true);
   }
 
-  try { await ensureWorld(); await ensureWorldM2(); await ensurePage(pageNum()); } catch (e) { noteErr && noteErr(e); }
+  /* 여기서부터는 플레이를 막지 않는다.
+     몬스터 시드(ensure*)와 실시간 구독은 결과가 늦게 와도 onSnapshot이 따라잡는다.
+     예전에는 이걸 전부 await 해서, 파이어스토어 첫 연결이 느린 모바일에서 검은 화면이 수십 초씩 이어졌다. */
+  Promise.all([worldP, ensurePage(pageNum()).catch(e => noteErr && noteErr(e))]).catch(() => {});
 
   onSnapshot(meRef, s => {
     if (!s.exists()) return;
@@ -10588,9 +10665,24 @@ async function init() {
   watchRank();
 
   try { checkDaily(); } catch (e) {} /* 일일 초기화(출석/일일퀘) */
+  ldProg(56, 78, '지형 생성 중...');
+  await ldYield(); /* 바를 한 번 그려주고 나서 무거운 지형 굽기로 들어간다 */
   try { getTex(myMap()); } catch (e) {} /* 지형을 미리 굽고 나서 화면을 보여준다 */
+  ldProg(78, 84, '지형 생성 중...');
+  /* 이 구역 몬스터 시트는 폴백이 있으니 기다리지 않고 미리 받기만 시작한다 */
+  try { const pd = pageDef(pageNum()); for (const k of [...pd.kinds, pd.boss]) heroSheet('mob_' + k.base); } catch (e) {}
+  /* 실제로 기다리는 건 내 영웅 시트 하나뿐 — 늦으면 상한에서 끊고 바로 플레이에 들어간다 */
+  await ldWaitSheets([myCls || 'warrior'], 5000, 84, 98, '영웅 그래픽 불러오는 중...');
   ready = true;
-  { const ld = $('loading'); if (ld) ld.style.display = 'none'; } /* 준비 완료 → 검은 화면 해제 */
+  ldMarks.push({ msg: '완료', at: Date.now() - ldT0 });
+  ldDone('접속 완료!'); /* 준비 완료 → 검은 화면 해제 */
+  try { if (new URLSearchParams(location.search).get('ldt') === '1') { /* QA: 단계별 로딩 시간을 화면에 남긴다(탭하면 사라짐) */
+    const dv = document.createElement('div');
+    dv.style.cssText = 'position:fixed;left:6px;top:120px;z-index:99999;background:rgba(0,0,0,.88);color:#7fe;font:11px/1.5 monospace;padding:8px 10px;white-space:pre;border-radius:8px;max-width:92vw;overflow:auto;';
+    dv.textContent = window.__ldMarks().join('\n');
+    dv.onclick = () => dv.remove();
+    document.body.appendChild(dv);
+  } } catch (e) {}
   loginAt = Date.now();
   window.__HIT = (sx, sy) => { const r = simAt(sx, sy); return { world: r.w, hit: r.s ? { id: r.s.id, kind: r.s.kind, x: Math.round(r.s.x), y: Math.round(r.s.y) } : null }; };
   window.__SIMS = () => sims.filter(v => v.alive && v.map === myMap()).slice(0, 8).map(v => ({ id: v.id, kind: v.kind, hp: v.hp, maxHp: v.maxHp, x: Math.round(v.x), y: Math.round(v.y), r: (sdef(v).r || 16), sx: Math.round((v.x - view.x) * (view.z || 1)), sy: Math.round((v.y - view.y) * (view.z || 1)) }));
@@ -10607,7 +10699,6 @@ window.__tex = n => getTex(pageId(n)); window.__nav = (tx, ty) => navFind(me.x, 
   window.__DBG = () => ({ page: myPage(), colliders: (worldColliders[myMap()] || []).length, frozenMs: hitStopUntil - Date.now(), activeIsChat: document.activeElement === chatInput, activeTag: document.activeElement && document.activeElement.tagName + '#' + document.activeElement.id, wmUp: worldMapOpen(), mouseDown, moveSpd: moveSpd(), atkRange: atkRange(), atkCdMs: atkCdOf(), sinceAtk: Date.now() - lastAttackAt, mapFading, snapN: window.__snapN || 0, snapAgoMs: window.__snapT ? Date.now() - window.__snapT : null, lastDmg: window.__lastDmg || null, lastErr: window.__lastErr || null, dead: !!me.dead, paused, ready, sheets: Object.fromEntries(Object.entries(HERO_SHEETS).map(([k, v]) => [k, v.img ? 'ok' : v.failed ? 'failed' : 'loading'])), target: attackTargetSimId, hover: hoverSimId, dest: dest && { x: Math.round(dest.x), y: Math.round(dest.y) }, zoom: userZoom, viewZ: view.z, dpr, fx: { rings: rings.length, slashes: slashes.length, shots: shots.length, poofs: poofs.length, floats: floats.length }, cast: heroCast && heroCast.id, binds: JSON.stringify(me.binds || {}), skills: JSON.stringify(me.skills || {}), gold: me.gold, heroTop: (() => { try { return heroFrames(me.cls || 'warrior', me.equipped || {}).top; } catch (e) { return null; } })(),
     me: { x: Math.round(me.x), y: Math.round(me.y), lv: me.lv, map: me.map, bag: me.bagSize, conq: JSON.stringify(me.conq || {}) },
     sims: sims.filter(s => s.alive).slice(0, 20).map(s => ({ id: s.id, x: Math.round(s.x), y: Math.round(s.y), d: Math.round(Math.hypot(s.x - me.x, s.y - me.y)), boss: s.boss, lv: simLevel(s) })) });
-  $('loading').style.display = 'none';
   renderStatButtons();
   if (isMobileUI()) toast('💡 아이템은 가까이 가면 자동으로 줍습니다');
   try { if (new URLSearchParams(location.search).get('auto') === '1' && !autoHunt) setTimeout(() => { try { toggleAuto(); } catch (e) {} }, 1500); } catch (e) {} /* QA: 자동 사냥 켜기 */
@@ -10644,8 +10735,8 @@ if (location.search.includes('dbg=1')) {
 }
 
 init().catch(err => {
-  $('loading').textContent = '초기화 실패: ' + err.message +
-    '\n\nFirebase 콘솔에서 확인하세요:\n1. Authentication > Google 로그인 사용\n2. Cloud Firestore 생성\n3. 보안 규칙에서 로그인 사용자 읽기/쓰기 허용';
+  ldFail('초기화 실패: ' + esc(err.message) +
+    '<br><br>Firebase 콘솔에서 확인하세요:<br>1. Authentication &gt; Google 로그인 사용<br>2. Cloud Firestore 생성<br>3. 보안 규칙에서 로그인 사용자 읽기/쓰기 허용');
 });
 
 requestAnimationFrame(loop);

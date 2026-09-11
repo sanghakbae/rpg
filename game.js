@@ -9280,10 +9280,12 @@ function openSettings() {
   $('setHp').value = settings.autoPotHp; $('setHpVal').textContent = settings.autoPotHp;
   $('setMp').value = settings.autoPotMp; $('setMpVal').textContent = settings.autoPotMp;
   document.querySelectorAll('#setAutoSell [data-rar]').forEach(b => b.classList.toggle('on', !!(settings.autoSell || {})[b.dataset.rar]));
+  updateInstallUI();
   m.hidden = false;
 }
 { const hs = $('hudSettings'); if (hs) hs.onclick = e => { e.stopPropagation(); openSettings(); }; }
 { const sc = $('setClose'); if (sc) sc.onclick = () => { $('settingsModal').hidden = true; }; }
+{ const ib = $('setInstall'); if (ib) ib.onclick = () => { sfx('click'); doInstall(); }; }
 { const sm = $('settingsModal'); if (sm) sm.onclick = e => { if (e.target === sm) sm.hidden = true; }; }
 { const el = $('setSound'); if (el) el.onchange = () => { if (el.checked === muted) toggleMute(); }; }
 { const el = $('setAuto'); if (el) el.onchange = () => { if (el.checked !== autoHunt) toggleAuto(); }; }
@@ -9653,6 +9655,69 @@ function syncModal() {
 if (typeof MutationObserver !== 'undefined') new MutationObserver(() => { try { syncModal(); } catch (e) {} }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['class'], childList: true });
 function toggleChat() { chatVisible = !chatVisible; $('chatBox').style.display = chatVisible ? '' : 'none'; syncModal(); }
 function toggleTree() { togglePanel('treePanel'); if ($('treePanel').classList.contains('open')) renderTree(); }
+
+/* ================= 홈 화면 설치(PWA) 안내 =================
+   크롬/엣지는 beforeinstallprompt를 잡아 직접 설치 버튼을 띄우고,
+   iOS 사파리는 설치 프롬프트 자체가 없어 '공유 → 홈 화면에 추가' 방법을 안내한다.
+   인앱 브라우저(카카오/인스타 등)는 설치가 불가능해 사파리로 열라고 안내한다. */
+let deferredInstall = null;
+const isStandalone = () => { try { return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; } catch (e) { return false; } };
+const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent) && 'ontouchend' in document);
+const isInApp = () => /KAKAOTALK|NAVER|Instagram|FBAN|FBAV|Line\//i.test(navigator.userAgent);
+const isSafari = () => /Safari/.test(navigator.userAgent) && !/CriOS|FxiOS|EdgiOS|Chrome/.test(navigator.userAgent);
+
+addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredInstall = e; updateInstallUI(); });
+addEventListener('appinstalled', () => { deferredInstall = null; try { localStorage.setItem('pwaDone', '1'); } catch (e) {} updateInstallUI(); toast('📱 홈 화면에 설치되었습니다'); });
+
+function installState() {
+  if (isStandalone()) return 'done';
+  if (deferredInstall) return 'prompt';       /* 크롬 계열: 바로 설치 가능 */
+  if (isInApp()) return 'inapp';              /* 인앱 브라우저: 설치 불가 */
+  if (isIOS()) return isSafari() ? 'ios' : 'ios-other';
+  return 'none';
+}
+function updateInstallUI() {
+  const row = $('setInstallRow'), note = $('setInstallNote');
+  if (!row || !note) return;
+  const st = installState();
+  row.hidden = st === 'none';
+  note.hidden = st === 'none';
+  const btn = $('setInstall');
+  if (st === 'done') { row.hidden = true; note.hidden = false; note.textContent = '✅ 홈 화면에서 실행 중입니다.'; return; }
+  if (st === 'prompt') { btn.textContent = '설치'; btn.disabled = false; note.textContent = '홈 화면 아이콘으로 전체화면 실행되고, 이미지가 캐시돼 재접속이 빨라집니다.'; }
+  else if (st === 'ios') { btn.textContent = '방법 보기'; btn.disabled = false; note.innerHTML = 'iPhone은 자동 설치 창이 없습니다 — 하단 <b>공유</b> 버튼 → <b>홈 화면에 추가</b>.'; }
+  else if (st === 'ios-other') { btn.textContent = '방법 보기'; btn.disabled = false; note.innerHTML = 'iPhone은 <b>사파리</b>에서만 홈 화면에 추가할 수 있습니다.'; }
+  else if (st === 'inapp') { btn.textContent = '방법 보기'; btn.disabled = false; note.innerHTML = '앱 안의 브라우저에서는 설치할 수 없습니다 — <b>사파리/크롬으로 열기</b> 후 설치하세요.'; }
+}
+function showInstallTip(force) {
+  const st = installState();
+  if (st === 'done' || st === 'none') { if (force) toast('이 브라우저에서는 설치를 지원하지 않습니다'); return; }
+  if (!force) { try { if (localStorage.getItem('pwaTip')) return; } catch (e) {} }
+  try { localStorage.setItem('pwaTip', '1'); } catch (e) {}
+  const el = document.getElementById('installTip') || Object.assign(document.createElement('div'), { id: 'installTip' });
+  const body = st === 'prompt' ? '홈 화면에 설치하면 전체화면으로 실행되고, 이미지가 저장돼 다음 접속이 훨씬 빨라집니다.'
+    : st === 'ios' ? '아이폰은 자동 설치 창이 없습니다.<br>하단 <b>공유</b> 버튼 → <b>홈 화면에 추가</b>를 누르면 앱처럼 실행됩니다.'
+    : st === 'ios-other' ? '아이폰은 <b>사파리</b>에서만 홈 화면에 추가할 수 있습니다.<br>사파리로 열어 공유 → 홈 화면에 추가를 눌러주세요.'
+    : '앱 안의 브라우저에서는 설치할 수 없습니다.<br>우측 상단 메뉴에서 <b>사파리/크롬으로 열기</b> 후 설치해 주세요.';
+  el.innerHTML = `<div>📱 <b>홈 화면에 추가</b></div><div style="margin-top:5px">${body}</div>`
+    + `<div class="itRow">${st === 'prompt' ? '<button class="go" id="itGo">설치</button>' : ''}<button id="itClose">닫기</button></div>`;
+  if (!el.parentNode) document.body.appendChild(el);
+  const close = () => el.remove();
+  el.querySelector('#itClose').onclick = close;
+  const go = el.querySelector('#itGo');
+  if (go) go.onclick = async () => { close(); await doInstall(); };
+  setTimeout(() => { if (el.parentNode && st !== 'prompt') close(); }, 12000);
+}
+async function doInstall() {
+  if (deferredInstall) {
+    deferredInstall.prompt();
+    try { await deferredInstall.userChoice; } catch (e) {}
+    deferredInstall = null;
+    updateInstallUI();
+    return;
+  }
+  showInstallTip(true);
+}
 
 /* ================= 성능 진단 오버레이 (?perf=1) =================
    실제 기기에서 무엇이 느린지 보기 위한 것. 프레임 시간 분포와 메모리·시트 상태를 화면에 띄운다. */
@@ -10401,6 +10466,7 @@ window.__tex = n => getTex(pageId(n)); window.__nav = (tx, ty) => navFind(me.x, 
   $('loading').style.display = 'none';
   renderStatButtons();
   if (isMobileUI()) toast('💡 아이템은 가까이 가면 자동으로 줍습니다');
+  setTimeout(() => { try { updateInstallUI(); showInstallTip(false); } catch (e) {} }, 6000); /* 접속 후 한 번만 홈 화면 추가 안내 */
   const mn = $('mapName');
   if (mn) mn.textContent = pageDef(pageNum()).name;
   renderInvUI();

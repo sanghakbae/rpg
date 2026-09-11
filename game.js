@@ -1720,7 +1720,7 @@ async function ensurePageInner(n) {
   if (offline) return;
   const pid = pageId(n);
   const flag = doc(db, 'world', 'init_' + pid);
-  const [probe, flagSnap] = await Promise.all([getDoc(doc(db, 'monsters', pid + '_z0_0')), getDoc(flag)]); /* 두 번의 왕복을 한 번으로 */
+  const [probe, flagSnap] = await withTimeout(Promise.all([getDoc(doc(db, 'monsters', pid + '_z0_0')), getDoc(flag)]), 10000); /* 두 번의 왕복을 한 번으로 + 무한 대기 방지 */
   if (flagSnap.exists() && probe.exists()) return;
   const pd = pageDef(n);
   const batch = writeBatch(db);
@@ -5635,6 +5635,7 @@ function buildWorldM2() {
   return cv2;
 }
 
+let mapFadeGuard = 0;
 function gotoPage(n) {
   if (hordeOn()) { toast('🌀 쇄도 중에는 구역을 이동할 수 없습니다'); return; } /* 런 도중 이탈 방지 */
   if (mapFading || n < 1 || n > MAX_PAGE) return;
@@ -5643,9 +5644,16 @@ function gotoPage(n) {
   if (ov) ov.style.opacity = 1;
   sfx('boom');
   doShake(5);
+  /* 무슨 일이 있어도 3초 뒤엔 암전을 걷는다.
+     예전에는 아래 본문이 파이어스토어 응답을 기다리다 멈추면 검은 화면이 영영 남았다
+     (#mapFade 는 z-index 50 이라 체력창·미니맵은 가려지고 독만 보인다 — 정확히 그 증상). */
+  clearTimeout(mapFadeGuard);
+  mapFadeGuard = setTimeout(() => { if (ov) ov.style.opacity = 0; mapFading = false; }, 3000);
   setTimeout(async () => {
-   try { /* 이 안에서 하나라도 던지면 mapFading이 true로 남아 화면이 영영 검은 채로 멈춘다 */
-    await ensurePage(n).catch(e => noteErr && noteErr(e)); /* 몬스터 시드는 실패해도 이동은 진행 */
+   try {
+    /* 몬스터 시드는 기다리지 않는다 — 서버 응답이 늦어도 이동은 진행되고,
+       늦게 도착한 몬스터는 onSnapshot 이 채운다. 왕복 한 번이 빠지니 이동도 그만큼 빨라진다. */
+    ensurePage(n).catch(e => noteErr && noteErr(e));
     me.map = pageId(n);
     try { localStorage.setItem('lastPage', String(n)); } catch (e) {} /* 다음 접속 때 이 구역 프롭을 미리 받기 위해 */
     const sp = pageDef(n).spawn;
@@ -5673,7 +5681,7 @@ function gotoPage(n) {
       }
     } catch (e) {}
    } catch (e) { noteErr && noteErr(e); }
-   finally { setTimeout(() => { if (ov) ov.style.opacity = 0; mapFading = false; }, 300); }
+   finally { clearTimeout(mapFadeGuard); setTimeout(() => { if (ov) ov.style.opacity = 0; mapFading = false; }, 300); }
   }, 380);
 }
 
@@ -10920,7 +10928,10 @@ async function init() {
   let done5 = 0;
   const tick5 = () => ldProg(24 + (++done5) * 1.6, 33, `캐릭터 정보 불러오는 중... (${done5}/5)`);
   const rd = ref => getDoc(ref).then(r => { tick5(); return r; }, e => { tick5(); throw e; });
-  const all5 = await Promise.allSettled([rd(primaryRef), ...CLASS_KEYS.map(k => rd(doc(db, 'players', `${authUid}__${k}`)))]);
+  /* 네트워크가 흔들리면 getDoc 은 몇 분이고 매달린다 — 진행바가 얼어붙는 대신 안내를 띄우도록 시간 제한 */
+  const all5 = await withTimeout(Promise.allSettled([rd(primaryRef), ...CLASS_KEYS.map(k => rd(doc(db, 'players', `${authUid}__${k}`)))]), 15000)
+    .catch(e => { loadFail(e); return null; });
+  if (!all5) return;
   if (all5[0].status !== 'fulfilled') { loadFail(all5[0].reason); return; }
   const primarySnap = all5[0].value;
   const primary = primarySnap.exists() ? primarySnap.data() : null;

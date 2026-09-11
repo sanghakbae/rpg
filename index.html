@@ -24,8 +24,10 @@
   button { font-family: inherit; cursor: pointer; border: none; border-radius: 5px; }
 
   /* ===== 타이틀 화면(로그인·캐릭터 생성) — 대형 영웅 아트 배경 ===== */
+  /* overflow:hidden + 고정 padding 이라 내용이 화면보다 길면 아래(시작 버튼)가 그냥 잘려 나갔다.
+     안전영역을 더하고, 그래도 넘치면 스크롤되게 한다. */
   #loginScreen { position: fixed; inset: 0; background: #070a12; z-index: 101; display: flex; flex-direction: column; align-items: center; justify-content: space-between;
-    padding: 6vh 16px 4vh; overflow: hidden; }
+    padding: calc(5vh + var(--safeT)) 16px calc(3vh + var(--safeB)); overflow-x: hidden; overflow-y: auto; }
   .lgBg { position: absolute; inset: 0; overflow: hidden; pointer-events: none;
     background: radial-gradient(ellipse at 50% 120%, #1c2a3f 0%, #0b1020 45%, #05070d 100%); }
   .lgStars { position: absolute; inset: -50% 0 0 0;
@@ -67,7 +69,7 @@
   #loginScreen .lphint { color: #8a93a6; font-size: 11px; letter-spacing: 1px; text-shadow: 0 1px 4px #000; }
   @keyframes heroFloat { 50% { transform: translateY(-8px); } }
   #create { position: fixed; inset: 0; background: #070a12; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: space-between;
-    padding: 6vh 16px 4vh; overflow: hidden; }
+    padding: calc(5vh + var(--safeT)) 16px calc(3vh + var(--safeB)); overflow-x: hidden; overflow-y: auto; }
   #create .lgTop { gap: 8px; }
   #nameInput { width: min(320px, 80vw); padding: 12px 16px; font-size: 17px; text-align: center;
     background: rgba(10,14,24,.6); border: 1px solid #56617a; border-radius: 8px; color: #fff; outline: none; backdrop-filter: blur(6px); }
@@ -83,14 +85,18 @@
   .cweap { color: #ffd700; font-size: 12px; margin-bottom: 8px; }
   .cstat { color: #aab; font-size: 11px; line-height: 1.6; }
   .cstat b { color: #eef; }
-  #startBtn { padding: 13px 60px; font-size: 17px; font-weight: bold; background: linear-gradient(#e0b83a, #8f6f14);
-    color: #fff; letter-spacing: 3px; box-shadow: 0 6px 24px rgba(255,200,60,.25); }
-  #startBtn:hover { filter: brightness(1.15); }
+  #startBtn, #charGoBtn { padding: 13px 60px; font-size: 17px; font-weight: bold; background: linear-gradient(#e0b83a, #8f6f14);
+    color: #fff; letter-spacing: 3px; border: none; border-radius: 10px; box-shadow: 0 6px 24px rgba(255,200,60,.25); cursor: pointer; }
+  #startBtn:hover, #charGoBtn:hover { filter: brightness(1.15); }
   @media (max-width: 640px), (pointer: coarse) and (max-height: 520px) {
     .lgArt { right: 50%; transform: translateX(50%); height: 58vh; max-width: 92vw; bottom: 22vh; }
     .lgArt.swap { transform: translateX(50%) translateY(10px) scale(.98); }
     .lgTop { align-self: center; align-items: center; text-align: center; padding-left: 0; }
-    #loginScreen h1, #create h1 { letter-spacing: 4px; }
+    .lgTop, .lgBottom { gap: 8px; }
+    #loginScreen h1, #create h1 { letter-spacing: 4px; font-size: clamp(34px, 7.4vw, 56px); }  /* 제목이 너무 커서 아래가 밀려났다 */
+    #loginScreen .lp img { width: min(74px, 16vw); }
+    #loginScreen .lp { padding: 6px 5px 5px; }
+    #startBtn, #charGoBtn { padding: 12px 44px; font-size: 15px; }
     .ccard { width: calc(50% - 8px); padding: 10px 6px; }
     .cicon { font-size: 34px; margin-bottom: 4px; } .cicon img { width: 56px; height: 56px; }
     .cname { font-size: 15px; } .cstat { font-size: 10px; }
@@ -1118,7 +1124,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=199"
+<script type="module" src="game.js?v=200"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

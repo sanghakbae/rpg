@@ -6220,13 +6220,16 @@ function sheetReady(key, e) { /* 로드 완료 후 후처리(기존과 동일) *
   }
 }
 function loadSheet(key, e) {
+  if (e.loading) return;
+  e.loading = true; e.tries = (e.tries || 0) + 1;
+  const fail = why => { e.loading = false; e.failed = true; e.why = String(why).slice(0, 60); e.nextTry = Date.now() + Math.min(30000, 1500 * e.tries); };
   const url = `assets/sprites/${key}.png?v=${SHEET_VER}`;
   fetch(`assets/sprites/${key}.json?v=${SHEET_VER}`).then(r => r.ok ? r.json() : Promise.reject(r.status)).then(meta => {
     const mobileHalf = MOBILE; /* 모바일: 큰 시트는 절반 해상도로(메모리) — 판정은 아래에서 실제 픽셀 면적으로 */
     const legacy = () => new Promise((res, rej) => { /* createImageBitmap 미지원 브라우저 */
       const img = new Image();
       img.onload = () => {
-        e.used = Date.now();
+        e.used = Date.now(); e.loading = false; e.failed = false;
         const wantHalf = mobileHalf && img.naturalWidth * img.naturalHeight > 1.0e6;
         if (!wantHalf) { e.img = img; e.meta = meta; return res(); }
         try {
@@ -6250,11 +6253,11 @@ function loadSheet(key, e) {
           if (half && half.width && half.width < bmp.width) { try { bmp.close(); } catch (err) {} bmp = half; halved = true; }
         } catch (err) { /* 리사이즈 옵션 미지원(구형 Safari) → 원본 해상도 유지 */ }
       }
-      e.img = bmp; e.used = Date.now(); /* 방금 로드한 시트가 LRU에서 '가장 오래된 것'으로 몰려 즉시 제거되던 문제 */
+      e.img = bmp; e.used = Date.now(); e.loading = false; e.failed = false; /* 방금 로드한 시트가 LRU에서 '가장 오래된 것'으로 몰려 즉시 제거되던 문제 */
       e.meta = halved ? { ...meta, fr: meta.fr / 2, top: meta.top / 2, feet: meta.feet / 2 } : meta;
       sheetReady(key, e);
-    })).catch(() => legacy().then(() => sheetReady(key, e)));
-  }).catch(() => { e.failed = true; });
+    })).catch(() => legacy().then(() => sheetReady(key, e)).catch(err => fail(err && (err.message || err))));
+  }).catch(err => fail(err && (err.message || err)));
 }
 const SHEET_MOBILE = MOBILE;
 const SHEET_CAP = SHEET_MOBILE ? 6 : 999; /* 12장(장당 2~8MB 디코드)은 iOS 캔버스 메모리 한계를 넘겨 텍스처 스래싱을 일으켰다 — 한 구역은 3장이면 충분 */ /* 모바일: 로드된 몹 시트 상한 — 초과 시 최근 미사용분 제거(누적 메모리로 Safari 텍스처 스래싱 방지) */
@@ -6276,10 +6279,14 @@ function evictSheets() {
 function heroSheet(key) {
   let e = HERO_SHEETS[key];
   if (e === undefined) {
-    e = HERO_SHEETS[key] = { img: null, meta: null, failed: false };
-    if (sheetManifest === null) sheetManifestP.then(() => { if (sheetManifest && !sheetManifest.has(key)) e.failed = true; else loadSheet(key, e); });
-    else if (sheetManifest && !sheetManifest.has(key)) e.failed = true;
+    e = HERO_SHEETS[key] = { img: null, meta: null, failed: false, tries: 0, nextTry: 0 };
+    if (sheetManifest === null) sheetManifestP.then(() => { if (sheetManifest && !sheetManifest.has(key)) e.missing = e.failed = true; else loadSheet(key, e); });
+    else if (sheetManifest && !sheetManifest.has(key)) e.missing = e.failed = true;
     else loadSheet(key, e);
+  }
+  /* 네트워크/디코드가 한 번 실패해도 세션 내내 포기하지 않는다 — 아이폰에서 이 때문에 몬스터가 픽셀 그림으로 남았다 */
+  if (e.failed && !e.missing && !e.loading && Date.now() > (e.nextTry || 0) && (e.tries || 0) < 8) {
+    e.failed = false; loadSheet(key, e);
   }
   if (e.img) e.used = Date.now(); /* LRU 타임스탬프 */
   return e.img ? e : null;
@@ -9808,8 +9815,10 @@ function perfTick(ms, t) {
     `MOBILE=${MOBILE ? 'Y' : 'N'}  ${innerWidth}x${innerHeight} dpr${dpr}\n` +
     `FPS ${fps}   간격 p50 ${pg(.5).toFixed(0)} p95 ${pg(.95).toFixed(0)} max ${perfWorstGap.toFixed(0)}ms\n` +
     `끊김(>33ms) ${perfDrops}   연산 med ${p(.5).toFixed(1)} p95 ${p(.95).toFixed(1)} max ${perfWorst.toFixed(0)}ms\n` +
-    `sheets ${Object.keys(HERO_SHEETS).filter(k => HERO_SHEETS[k].img).length} (${sh}MB)  hue ${hueSheetCache.size}\n` +
-    `wss ${WSS} tex ${bioTexCache.size}  sims ${sims.filter(s => s.alive).length}  heap ${mem}`;
+    `sheets ok ${Object.keys(HERO_SHEETS).filter(k => HERO_SHEETS[k].img).length} / 실패 ${Object.keys(HERO_SHEETS).filter(k => HERO_SHEETS[k].failed && !HERO_SHEETS[k].missing).length} / 로딩 ${Object.keys(HERO_SHEETS).filter(k => HERO_SHEETS[k].loading).length}  ${sh}MB  hue ${hueSheetCache.size}\n` +
+    `wss ${WSS} tex ${bioTexCache.size}  sims ${sims.filter(s => s.alive).length}  heap ${mem}` +
+    (() => { const f = Object.entries(HERO_SHEETS).find(([, v]) => v.failed && !v.missing); return f ? `\n실패: ${f[0]} — ${f[1].why || '?'}` : ''; })() +
+    (() => { const b = Object.entries(HERO_SHEETS).filter(([, v]) => v.img).sort((x, y) => y[1].img.width * y[1].img.height - x[1].img.width * x[1].img.height)[0]; return b ? `\n최대시트 ${b[0]} ${b[1].img.width}x${b[1].img.height}` : ''; })();
 }
 function sheetBytes() { /* 디코드된 시트 메모리 추정 */
   let b = 0;

@@ -24,6 +24,7 @@ self.addEventListener('fetch', e => {
 
   if (isAsset(u)) {                                          /* 캐시 우선 */
     e.respondWith(caches.match(req).then(hit => hit || fetch(req).then(res => {
+      /* 실패 응답은 캐시하지 않고 그대로 넘겨 클라이언트가 재시도하게 둔다 */
       if (res && res.ok) {
         const cp = res.clone();
         caches.open(ASSET).then(async c => {

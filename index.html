@@ -86,7 +86,7 @@
   #startBtn { padding: 13px 60px; font-size: 17px; font-weight: bold; background: linear-gradient(#e0b83a, #8f6f14);
     color: #fff; letter-spacing: 3px; box-shadow: 0 6px 24px rgba(255,200,60,.25); }
   #startBtn:hover { filter: brightness(1.15); }
-  @media (max-width: 640px) {
+  @media (max-width: 640px), (pointer: coarse) and (max-height: 520px) {
     .lgArt { right: 50%; transform: translateX(50%); height: 58vh; max-width: 92vw; bottom: 22vh; }
     .lgArt.swap { transform: translateX(50%) translateY(10px) scale(.98); }
     .lgTop { align-self: center; align-items: center; text-align: center; padding-left: 0; }
@@ -214,7 +214,7 @@
   .dcell .dcd { font-size: 10px; color: #99a; } .dcell .dcr { font-size: 9.5px; color: #cdb; margin-top: 2px; line-height: 1.3; }
   .dcell.got { background: rgba(46,204,113,.14); border-color: #2ecc71; opacity: .7; }
   .dcell.next { border-color: #ffd700; box-shadow: 0 0 8px rgba(255,215,0,.4); }
-  @media (max-width: 640px) { .dcell .dcr { font-size: 8px; } .dcell .dcd { font-size: 8.5px; } }
+  @media (max-width: 640px), (pointer: coarse) and (max-height: 520px) { .dcell .dcr { font-size: 8px; } .dcell .dcd { font-size: 8.5px; } }
   .achvTitles { margin: 2px 2px 10px; padding: 8px 10px; background: rgba(255,215,0,.05); border: 1px solid rgba(255,215,0,.2); border-radius: 8px; }
   .atHd { font-size: 12px; font-weight: bold; color: #ffd700; margin-bottom: 6px; } .atHd span { color: #778; font-weight: normal; font-size: 10px; margin-left: 4px; }
   .atList { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -250,7 +250,7 @@
   .strow2 { display: flex; justify-content: space-between; padding: 6px 2px; font-size: 13px; color: #cde; border-bottom: 1px solid rgba(255,255,255,.05); }
   .stsetHd { color: #ffd700; font-size: 12px; font-weight: bold; margin: 10px 0 4px; }
   .stset { color: #9fd; font-size: 12px; padding: 2px 0; }
-  @media (max-width: 640px) { #dockL #autoBtn { width: 36px; height: 36px; right: 6px; bottom: calc(100% + 5px); border-radius: 10px; } #autoBtn .ah { font-size: 14px; } #autoBtn span:last-child { font-size: 7px; } }
+  @media (max-width: 640px), (pointer: coarse) and (max-height: 520px) { #dockL #autoBtn { width: 36px; height: 36px; right: 6px; bottom: calc(100% + 5px); border-radius: 10px; } #autoBtn .ah { font-size: 14px; } #autoBtn span:last-child { font-size: 7px; } }
   .sgr { font-size: 10px; border: 1px solid; border-radius: 4px; padding: 0 4px; margin-left: 6px; vertical-align: 1px; }
   .skind { font-size: 10px; border-radius: 4px; padding: 0 5px; margin-left: 4px; vertical-align: 1px; }
   .skind.act { background: rgba(255,180,60,.2); color: #ffb347; }
@@ -459,7 +459,7 @@
   .heBox li small { color: #6b7385; }
   #heClose { width: 100%; padding: 10px; border-radius: 7px; background: #2b3547; color: #dfe4ee; font-size: 13px; }
   #heClose:hover { background: #3a4658; }
-  @media (max-width: 640px) {
+  @media (max-width: 640px), (pointer: coarse) and (max-height: 520px) {
     .hpCard { width: 88px; padding: 12px 6px; } .hpCard i { font-size: 22px; } .hpCard b { font-size: 11.5px; } .hpCard span { font-size: 10px; }
     #hordeHud { top: 96px; min-width: 210px; padding: 5px 10px 6px; } .hhTop .hhT { font-size: 16px; }
   }
@@ -584,7 +584,7 @@
   /* 효과 */
 
   /* 모바일 (아이폰 등): 상단 상태바 / 중앙 플레이 / 하단 액션바 — 기본 규칙 뒤에 두어 자연 캐스케이드로 우선 */
-  @media (max-width: 640px) {
+  @media (max-width: 640px), (pointer: coarse) and (max-height: 520px) {
     body { overflow: hidden; }
     canvas#game { touch-action: none; -webkit-user-select: none; user-select: none; }
     /* 상단 바: 화면 가로 100% 고정 (좌우 여백·라운드 없이 상단에 밀착, 노치는 안전영역 패딩으로 회피) */
@@ -895,7 +895,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=170"
+<script type="module" src="game.js?v=171"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

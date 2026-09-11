@@ -1202,7 +1202,7 @@ let userZoom = 1, pinchD0 = 0, pinchZ0 = 1;
 const USER_ZOOM_MIN = .5, USER_ZOOM_MAX = 3;
 const MOBILE_VIEW_W = 820; /* 모바일에서 화면 가로에 담을 월드 px */
 function setUserZoom(v) {
-  if (innerWidth <= 640) { userZoom = 1; return; } /* 모바일: 인앱 뷰포트 해상도 고정 — 핀치/휠 확대·축소 없음 */
+  if (MOBILE) { userZoom = 1; return; } /* 모바일: 인앱 뷰포트 해상도 고정 — 핀치/휠 확대·축소 없음 */
   userZoom = clampN(v, USER_ZOOM_MIN, USER_ZOOM_MAX);
   try { localStorage.setItem('zoom2', String(userZoom)); } catch (e) {} /* 'zoom' 키는 휠 폭주 버그 값이 남아 있어 폐기 */
 }
@@ -4514,13 +4514,27 @@ function drawSprite(name, x, y, scale = 4, opts = {}) {
 const cv = $('game'), ctx = cv.getContext('2d');
 const mm = $('minimap'), mctx = mm.getContext('2d');
 /* 백버퍼를 기기 픽셀비만큼 키워 렌더 — cvW/cvH는 CSS 픽셀 기준(기존 코드 의미 유지) */
+/* 모바일 기기 판정: 창 폭이 아니라 '기기'로 본다.
+   예전에는 innerWidth <= 640 만 봤기 때문에 아이폰을 가로로 들면(852px) PC로 분류돼
+   시트 절반축소·시트 상한·지형 디테일·DPR 제한 등 모바일 최적화가 전부 꺼진 채 돌았다. */
+const MOBILE = (() => {
+  try {
+    const coarse = matchMedia('(pointer: coarse)').matches;
+    const shortSide = Math.min(screen.width || innerWidth, screen.height || innerHeight);
+    if (/iPhone|iPod|Android.*Mobile|Windows Phone/i.test(navigator.userAgent)) return true;
+    if (/iPad|Android|Tablet/i.test(navigator.userAgent)) return true;
+    if (navigator.maxTouchPoints > 1 && coarse && shortSide <= 900) return true;   /* 터치 기기 + 짧은 변 900 이하 */
+  } catch (e) {}
+  return innerWidth <= 640;
+})();
+window.__MOBILE = () => MOBILE;
 let dpr = 1, cvW = 0, cvH = 0, resizeT = 0;
 let wssT = 0;
-const DQ = innerWidth <= 640 ? .45 : 1; /* 모바일 지형 디테일 계수 — 구역을 옮길 때마다 지형을 새로 굽는 비용(아이폰 100ms+)이 화면을 멈추게 했다. 축소 화면이라 밀도를 줄여도 차이가 거의 없다 */
+const DQ = MOBILE ? .45 : 1; /* 모바일 지형 디테일 계수 — 구역을 옮길 때마다 지형을 새로 굽는 비용(아이폰 100ms+)이 화면을 멈추게 했다. 축소 화면이라 밀도를 줄여도 차이가 거의 없다 */
 const dq = n => n > 0 ? Math.max(1, Math.round(n * DQ)) : 0;
 let WSS = 2; /* 지형 텍스처 배율 — 아래 calcWSS()가 해상도에 맞춰 정하고, resize마다 갱신된다(함수 선언은 호이스팅되므로 첫 resize에서도 안전) */
 function resize() {
-  const mob = innerWidth <= 640;
+  const mob = MOBILE;
   let d = Math.min(devicePixelRatio || 1, mob ? 2 : 3);
   /* 백버퍼 픽셀 예산: 모바일 2.4M / 데스크톱 16M — 초과하면 배율을 낮춰 인앱 브라우저 메모리 멈춤 방지.
      9M이던 시절엔 2K 이상 창(레티나)에서 배율이 2→1.75/1.5로 깎여 화면 전체가 흐릿하게 확대됐다. UI는 CSS px 기준이라 크기 변화 없음 */
@@ -4545,7 +4559,7 @@ WSS = calcWSS();
    월드(1600px)를 화면 가로에 꽉 채워 보여주므로 필요한 텍셀 = 화면 가로 실제 픽셀(innerWidth × 배율).
    창을 키우거나 줄이면 resize에서 다시 계산해 지형을 새로 굽는다(예전엔 시작 시점 값에 고정돼, 폰 크기로 열었다 최대화하면 계속 흐릿했다). */
 function calcWSS() {
-  if (innerWidth <= 640) return 1.0; /* 모바일: 월드를 축소해 보여 1.0으로 충분(메모리 우선) */
+  if (MOBILE) return 1.0; /* 모바일: 월드를 축소해 보여 1.0으로 충분(메모리 우선) */
   const need = (innerWidth * Math.min(devicePixelRatio || 1, 3)) / WORLD.w;
   return clampN(Math.ceil(need * 4) / 4, 1.5, 2.75); /* 0.25 단위 올림 — 텍셀이 화면 픽셀보다 모자라지 않게(내림하면 살짝 흐려진다) */
 }
@@ -5048,7 +5062,7 @@ function drawWaterFx(now) {
   ctx.restore();
 }
 /* 바이옴 입자: 낙엽/눈/불씨/포자/먼지/반짝이/물방울 — 뷰포트 주변 월드 좌표에서 순환 */
-const AMB_N = innerWidth <= 640 ? 18 : 40; let ambient = [], ambStyle = '';
+const AMB_N = MOBILE ? 18 : 40; let ambient = [], ambStyle = '';
 function ambientKind(style) { return { meadow: 'leaf', jungle: 'leaf', swamp: 'spore', snow: 'snow', volcano: 'ember', desert: 'dust', cave: 'drip', ruin: 'dust', abyss: 'spark', sky: 'spark' }[style] || 'leaf'; }
 function updateAmbient(now, dt) {
   const pn = pageNum(), style = (BIOME_PAL[Math.min(9, Math.floor((pn - 1) / 10))] || BIOME_PAL[0]).style; const kind = ambientKind(style); /* 팔레트 스타일 기준(BIOMES.style은 구형 meadow/grave 2종) */
@@ -5185,7 +5199,7 @@ function getTex(mp) {
   if (!t) {
     t = buildZoneWorld(n); /* 구역별 지형(팔레트·물·장식·충돌체) */
     bioTexCache.set(n, t);
-    const texCap = WSS > 2 ? 1 : 2; /* 모바일은 텍스처가 작아(1600x1200) 2장까지 캐시 — 왕복 이동 시 재굽기 없음 */ while (bioTexCache.size > texCap) { const old = bioTexCache.keys().next().value; bioTexCache.delete(old); } /* 모바일·고배율 텍스처는 1장만 캐시(메모리 상쇄) */
+    const texCap = (MOBILE || WSS > 2) ? 1 : 2; /* 모바일은 텍스처가 작아(1600x1200) 2장까지 캐시 — 왕복 이동 시 재굽기 없음 */ while (bioTexCache.size > texCap) { const old = bioTexCache.keys().next().value; bioTexCache.delete(old); } /* 모바일·고배율 텍스처는 1장만 캐시(메모리 상쇄) */
     t.wss = WSS;
   }
   return t;
@@ -5340,7 +5354,7 @@ function gotoPage(n) {
    서버 쓰기 0회 — 몬스터·보상 전부 로컬에서 굴리고, 종료 시 한 번만 합산 지급한다.
    30초마다 각인(임시 강화) 3장 중 1장을 고르고, 10분을 버티면 완주. 죽으면 그 자리에서 끝(사망 penalty 없음). */
 const HORDE_MS = 600000, HORDE_WAVE_MS = 30000, HORDE_R = 520, HORDE_C = { x: 800, y: 620 };
-const hordeCap = () => innerWidth <= 640 ? 18 : 32; /* 동시 생존 몬스터 상한 — 모바일 프레임 보호 */
+const hordeCap = () => MOBILE ? 18 : 32; /* 동시 생존 몬스터 상한 — 모바일 프레임 보호 */
 const HORDE_BUFFS = [
   { id: 'rage',  n: '광폭', ic: '🔥', max: 6, k: 'atk',   v: .25, d: l => `공격력 +${25 * l}%` },
   { id: 'haste', n: '신속', ic: '⚡', max: 5, k: 'aspd',  v: .18, d: l => `공격 속도 +${18 * l}%` },
@@ -6204,12 +6218,12 @@ function sheetReady(key, e) { /* 로드 완료 후 후처리(기존과 동일) *
 function loadSheet(key, e) {
   const url = `assets/sprites/${key}.png?v=${SHEET_VER}`;
   fetch(`assets/sprites/${key}.json?v=${SHEET_VER}`).then(r => r.ok ? r.json() : Promise.reject(r.status)).then(meta => {
-    const mobileHalf = innerWidth <= 640; /* 모바일: 큰 시트는 절반 해상도로(메모리) — 판정은 아래에서 실제 픽셀 면적으로 */
+    const mobileHalf = MOBILE; /* 모바일: 큰 시트는 절반 해상도로(메모리) — 판정은 아래에서 실제 픽셀 면적으로 */
     const legacy = () => new Promise((res, rej) => { /* createImageBitmap 미지원 브라우저 */
       const img = new Image();
       img.onload = () => {
         e.used = Date.now();
-        const wantHalf = mobileHalf && img.naturalWidth * img.naturalHeight > 2.5e6;
+        const wantHalf = mobileHalf && img.naturalWidth * img.naturalHeight > 1.0e6;
         if (!wantHalf) { e.img = img; e.meta = meta; return res(); }
         try {
           const c = document.createElement('canvas'); c.width = img.width >> 1; c.height = img.height >> 1;
@@ -6225,7 +6239,7 @@ function loadSheet(key, e) {
     return fetch(url).then(r => r.ok ? r.blob() : Promise.reject(r.status)).then(blob => decodeQueue(async () => {
       let bmp = await createImageBitmap(blob); /* 디코드: 메인 스레드 밖 */
       let halved = false;
-      const wantHalf = mobileHalf && bmp.width * bmp.height > 2.5e6; /* 250만 픽셀(=10MB) 초과분만 축소 — fr 기준은 무거운 시트 대부분을 놓쳤다 */
+      const wantHalf = mobileHalf && bmp.width * bmp.height > 1.0e6; /* 100만 픽셀(=4MB) 초과면 절반으로 — 영웅 시트(4096x512)·큰 프롭까지 포함 */ /* 250만 픽셀(=10MB) 초과분만 축소 — fr 기준은 무거운 시트 대부분을 놓쳤다 */
       if (wantHalf) {
         try {
           const half = await createImageBitmap(bmp, { resizeWidth: bmp.width >> 1, resizeHeight: bmp.height >> 1, resizeQuality: 'high' });
@@ -6238,7 +6252,7 @@ function loadSheet(key, e) {
     })).catch(() => legacy().then(() => sheetReady(key, e)));
   }).catch(() => { e.failed = true; });
 }
-const SHEET_MOBILE = innerWidth <= 640;
+const SHEET_MOBILE = MOBILE;
 const SHEET_CAP = SHEET_MOBILE ? 6 : 999; /* 12장(장당 2~8MB 디코드)은 iOS 캔버스 메모리 한계를 넘겨 텍스처 스래싱을 일으켰다 — 한 구역은 3장이면 충분 */ /* 모바일: 로드된 몹 시트 상한 — 초과 시 최근 미사용분 제거(누적 메모리로 Safari 텍스처 스래싱 방지) */
 function evictSheets() {
   if (!SHEET_MOBILE) return;
@@ -6314,7 +6328,7 @@ const hueBakeQ = []; /* 굽는 중인 색조 시트 — 프레임마다 조금�
 /* 시트 전체(8~30MB)를 한 프레임에 색조 변환하면 아이폰에서 50ms 넘게 멈췄다(구역 이동·새 몬스터 등장 때마다).
    → 캔버스만 먼저 만들고 가로 띠 단위로 여러 프레임에 나눠 굽는다. 다 구워지기 전에는 원본 시트를 그대로 쓴다. */
 function hueSheet(base, sh, dh) {
-  if (innerWidth <= 640 && sh.img.width * sh.img.height > 6e6) return sh.img; /* 큰 시트는 모바일에서 틴트 생략 — 31MB 캔버스를 매번 새로 만들다 프레임이 무너졌다 */
+  if (MOBILE && sh.img.width * sh.img.height > 6e6) return sh.img; /* 큰 시트는 모바일에서 틴트 생략 — 31MB 캔버스를 매번 새로 만들다 프레임이 무너졌다 */
   const key = base + '|' + dh + '|' + sh.img.width; /* 해상도가 바뀌면(회전 등) 다른 캐시 */
   const e = hueSheetCache.get(key);
   if (e) {
@@ -6331,7 +6345,7 @@ function hueSheet(base, sh, dh) {
   const ent = { c, g, img: sh.img, y: 0, done: false };
   hueSheetCache.set(key, ent);
   hueBakeQ.push(ent);
-  const hueCap = innerWidth <= 640 ? 4 : 6; /* 한 구역에 3종(일반2+보스)이라 2장이면 매 프레임 교체되며 영원히 못 굽는다 */ /* 시트 크기 캔버스라 모바일에선 2장까지만(메모리) */
+  const hueCap = MOBILE ? 4 : 6; /* 한 구역에 3종(일반2+보스)이라 2장이면 매 프레임 교체되며 영원히 못 굽는다 */ /* 시트 크기 캔버스라 모바일에선 2장까지만(메모리) */
   while (hueSheetCache.size > hueCap) { const k0 = hueSheetCache.keys().next().value; const old = hueSheetCache.get(k0); hueSheetCache.delete(k0); const i = hueBakeQ.indexOf(old); if (i >= 0) hueBakeQ.splice(i, 1); try { old.c.width = 0; old.c.height = 0; } catch (e2) {} }
   return sh.img; /* 이번 프레임은 원본으로 */
 }
@@ -6347,7 +6361,7 @@ function dropHueOf(img) {
     try { e.c.width = 0; e.c.height = 0; } catch (err) {}
   }
 }
-const HUE_BAKE_PX = innerWidth <= 640 ? 400000 : 1600000; /* 프레임당 굽는 픽셀 수 — 모바일은 더 잘게 */
+const HUE_BAKE_PX = MOBILE ? 400000 : 1600000; /* 프레임당 굽는 픽셀 수 — 모바일은 더 잘게 */
 function hueBakeStep() {
   const e = hueBakeQ[0];
   if (!e) return;
@@ -6422,7 +6436,7 @@ function heroFrames(cls, eq, faceBake = Math.PI / 2) {
   if (set) { frameCache.delete(key); frameCache.set(key, set); return set; } /* LRU */
   set = bakeHeroFrames(cls, eq || {}, faceBake);
   frameCache.set(key, set);
-  while (frameCache.size > (innerWidth <= 640 ? 2 : 6)) frameCache.delete(frameCache.keys().next().value); /* 세트당 ≈12MB */
+  while (frameCache.size > (MOBILE ? 2 : 6)) frameCache.delete(frameCache.keys().next().value); /* 세트당 ≈12MB */
   return set;
 }
 /* 베이크 후처리: 실루엣 외곽선 + 상하 라이팅 + 좌상단 림라이트.
@@ -7868,7 +7882,7 @@ function drawBoss(s, now) {
 /* ================= 메인 드로잉 ================= */
 /* UI 인셋 — PC: 스테이지 항상 정중앙(인셋 없음), 모바일: 상하(HUD/하단 액션바)만 회피
    모바일에선 HUD 실제 높이를 CSS 변수 --hudB로 내보내 카운터/미니맵이 CSS에서 따라가게 함 */
-const isMobileUI = () => innerWidth <= 640; /* index.html @media (max-width:640px)와 동기 유지 */
+const isMobileUI = () => { try { return matchMedia('(max-width: 640px), (pointer: coarse) and (max-height: 520px)').matches; } catch (e) { return innerWidth <= 640; } }; /* index.html의 모바일 미디어쿼리와 동일 조건(아이폰 가로 포함) */
 let uiInsetCache = { T: 0, B: 0, t: 0, hb: -1 };
 function uiInsets(now) {
   if (now - uiInsetCache.t > 500) {
@@ -8144,7 +8158,7 @@ function initScene3D() {
   if (threeState !== 'ready' || !THREE_NS) return false;
   try {
     const T = THREE_NS;
-    const mob = innerWidth <= 640;
+    const mob = MOBILE;
     renderer3D = new T.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     renderer3D.setPixelRatio(Math.min(devicePixelRatio || 1, mob ? 2 : 2.5));
     renderer3D.setSize(innerWidth, innerHeight);
@@ -8635,7 +8649,7 @@ function draw(now) {
   /* 화면을 최소한 꽉 채우는 배율(zFill) 아래로는 못 줄인다 — 줄이면 월드 밖 검은 여백이 생기므로 */
   const zFill = Math.max(vw / WORLD.w, (vh - T - B) / WORLD.h);
   /* 모바일: 인앱 뷰포트 고정 배율 — 가로로 월드 약 820px가 보이도록 축소(1:1은 캐릭터가 화면을 압도했다). 렌더는 DPR 최대라 선명 */
-  const z = vw <= 640 ? clampN(vw / MOBILE_VIEW_W, zFill, 1) : clampN(Math.max(1, zFill) * userZoom, zFill, USER_ZOOM_MAX);
+  const z = MOBILE ? clampN(vw / MOBILE_VIEW_W, zFill, 1) : clampN(Math.max(1, zFill) * userZoom, zFill, USER_ZOOM_MAX);
   const vwW = vw / z, vhW = vh / z, TW = T / z, BW = B / z;
   const availH = vhW - TW - BW;
   const cx = WORLD.w >= vwW ? clampN(cam.x - vwW / 2, 0, WORLD.w - vwW) : (WORLD.w - vwW) / 2;
@@ -9422,7 +9436,7 @@ cv.addEventListener('touchstart', e => {
   e.preventDefault();
   if (e.touches.length >= 2) { /* 두 손가락: 모바일은 배율 고정이라 아무것도 안 함(이동 입력만 취소) */
     touchDownId = null; dest = null;
-    if (innerWidth <= 640) return;
+    if (MOBILE) return;
     pinchD0 = pinchDist([...e.touches]); pinchZ0 = userZoom;
     return;
   }
@@ -9605,8 +9619,10 @@ function stageMode() {
 function loop(t) {
 requestAnimationFrame(loop);
   if (window.__stage) return;
+  const _t0 = perfOn ? performance.now() : 0;
   try {
     loopBody(t);
+    if (perfOn) perfTick(performance.now() - _t0);
     if (loopErrMsg) loopErrMsg = '';
   } catch (err) {
     loopErrMsg = String(err && err.message || err);
@@ -9637,6 +9653,46 @@ function syncModal() {
 if (typeof MutationObserver !== 'undefined') new MutationObserver(() => { try { syncModal(); } catch (e) {} }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['class'], childList: true });
 function toggleChat() { chatVisible = !chatVisible; $('chatBox').style.display = chatVisible ? '' : 'none'; syncModal(); }
 function toggleTree() { togglePanel('treePanel'); if ($('treePanel').classList.contains('open')) renderTree(); }
+
+/* ================= 성능 진단 오버레이 (?perf=1) =================
+   실제 기기에서 무엇이 느린지 보기 위한 것. 프레임 시간 분포와 메모리·시트 상태를 화면에 띄운다. */
+let perfOn = false, perfEl = null, perfBuf = [], perfLast = 0, perfWorst = 0, perfStalls = 0;
+function perfInit() {
+  try { perfOn = new URLSearchParams(location.search).get('perf') === '1'; } catch (e) {}
+  if (!perfOn) return;
+  perfEl = document.createElement('div');
+  perfEl.id = 'perfHud';
+  perfEl.style.cssText = 'position:fixed;left:6px;top:6px;z-index:300;background:rgba(0,0,0,.78);color:#9f9;font:11px/1.45 monospace;padding:6px 8px;border-radius:6px;white-space:pre;pointer-events:none;max-width:70vw;';
+  document.body.appendChild(perfEl);
+}
+function perfTick(ms) {
+  if (!perfOn) return;
+  perfBuf.push(ms);
+  if (ms > 50) perfStalls++;
+  if (ms > perfWorst) perfWorst = ms;
+  const now = Date.now();
+  if (now - perfLast < 500 || !perfEl) return;
+  perfLast = now;
+  const a = [...perfBuf].sort((x, y) => x - y); perfBuf = [];
+  if (!a.length) return;
+  const p = q => a[Math.min(a.length - 1, Math.floor(a.length * q))];
+  const sh = (() => { try { return sheetBytes(); } catch (e) { return 0; } })();
+  const mem = performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) + 'MB' : '-';
+  perfEl.textContent =
+    `MOBILE=${MOBILE ? 'Y' : 'N'}  ${innerWidth}x${innerHeight} dpr${dpr}\n` +
+    `frame  med ${p(.5).toFixed(1)}  p95 ${p(.95).toFixed(1)}  max ${perfWorst.toFixed(0)}ms\n` +
+    `stalls(>50ms) ${perfStalls}   fps~${Math.round(1000 / Math.max(1, p(.5)))}\n` +
+    `sheets ${Object.keys(HERO_SHEETS).filter(k => HERO_SHEETS[k].img).length} (${sh}MB)  hue ${hueSheetCache.size}\n` +
+    `wss ${WSS} tex ${bioTexCache.size}  sims ${sims.filter(s => s.alive).length}  heap ${mem}`;
+}
+function sheetBytes() { /* 디코드된 시트 메모리 추정 */
+  let b = 0;
+  for (const k in HERO_SHEETS) { const im = HERO_SHEETS[k] && HERO_SHEETS[k].img; if (im && im.width) b += im.width * im.height * 4; }
+  for (const [, e] of hueSheetCache) { if (e.c && e.c.width) b += e.c.width * e.c.height * 4; }
+  return Math.round(b / 1048576);
+}
+perfInit();
+
 function loopBody(t) {
   const now = Date.now();
   const dt = Math.min(50, t - lastT);

@@ -10665,10 +10665,11 @@ async function init() {
   watchRank();
 
   try { checkDaily(); } catch (e) {} /* 일일 초기화(출석/일일퀘) */
-  ldProg(56, 78, '지형 생성 중...');
+  ldProg(56, 70, '지형 생성 중...');
   await ldYield(); /* 바를 한 번 그려주고 나서 무거운 지형 굽기로 들어간다 */
-  try { getTex(myMap()); } catch (e) {} /* 지형을 미리 굽고 나서 화면을 보여준다 */
-  ldProg(78, 84, '지형 생성 중...');
+  ldProg(58, 70, '지형 그리는 중...');
+  try { getTex(myMap()); } catch (e) { noteErr && noteErr(e); } /* 지형을 미리 굽고 나서 화면을 보여준다 */
+  ldProg(70, 84, '몬스터 준비 중...');
   /* 이 구역 몬스터 시트는 폴백이 있으니 기다리지 않고 미리 받기만 시작한다 */
   try { const pd = pageDef(pageNum()); for (const k of [...pd.kinds, pd.boss]) heroSheet('mob_' + k.base); } catch (e) {}
   /* 실제로 기다리는 건 내 영웅 시트 하나뿐 — 늦으면 상한에서 끊고 바로 플레이에 들어간다 */

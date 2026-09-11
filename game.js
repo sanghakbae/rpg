@@ -1185,6 +1185,57 @@ function ldFail(html) { /* 오류는 진행바를 걷어내고 안내만 남긴�
   ld.style.display = 'flex'; ld.innerHTML = html;
 }
 ldProg(2, 8, '게임 데이터 준비 중...');
+
+/* ================= 프레임 프로파일러 (?prof=1) =================
+   "접속하고 나서 멈춘다"를 추측으로 고치지 않기 위해, 긴 프레임이 생겼을 때
+   그 프레임 안에서 무엇이 얼마나 걸렸는지 누적해 화면에 띄운다. 켜지 않으면 비용 0. */
+const PROF_ON = (() => { try { return new URLSearchParams(location.search).get('prof') === '1'; } catch (e) { return false; } })();
+const profTot = {}, profCnt = {}, profFrames = [], profDecodes = [];
+let profCur = null;
+/* fn을 감싸 이름별 누적 시간을 잰다 — 켜져 있지 않으면 원본 그대로 돌려준다 */
+function prof(name, fn) {
+  if (!PROF_ON) return fn;
+  return function (...a) {
+    const t0 = performance.now();
+    try { return fn.apply(this, a); }
+    finally {
+      const d = performance.now() - t0;
+      profTot[name] = (profTot[name] || 0) + d;
+      profCnt[name] = (profCnt[name] || 0) + 1;
+      if (profCur) profCur[name] = (profCur[name] || 0) + d;
+    }
+  };
+}
+let profPrevEnd = 0, profStart = 0;
+function profFrame(ms) { /* loopBody 시작에서 호출 — 직전 프레임의 결과를 기록한다 */
+  if (!PROF_ON) return;
+  const nowP = performance.now();
+  const outside = profPrevEnd ? nowP - profPrevEnd : 0; /* 우리 JS 밖(디코드·GC·텍스처 업로드·사파리 정지) */
+  if (ms > 45 && profCur) {
+    const top = Object.entries(profCur).filter(([, v]) => v > 1).sort((a, b) => b[1] - a[1]).slice(0, 3)
+      .map(([k, v]) => `${k} ${v.toFixed(0)}`).join(' ');
+    profFrames.push({ t: Math.round(nowP), ms: Math.round(ms), js: Math.round(profLast), out: Math.round(outside), top: top || '-' });
+    if (profFrames.length > 40) profFrames.shift();
+  }
+  profCur = {}; profStart = nowP;
+}
+let profLast = 0;
+function profFrameEnd() { if (!PROF_ON) return; const n = performance.now(); profLast = n - profStart; profPrevEnd = n; }
+window.__profDec = () => profDecodes;
+window.__prof = () => ({ frames: profFrames, decodes: profDecodes, total: Object.fromEntries(Object.entries(profTot).map(([k, v]) => [k, Math.round(v)])) });
+function profShow() {
+  if (!PROF_ON) return;
+  const dv = document.getElementById('profBox') || Object.assign(document.createElement('div'), { id: 'profBox' });
+  dv.style.cssText = 'position:fixed;left:4px;top:100px;z-index:99999;background:rgba(0,0,0,.9);color:#9fe;font:10px/1.45 monospace;padding:6px 8px;white-space:pre;border-radius:6px;max-width:96vw;max-height:70vh;overflow:auto;';
+  const tot = Object.entries(profTot).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, v]) => `${k} ${Math.round(v)}ms x${profCnt[k] || 0}`).join('\n');
+  const fr = profFrames.slice(-10).map(f => `${(f.t / 1000).toFixed(1)}s tot${f.ms} js${f.js} out${f.out} ${f.top}`).join('\n');
+  const dec = profDecodes.filter(d => d.decMs > 150 || d.fetchMs > 400).slice(-6).map(d => `${(d.at / 1000).toFixed(1)}s ${d.key} ${d.kb}KB fetch${d.fetchMs} dec${d.decMs}`).join('\n');
+  dv.textContent = '긴 프레임 tot=간격 js=우리코드 out=밖\n' + (fr || '없음')
+    + '\n\n느린 시트(디코드 끝난 시각)\n' + (dec || '없음') + '\n\n누적\n' + tot;
+  dv.onclick = () => dv.remove();
+  if (!dv.parentNode) document.body.appendChild(dv);
+}
+if (PROF_ON) setInterval(profShow, 3000);
 function sr(n) { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); }
 function shade(hex, f) {
   const n = parseInt((hex || '#888888').slice(1), 16);
@@ -4700,10 +4751,14 @@ function calcWSS() {
   const need = (innerWidth * Math.min(devicePixelRatio || 1, 3)) / WORLD.w;
   return clampN(Math.ceil(need * 4) / 4, 1.5, 2.75); /* 0.25 단위 올림 — 텍셀이 화면 픽셀보다 모자라지 않게(내림하면 살짝 흐려진다) */
 }
-const worldTex = document.createElement('canvas');
-worldTex.width = Math.round(WORLD.w * WSS); worldTex.height = Math.round(WORLD.h * WSS);
-
+/* 구형 기본 월드 텍스처. 실제 구역(p1~p100)은 전부 bioTexCache를 쓰므로 이건 사실상 폴백이다.
+   그런데도 접속하자마자 통째로 만들어 칠하고 있었다 — 모바일 1600x1200(7.7MB), 데스크톱 4000x3000(48MB).
+   필요할 때만 만든다. */
+let worldTex = null;
+function worldTexGet() { if (!worldTex) buildWorld(); return worldTex; }
 function buildWorld() {
+  if (!worldTex) worldTex = document.createElement('canvas');
+  worldTex.width = Math.round(WORLD.w * WSS); worldTex.height = Math.round(WORLD.h * WSS);
   const c = worldTex.getContext('2d');
   c.setTransform(WSS, 0, 0, WSS, 0, 0); /* 이하 그리기는 전부 월드 좌표 그대로 */
   c.fillStyle = '#26492f';
@@ -4991,6 +5046,7 @@ const BIOME_PAL = [
 ];
 function zoneRng(n) { let t = (n * 2654435761 + 12345) >>> 0; return () => { t = (t + 0x6D2B79F5) >>> 0; let r = Math.imul(t ^ (t >>> 15), 1 | t); r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r; return ((r ^ (r >>> 14)) >>> 0) / 4294967296; }; }
 function buildZoneWorld(n) {
+  propMissN = 0; /* 이번 굽기에서 벡터로 대체한 프롭 수 — 0이면 나중에 다시 구울 필요가 없다 */
   const bi = Math.min(9, Math.floor((n - 1) / 10)), P = BIOME_PAL[bi], tier = (n - 1) % 10;
   const rng = zoneRng(n), R = (a, b) => a + rng() * (b - a);
   const cv2 = document.createElement('canvas');
@@ -5114,8 +5170,15 @@ function buildZoneWorld(n) {
   c.strokeStyle = P.style === 'volcano' ? 'rgba(255,120,40,.35)' : 'rgba(120,60,40,.25)'; c.lineWidth = 6; c.beginPath(); c.arc(800, 1000, 130, 0, 7); c.stroke();
 
   /* 4) 풀·꽃·잔디 */
-  for (let i = 0, gN = dq(P.grassN || 0); i < gN; i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; if (blocked.some(b => b.r > 60 && Math.hypot(b.x - x, b.y - y) < b.r - 40)) continue; c.strokeStyle = P.grass[i % 2]; c.lineWidth = 1.4; c.beginPath(); c.moveTo(x, y); c.lineTo(x + R(-2, 2), y - R(3, 7)); c.stroke(); }
-  for (let i = 0, fN = dq(240); i < fN; i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; if (isBlocked(x, y, -60)) continue; const col = P.flowers[i % 4]; c.fillStyle = col; c.beginPath(); c.arc(x, y, 2.6, 0, 7); c.fill(); c.fillStyle = 'rgba(255,255,255,.55)'; c.beginPath(); c.arc(x, y, 1, 0, 7); c.fill(); }
+  /* 풀·꽃도 색깔별 Path2D에 모아 한 번에 칠한다(캔버스 호출 수천 번 → 열 번 남짓). rng 소비 순서는 그대로 */
+  { const gA = new Path2D(), gB = new Path2D();
+    const big = blocked.filter(b => b.r > 60); /* 큰 것만 검사하던 조건을 미리 걸러 루프 안 비용을 줄인다 */
+    for (let i = 0, gN = dq(P.grassN || 0); i < gN; i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; const dx2 = R(-2, 2), dy2 = R(3, 7); if (big.some(b => Math.hypot(b.x - x, b.y - y) < b.r - 40)) continue; const pp = i % 2 ? gB : gA; pp.moveTo(x, y); pp.lineTo(x + dx2, y - dy2); }
+    c.lineWidth = 1.4; c.strokeStyle = P.grass[0]; c.stroke(gA); c.strokeStyle = P.grass[1]; c.stroke(gB); }
+  { const fp = [new Path2D(), new Path2D(), new Path2D(), new Path2D()], hi = new Path2D();
+    for (let i = 0, fN = dq(240); i < fN; i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; if (isBlocked(x, y, -60)) continue; const pp = fp[i % 4]; pp.moveTo(x + 2.6, y); pp.arc(x, y, 2.6, 0, 7); hi.moveTo(x + 1, y); hi.arc(x, y, 1, 0, 7); }
+    for (let k = 0; k < 4; k++) { c.fillStyle = P.flowers[k]; c.fill(fp[k]); }
+    c.fillStyle = 'rgba(255,255,255,.55)'; c.fill(hi); }
   if (P.reeds) for (let i = 0; i < P.reeds; i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; c.strokeStyle = 'rgba(110,140,70,.8)'; c.lineWidth = 2; c.beginPath(); c.moveTo(x, y); c.lineTo(x + R(-3, 3), y - R(14, 26)); c.stroke(); c.fillStyle = '#6b4a2f'; c.fillRect(x - 2, y - R(20, 26), 4, 7); }
   if (P.embers) for (let i = 0; i < P.embers; i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; c.fillStyle = P.style === 'volcano' ? 'rgba(255,140,60,.75)' : 'rgba(200,120,255,.7)'; c.beginPath(); c.arc(x, y, R(.8, 2), 0, 7); c.fill(); }
   if (P.snowPiles) for (let i = 0; i < P.snowPiles; i++) { const x = rng() * WORLD.w, y = rng() * WORLD.h; if (isBlocked(x, y, -30)) continue; c.fillStyle = 'rgba(255,255,255,.85)'; c.beginPath(); c.ellipse(x, y, R(14, 34), R(6, 12), 0, 0, 7); c.fill(); c.fillStyle = 'rgba(160,185,205,.5)'; c.beginPath(); c.ellipse(x, y + 4, R(14, 30), 4, 0, 0, Math.PI); c.fill(); }
@@ -5190,6 +5253,9 @@ function buildZoneWorld(n) {
   return cv2;
 }
 const bioTexCache = new Map(); /* 바이옴 텍스처는 크므로(데스크톱 3200x2400) 최근 2개만 보관 */
+/* 캔버스를 0x0으로 만들어 백업 저장소를 즉시 반환한다 — GC를 기다리면 아이폰에서 메모리 압박으로
+   웹킷이 페이지를 수 초씩 멈춰 세운다(프레임 간격 5초+, JS 시간은 0인 정지의 정체). */
+function freeTex(t) { try { if (t && t.width) { t.width = 0; t.height = 0; } } catch (e) {} }
 const zoneWaters = {}; /* pid → 물/용암 웅덩이 목록(런타임 반짝임용) */
 /* ===== 런타임 배경 연출: 물 반짝임 · 바이옴 입자 ===== */
 function drawWaterFx(now) {
@@ -5247,9 +5313,13 @@ const PROP_KEYS = ['tree_default','tree_default_dark','tree_default_fall','tree_
 const propSheet = k => heroSheet('prop_' + k.toLowerCase()); /* 베이크 서버가 파일명을 소문자로 저장하므로 키도 소문자로. 매니페스트 게이트·LRU는 heroSheet 공용 */
 let propRebuildT = 0;
 function onPropLoaded() { /* 프롭이 로드되면 현재 구역 지형을 다시 구워 벡터 폴백을 스프라이트로 교체 */
+  /* 이미 스프라이트로만 구운 지형이면 다시 구울 이유가 없다.
+     예전에는 프롭 46장이 도착할 때마다 무조건 재빌드를 예약해, 캐시가 따뜻한 재접속에서도
+     접속 직후에 지형을 한 번 더 굽느라 화면이 멈췄다. */
+  try { const t0 = bioTexCache.get(pageNum()); if (t0 && !t0.propMiss) return; } catch (e) {}
   clearTimeout(propRebuildT);
   const allDone = PROP_KEYS.every(k => { const e = HERO_SHEETS['prop_' + k.toLowerCase()]; return e && (e.img || e.failed); });
-  propRebuildT = setTimeout(() => { try { bioTexCache.delete(pageNum()); worldColliders[myMap()] = null; delete navGrids[myMap()]; texGen++; } catch (e) {} }, allDone ? 0 : 1500); /* 46장이 따로따로 도착해도 재빌드는 한 번(전부 도착 시 즉시, 아니면 1.5초 정지 후) */
+  propRebuildT = setTimeout(() => { try { const n0 = pageNum(); freeTex(bioTexCache.get(n0)); bioTexCache.delete(n0); worldColliders[myMap()] = null; delete navGrids[myMap()]; texGen++; } catch (e) {} }, allDone ? 0 : 1500); /* 46장이 따로따로 도착해도 재빌드는 한 번(전부 도착 시 즉시, 아니면 1.5초 정지 후) */
 }
 /* 바이옴별 프롭 세트 */
 const PROP_SETS = {
@@ -5266,8 +5336,9 @@ const PROP_SETS = {
 };
 /* 프롭 1개를 지형 텍스처에 그림: (x,y)=발밑, h=원하는 월드 높이. 그림자 + 바이옴 틴트. 시트 미로드면 false */
 const propTintCv = document.createElement('canvas');
+let propMissN = 0; /* 이번 지형 굽기에서 스프라이트가 없어 벡터로 대체한 횟수 */
 function drawPropTex(c, key, x, y, h, tint, flip) {
-  const sh = propSheet(key); if (!sh) return false;
+  const sh = propSheet(key); if (!sh) { propMissN++; return false; }
   const m = sh.meta, F = m.fr, vis = Math.max(1, m.feet - m.top), k = h / vis;
   const dw = F * k, dh = F * k, dx = x - dw / 2, dy = y - m.feet * k;
   c.save();
@@ -5283,7 +5354,9 @@ function drawPropTex(c, key, x, y, h, tint, flip) {
   return true;
 }
 /* ===== 노이즈 지면: 저해상 값-노이즈 → 확대 보간으로 자연스러운 얼룩 + 미세 질감 ===== */
+function pmark(name, t0) { if (!PROF_ON) return; const d = performance.now() - t0; profTot[name] = (profTot[name] || 0) + d; profCnt[name] = (profCnt[name] || 0) + 1; }
 function paintGround(c, P, rng, style) {
+  const _pg = performance.now();
   const W = WORLD.w, H = WORLD.h, cw = 80, ch = 60;
   const small = document.createElement('canvas'); small.width = cw; small.height = ch;
   const g = small.getContext('2d'); const img = g.createImageData(cw, ch); const d = img.data;
@@ -5300,29 +5373,61 @@ function paintGround(c, P, rng, style) {
     const fi = t * (cols.length - 1), i0 = Math.floor(fi), f = fi - i0, ca = cols[i0], cb = cols[Math.min(cols.length - 1, i0 + 1)];
     const o = (y * cw + x) * 4; d[o] = ca[0] * (1 - f) + cb[0] * f; d[o + 1] = ca[1] * (1 - f) + cb[1] * f; d[o + 2] = ca[2] * (1 - f) + cb[2] * f; d[o + 3] = 255;
   }
+  pmark('pg:noise', _pg);
+  const _up = performance.now();
   g.putImageData(img, 0, 0);
   c.imageSmoothingEnabled = true; c.imageSmoothingQuality = 'high';
   c.drawImage(small, 0, 0, W, H);
+  pmark('pg:upscale', _up);
+  const _det = performance.now();
   /* 미세 질감: 스타일별 */
   const R = (a, b) => a + rng() * (b - a);
+  /* 미세 질감은 색깔별로 하나의 Path2D에 모아 한 번에 칠한다.
+     예전에는 알갱이·풀잎마다 beginPath+stroke/fill을 따로 불러 한 구역에 캔버스 호출이 5천 번 넘었고,
+     아이폰에서 지형 한 장을 굽는 데 2초가 걸렸다(접속 직후·프롭 도착 직후 화면이 그만큼 멈춤).
+     rng() 호출 횟수와 순서는 그대로라 지형 배치는 바뀌지 않는다. */
+  const P2 = () => new Path2D();
+  const strokeAll = (path, col, lw, alpha) => { c.strokeStyle = col; c.lineWidth = lw; if (alpha != null) c.globalAlpha = alpha; c.stroke(path); if (alpha != null) c.globalAlpha = 1; };
+  const fillAll = (path, col) => { c.fillStyle = col; c.fill(path); };
   if (style === 'meadow' || style === 'jungle' || style === 'swamp' || style === 'sky') { /* 잔디 결 */
-    for (let i = 0, bN = dq(2000); i < bN; i++) { const x = rng() * W, y = rng() * H; c.strokeStyle = i % 2 ? P.grass[0] : P.grass[1]; c.lineWidth = 1.1; c.globalAlpha = .55; c.beginPath(); c.moveTo(x, y); c.lineTo(x + R(-2, 2), y - R(4, 9)); c.stroke(); } c.globalAlpha = 1;
+    const pa = P2(), pb = P2();
+    for (let i = 0, bN = dq(2000); i < bN; i++) { const x = rng() * W, y = rng() * H; const pp = i % 2 ? pa : pb; pp.moveTo(x, y); pp.lineTo(x + R(-2, 2), y - R(4, 9)); }
+    strokeAll(pa, P.grass[0], 1.1, .55); strokeAll(pb, P.grass[1], 1.1, .55);
   } else if (style === 'desert') { /* 모래 알갱이 + 물결 */
-    for (let i = 0; i < 2200; i++) { c.fillStyle = i % 3 ? 'rgba(255,245,215,.35)' : 'rgba(120,90,50,.25)'; c.fillRect(rng() * W, rng() * H, 1.5, 1.5); }
-    for (let i = 0; i < 160; i++) { const x = rng() * W, y = rng() * H, w = R(60, 160); c.strokeStyle = 'rgba(255,240,200,.14)'; c.lineWidth = 3; c.beginPath(); c.moveTo(x, y); c.quadraticCurveTo(x + w / 2, y - 6, x + w, y); c.stroke(); }
+    const pa = P2(), pb = P2();
+    for (let i = 0, n = dq(2200); i < n; i++) { const x = rng() * W, y = rng() * H; (i % 3 ? pa : pb).rect(x, y, 1.5, 1.5); }
+    fillAll(pa, 'rgba(255,245,215,.35)'); fillAll(pb, 'rgba(120,90,50,.25)');
+    const pw = P2();
+    for (let i = 0, n = dq(160); i < n; i++) { const x = rng() * W, y = rng() * H, w = R(60, 160); pw.moveTo(x, y); pw.quadraticCurveTo(x + w / 2, y - 6, x + w, y); }
+    strokeAll(pw, 'rgba(255,240,200,.14)', 3);
   } else if (style === 'snow') { /* 눈 결정 반짝임 + 바람결 */
-    for (let i = 0; i < 1600; i++) { c.fillStyle = 'rgba(255,255,255,.55)'; c.fillRect(rng() * W, rng() * H, 1.4, 1.4); }
-    for (let i = 0; i < 120; i++) { const x = rng() * W, y = rng() * H, w = R(80, 220); c.strokeStyle = 'rgba(160,185,205,.18)'; c.lineWidth = 4; c.beginPath(); c.moveTo(x, y); c.quadraticCurveTo(x + w / 2, y + 5, x + w, y); c.stroke(); }
+    const pa = P2();
+    for (let i = 0, n = dq(1600); i < n; i++) pa.rect(rng() * W, rng() * H, 1.4, 1.4);
+    fillAll(pa, 'rgba(255,255,255,.55)');
+    const pw = P2();
+    for (let i = 0, n = dq(120); i < n; i++) { const x = rng() * W, y = rng() * H, w = R(80, 220); pw.moveTo(x, y); pw.quadraticCurveTo(x + w / 2, y + 5, x + w, y); }
+    strokeAll(pw, 'rgba(160,185,205,.18)', 4);
   } else if (style === 'cave' || style === 'ruin') { /* 돌바닥 균열·자갈 */
-    for (let i = 0; i < 260; i++) { let x = rng() * W, y = rng() * H; c.strokeStyle = 'rgba(0,0,0,.22)'; c.lineWidth = 1.2; c.beginPath(); c.moveTo(x, y); for (let k = 0; k < 4; k++) { x += R(-16, 16); y += R(-12, 12); c.lineTo(x, y); } c.stroke(); }
-    for (let i = 0; i < 1400; i++) { c.fillStyle = i % 2 ? 'rgba(255,255,255,.07)' : 'rgba(0,0,0,.14)'; c.beginPath(); c.arc(rng() * W, rng() * H, R(1, 2.6), 0, 7); c.fill(); }
+    const pc = P2();
+    for (let i = 0, n = dq(260); i < n; i++) { let x = rng() * W, y = rng() * H; pc.moveTo(x, y); for (let k = 0; k < 4; k++) { x += R(-16, 16); y += R(-12, 12); pc.lineTo(x, y); } }
+    strokeAll(pc, 'rgba(0,0,0,.22)', 1.2);
+    const pa = P2(), pb = P2();
+    for (let i = 0, n = dq(1400); i < n; i++) { const x = rng() * W, y = rng() * H, r2 = R(1, 2.6); const pp = i % 2 ? pa : pb; pp.moveTo(x + r2, y); pp.arc(x, y, r2, 0, 7); }
+    fillAll(pa, 'rgba(255,255,255,.07)'); fillAll(pb, 'rgba(0,0,0,.14)');
   } else if (style === 'volcano') { /* 흑요석 균열 + 잔열 */
-    for (let i = 0; i < 220; i++) { let x = rng() * W, y = rng() * H; c.strokeStyle = 'rgba(255,110,40,.30)'; c.lineWidth = 1.4; c.shadowColor = '#ff7f27'; c.shadowBlur = 6; c.beginPath(); c.moveTo(x, y); for (let k = 0; k < 4; k++) { x += R(-18, 18); y += R(-14, 14); c.lineTo(x, y); } c.stroke(); }
-    c.shadowBlur = 0; for (let i = 0; i < 1600; i++) { c.fillStyle = 'rgba(0,0,0,.18)'; c.fillRect(rng() * W, rng() * H, 2, 2); }
+    const pc = P2();
+    for (let i = 0, n = dq(220); i < n; i++) { let x = rng() * W, y = rng() * H; pc.moveTo(x, y); for (let k = 0; k < 4; k++) { x += R(-18, 18); y += R(-14, 14); pc.lineTo(x, y); } }
+    c.shadowColor = '#ff7f27'; c.shadowBlur = 6; strokeAll(pc, 'rgba(255,110,40,.30)', 1.4); c.shadowBlur = 0;
+    const pa = P2();
+    for (let i = 0, n = dq(1600); i < n; i++) pa.rect(rng() * W, rng() * H, 2, 2);
+    fillAll(pa, 'rgba(0,0,0,.18)');
   } else if (style === 'abyss') { /* 공허 줄무늬 + 룬 점 */
-    for (let i = 0; i < 140; i++) { const x = rng() * W, y = rng() * H, w = R(80, 240); c.strokeStyle = 'rgba(150,80,220,.12)'; c.lineWidth = R(2, 6); c.beginPath(); c.moveTo(x, y); c.quadraticCurveTo(x + w / 2, y + R(-30, 30), x + w, y); c.stroke(); }
-    for (let i = 0; i < 700; i++) { c.fillStyle = 'rgba(220,160,255,.35)'; c.fillRect(rng() * W, rng() * H, 1.5, 1.5); }
+    for (let i = 0, n = dq(140); i < n; i++) { const x = rng() * W, y = rng() * H, w = R(80, 240); c.strokeStyle = 'rgba(150,80,220,.12)'; c.lineWidth = R(2, 6); c.beginPath(); c.moveTo(x, y); c.quadraticCurveTo(x + w / 2, y + R(-30, 30), x + w, y); c.stroke(); } /* 선 굵기가 제각각이라 묶을 수 없다 */
+    const pa = P2();
+    for (let i = 0, n = dq(700); i < n; i++) pa.rect(rng() * W, rng() * H, 1.5, 1.5);
+    fillAll(pa, 'rgba(220,160,255,.35)');
   }
+  pmark('pg:detail', _det);
 }
 function gradeWorld(src, gr) {
   const c = document.createElement('canvas');
@@ -5344,15 +5449,17 @@ function biomeIndexOf(mp) {
 function getTex(mp) {
   if (mp === 'm2') { if (!mapTexs.m2) mapTexs.m2 = buildWorldM2(); return mapTexs.m2; }
   const m = /^p(\d+)$/.exec(mp || '');
-  if (!m) return worldTex;
+  if (!m) return worldTexGet();
   const n = +m[1];
   let t = bioTexCache.get(n);
-  if (t && t.wss !== WSS) { bioTexCache.delete(n); t = null; } /* 창 크기가 바뀌어 배율이 달라졌으면 다시 굽는다 */
+  if (t && t.wss !== WSS) { freeTex(t); bioTexCache.delete(n); t = null; } /* 창 크기가 바뀌어 배율이 달라졌으면 다시 굽는다 */
   if (!t) {
     t = buildZoneWorld(n); /* 구역별 지형(팔레트·물·장식·충돌체) */
     bioTexCache.set(n, t);
-    const texCap = (MOBILE || WSS > 2) ? 1 : 2; /* 모바일은 텍스처가 작아(1600x1200) 2장까지 캐시 — 왕복 이동 시 재굽기 없음 */ while (bioTexCache.size > texCap) { const old = bioTexCache.keys().next().value; bioTexCache.delete(old); } /* 모바일·고배율 텍스처는 1장만 캐시(메모리 상쇄) */
+    const texCap = (MOBILE || WSS > 2) ? 1 : 2; /* 모바일은 텍스처가 작아(1600x1200) 2장까지 캐시 — 왕복 이동 시 재굽기 없음 */
+    while (bioTexCache.size > texCap) { const old = bioTexCache.keys().next().value; freeTex(bioTexCache.get(old)); bioTexCache.delete(old); } /* 모바일·고배율 텍스처는 1장만 캐시(메모리 상쇄) */
     t.wss = WSS;
+    t.propMiss = propMissN > 0; /* 스프라이트가 하나라도 빠진 채로 구웠으면 도착 후 한 번 다시 굽는다 */
   }
   return t;
 }
@@ -6395,9 +6502,17 @@ function loadSheet(key, e) {
     : (sheetMetaAll && sheetMetaAll[key] ? Promise.resolve(sheetMetaAll[key]) : fetch(`assets/sprites/${key}.json?v=${SHEET_VER}`).then(r => r.ok ? r.json() : Promise.reject(r.status)));
   metaP.then(meta => {
     const metaFor = sm => sm ? { ...meta, fr: meta.fr / 2, top: meta.top / 2, feet: meta.feet / 2 } : meta;
-    const done = (img, sm) => { e.img = img; e.meta = metaFor(sm); e.used = Date.now(); e.loading = false; e.failed = false; sheetReady(key, e); };
-    const viaBitmap = sm => fetch(urlFor(sm)).then(r => r.ok ? r.blob() : Promise.reject('http ' + r.status))
-      .then(blob => decodeQueue(async () => { const bmp = await createImageBitmap(blob); done(bmp, sm); })); /* 디코드는 메인 스레드 밖 + 한 장씩 */
+    const done = (img, sm) => { const _t = performance.now(); e.img = img; e.meta = metaFor(sm); e.used = Date.now(); e.loading = false; e.failed = false; sheetReady(key, e);
+      if (PROF_ON) { const d = performance.now() - _t; profTot['sheetReady'] = (profTot['sheetReady'] || 0) + d; if (profCur) profCur['sheetReady'] = (profCur['sheetReady'] || 0) + d; } };
+    const viaBitmap = sm => { const tF = performance.now();
+      return fetch(urlFor(sm)).then(r => r.ok ? r.blob() : Promise.reject('http ' + r.status))
+      .then(blob => decodeQueue(async () => {
+        const tD = performance.now();
+        const bmp = await createImageBitmap(blob);
+        const tE = performance.now();
+        if (PROF_ON) { profDecodes.push({ key, fetchMs: Math.round(tD - tF), decMs: Math.round(tE - tD), at: Math.round(tE), kb: Math.round(blob.size / 1024) }); if (profDecodes.length > 60) profDecodes.shift(); }
+        done(bmp, sm);
+      })); }; /* 디코드는 메인 스레드 밖 + 한 장씩 */
     const legacy = sm => new Promise((res, rej) => {
       const img = new Image();
       img.onload = () => { done(img, sm); res(); };
@@ -8826,15 +8941,19 @@ function draw(now) {
   /* 창을 늘려 월드(1600x1200)보다 넓어지면 가로/세로 같은 배율로 확대해 화면을 100% 채운다.
      균등 배율이라 찌그러지지 않고, 좌우 검은 여백도 생기지 않는다. */
   /* 화면을 최소한 꽉 채우는 배율(zFill) 아래로는 못 줄인다 — 줄이면 월드 밖 검은 여백이 생기므로 */
-  const zFill = Math.max(vw / WORLD.w, (vh - T - B) / WORLD.h);
+  /* 월드(1600x1200)가 화면을 세로로도 반드시 덮는 배율.
+     예전에는 (vh - T - B)를 기준으로 삼아, 세로로 긴 폰에서는 월드가 화면보다 짧아져
+     위(HUD 뒤)와 아래(독·단축바 주변)에 월드 밖 검은 띠가 드러났다. */
+  const zFill = Math.max(vw / WORLD.w, vh / WORLD.h);
   /* 모바일: 인앱 뷰포트 고정 배율 — 가로로 월드 약 820px가 보이도록 축소(1:1은 캐릭터가 화면을 압도했다). 렌더는 DPR 최대라 선명 */
   const z = MOBILE ? clampN(vw / MOBILE_VIEW_W, zFill, 1) : clampN(Math.max(1, zFill) * userZoom, zFill, USER_ZOOM_MAX);
   const vwW = vw / z, vhW = vh / z, TW = T / z, BW = B / z;
   const availH = vhW - TW - BW;
   const cx = WORLD.w >= vwW ? clampN(cam.x - vwW / 2, 0, WORLD.w - vwW) : (WORLD.w - vwW) / 2;
   let cy;
-  if (WORLD.h >= availH) cy = clampN(cam.y - TW - availH / 2, -TW, WORLD.h - vhW + BW);
-  else cy = -(TW + (availH - WORLD.h) / 2);
+  /* 목표는 '상하 UI를 뺀 남은 띠의 한가운데'에 캐릭터를 두는 것이지만,
+     화면 밖으로는 절대 나가지 않게 월드 안쪽으로만 잘라낸다(빈 띠 방지). */
+  cy = clampN(cam.y - TW - availH / 2, 0, Math.max(0, WORLD.h - vhW));
   view.x = cx; view.y = cy; view.z = z;
 
   ctx.fillStyle = '#000';
@@ -9806,6 +9925,7 @@ requestAnimationFrame(loop);
   const _t0 = perfOn ? performance.now() : 0;
   try {
     loopBody(t);
+    profFrameEnd();
     if (perfOn) perfTick(performance.now() - _t0, t);
     if (loopErrMsg) loopErrMsg = '';
   } catch (err) {
@@ -10005,6 +10125,7 @@ perfInit();
 
 function loopBody(t) {
   const now = Date.now();
+  profFrame(t - lastT);
   if (ldOff && !ldErr) { const _ld = $('loading'); if (_ld && _ld.style.display !== 'none') _ld.style.display = 'none'; } /* 안전장치: 준비가 끝났는데 로딩 화면이 남아 있으면 즉시 내린다 */
   const dt = Math.min(100, t - lastT); /* 프레임이 느릴 때 게임 시간까지 느려지던 것(20fps 아래 = 슬로우 모션) 완화 — 10fps까지는 실시간으로 진행 */
   lastT = t;
@@ -10803,7 +10924,22 @@ window.__tex = n => getTex(pageId(n)); window.__nav = (tx, ty) => navFind(me.x, 
   } catch (e) { noteErr && noteErr(e); console.error('[init tail]', e); }
 }
 
-buildWorld();
+/* 프로파일 래핑: ?prof=1 일 때만 실제로 감싼다(평소엔 원본 그대로) */
+if (PROF_ON) { const _o_buildZoneWorld = buildZoneWorld; buildZoneWorld = prof('buildZoneWorld', _o_buildZoneWorld); }
+if (PROF_ON) { const _o_paintGround = paintGround; paintGround = prof('paintGround', _o_paintGround); }
+if (PROF_ON) { const _o_updateMinimap = updateMinimap; updateMinimap = prof('updateMinimap', _o_updateMinimap); }
+if (PROF_ON) { const _o_renderInvUI = renderInvUI; renderInvUI = prof('renderInvUI', _o_renderInvUI); }
+if (PROF_ON) { const _o_hueBakeStep = hueBakeStep; hueBakeStep = prof('hueBakeStep', _o_hueBakeStep); }
+if (PROF_ON) { const _o_navFind = navFind; navFind = prof('navFind', _o_navFind); }
+if (PROF_ON) { const _o_updateSims = updateSims; updateSims = prof('updateSims', _o_updateSims); }
+if (PROF_ON) { const _o_drawChar = drawChar; drawChar = prof('drawChar', _o_drawChar); }
+if (PROF_ON) { const _o_draw = draw; draw = prof('draw', _o_draw); }
+if (PROF_ON) { const _o_getTex = getTex; getTex = prof('getTex', _o_getTex); }
+if (PROF_ON) { const _o_hueSheet = hueSheet; hueSheet = prof('hueSheet', _o_hueSheet); }
+if (PROF_ON) { const _o_heroFrames = heroFrames; heroFrames = prof('heroFrames', _o_heroFrames); }
+if (PROF_ON) { const _o_evictSheets = evictSheets; evictSheets = prof('evictSheets', _o_evictSheets); }
+
+/* buildWorld()는 더 이상 접속 즉시 돌지 않는다(worldTexGet이 필요할 때 부른다) */
 
 document.querySelectorAll('#invPanel h3.tog').forEach(h => {
   const g = $(h.dataset.tog);

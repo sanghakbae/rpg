@@ -3729,6 +3729,19 @@ function countScrolls() {
   }
   return c;
 }
+/* 길게 누르기 → 강화/판매 메뉴. 가방 칸에만 있어서 착용 중인 장비는 모바일에서 강화할 방법이 없었다. */
+function bindLongPressEnh(div, itemId) {
+  let lpT = null;
+  div.addEventListener('touchstart', e => {
+    const t = e.changedTouches[0];
+    clearTimeout(lpT);
+    lpT = setTimeout(() => { lpT = null; try { sfx('click'); } catch (e2) {} showEnhMenu(t.clientX, t.clientY, itemId); }, 450);
+  }, { passive: true });
+  const cancel = () => { clearTimeout(lpT); };
+  div.addEventListener('touchmove', cancel, { passive: true });
+  div.addEventListener('touchcancel', cancel, { passive: true });
+  div.addEventListener('touchend', e => { if (lpT === null) e.preventDefault(); /* 메뉴가 떴으면 뒤따르는 클릭(해제)을 막는다 */ cancel(); });
+}
 let enhMenuEl = null;
 function closeEnhMenu() { if (enhMenuEl) { enhMenuEl.remove(); enhMenuEl = null; document.removeEventListener('pointerdown', onEnhAway); } }
 function onEnhAway(e) { if (enhMenuEl && !enhMenuEl.contains(e.target)) closeEnhMenu(); }
@@ -4146,9 +4159,10 @@ function renderInvUI() {
       div.dataset.raw = itemId;
       markSetGlow(div, itemId); /* 장착 슬롯 세트 네온 */
       const sl = it._base ? setLineFor(it._base) : '';
-      div.title = `${it.name} [${RARITY_KR[it.rarity] || '일반'}]\n${itemStat(it)}${sl ? '\n' + sl : ''}\n클릭: 해제 · 우클릭: 강화`;
+      div.title = `${it.name} [${RARITY_KR[it.rarity] || '일반'}]\n${itemStat(it)}${sl ? '\n' + sl : ''}\n더블클릭: 해제 · 우클릭(모바일은 꾹): 강화·판매`;
       div.onclick = e => { if (enhPick && it.slot) { const sc = enhPick; setEnhPick(null); openEnhModal(sc, itemId); return; } if (tapInfo(div, itemId, e)) return; unequip(slot); };
       div.oncontextmenu = e => { e.preventDefault(); showEnhMenu(e.clientX, e.clientY, itemId); };
+      bindLongPressEnh(div, itemId); /* 착용 장비도 꾹 누르면 강화·판매 메뉴 — 모바일엔 우클릭이 없어 여기로만 갈 수 있다 */
     } else {
       div.innerHTML = `<span class="slbl">${label}</span><span style="color:#556">${SLOT_ICONS[slot]} -</span>`;
     }

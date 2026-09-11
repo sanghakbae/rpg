@@ -12,7 +12,8 @@ import {
 /* 정적 자산(스프라이트·아이콘)을 다른 호스트에서 받고 싶을 때만 채운다. 예: 'https://cdn.sanghak.kr'
    비워 두면 지금처럼 같은 오리진에서 받는다. 바꿀 때 sw.js의 ASSET_HOSTS도 같이 맞춰야 서비스워커가 캐시한다.
    cdn을 쓰려면 그 호스트가 Access-Control-Allow-Origin을 내려줘야 한다(fetch로 blob을 읽기 때문). */
-const ASSET_BASE = '';
+const ASSET_BASE = ''; /* 2026-09-11 측정: Cloudflare 무료 플랜은 한국 트래픽을 홍콩·도쿄 PoP로 보내 0.36~0.76초,
+   GitHub Pages(Fastly)는 서울 ICN에서 0.07~0.08초였다 → CDN이 4~5배 느려서 끄고 둔다. 자세한 건 아래 주석. */
 const asset = path => ASSET_BASE ? ASSET_BASE.replace(/\/$/, '') + '/' + path.replace(/^\//, '') : path;
 const MOBILE = (() => {
   try {
@@ -263,6 +264,7 @@ function glyphImg(path) {
   let im = ITEM_ICON_IMG[path];
   if (im) return im;
   im = new Image();
+  if (ASSET_BASE) im.crossOrigin = 'anonymous'; /* 다른 호스트에서 받으면 CORS를 켜야 캔버스가 오염되지 않는다(toDataURL로 아이콘/초상화를 뽑는다) */
   im.onload = () => { im._ok = true; itemIconsChanged(); };
   im.onerror = () => { im._bad = true; };
   im.src = path + '?v=1';
@@ -6512,7 +6514,8 @@ function loadSheet(key, e) {
   /* 모바일은 '미리 절반으로 구워둔' 시트(assets/sprites/m/)를 받는다.
      예전에는 원본(최대 3.9MB·2048x3840)을 통째로 받아 푼 뒤 절반으로 줄여서, 메모리는 줄어도
      받고 푸는 순간의 멈춤(아이폰에서 5초 넘게)은 그대로였다. 이제 다운로드·디코드 자체가 1/4이다. */
-  const urlFor = sm => asset(`assets/sprites/${sm ? 'm/' : ''}${key}.png?v=${SHEET_VER}`);
+  const sheetPath = sm => `assets/sprites/${sm ? 'm/' : ''}${key}.png?v=${SHEET_VER}`;
+  const urlFor = (sm, local) => local ? sheetPath(sm) : asset(sheetPath(sm)); /* local=true면 CDN을 건너뛰고 원래 서버에서 */
   e.small = null; /* 실제로 어떤 판본을 받았는지 진단용 */
   const metaP = sheetMetaAll === null
     ? sheetMetaP.then(() => (sheetMetaAll && sheetMetaAll[key]) || fetch(asset(`assets/sprites/${key}.json?v=${SHEET_VER}`)).then(r => r.ok ? r.json() : Promise.reject(r.status)))
@@ -6521,8 +6524,8 @@ function loadSheet(key, e) {
     const metaFor = sm => sm ? { ...meta, fr: meta.fr / 2, top: meta.top / 2, feet: meta.feet / 2 } : meta;
     const done = (img, sm) => { const _t = performance.now(); e.img = img; e.meta = metaFor(sm); e.used = Date.now(); e.loading = false; e.failed = false; sheetReady(key, e);
       if (PROF_ON) { const d = performance.now() - _t; profTot['sheetReady'] = (profTot['sheetReady'] || 0) + d; if (profCur) profCur['sheetReady'] = (profCur['sheetReady'] || 0) + d; } };
-    const viaBitmap = sm => { const tF = performance.now();
-      return fetch(urlFor(sm)).then(r => r.ok ? r.blob() : Promise.reject(Object.assign(new Error('http ' + r.status), { http: r.status })))
+    const viaBitmap = (sm, local) => { const tF = performance.now();
+      return fetch(urlFor(sm, local)).then(r => r.ok ? r.blob() : Promise.reject(Object.assign(new Error('http ' + r.status), { http: r.status })))
       .then(blob => decodeQueue(async () => {
         const tD = performance.now();
         const bmp = await createImageBitmap(blob);
@@ -6531,22 +6534,24 @@ function loadSheet(key, e) {
         e.small = sm;
         done(bmp, sm);
       })); }; /* 디코드는 메인 스레드 밖 + 한 장씩 */
-    const legacy = sm => new Promise((res, rej) => {
+    const legacy = (sm, local) => new Promise((res, rej) => {
       const img = new Image();
+      if (ASSET_BASE && !local) img.crossOrigin = 'anonymous';
       img.onload = () => { done(img, sm); res(); };
-      img.onerror = () => rej('img error');
-      img.src = urlFor(sm);
+      img.onerror = () => rej(Object.assign(new Error('img error'), { http: 0 }));
+      img.src = urlFor(sm, local);
     });
-    const attempt = sm => (typeof createImageBitmap === 'function' ? viaBitmap(sm) : legacy(sm));
+    const attempt = (sm, local) => (typeof createImageBitmap === 'function' ? viaBitmap(sm, local) : legacy(sm, local));
     const small = MOBILE;
     /* 축소본이 '없을 때'(404)만 원본으로 내려간다.
        디코드 실패는 대개 메모리 압박인데, 예전에는 그때도 4배 큰 원본(8MB 디코드)을 받아
        상황을 더 나쁘게 만들었다. 그런 실패는 그냥 던져서 heroSheet의 재시도(백오프)에 맡긴다. */
-    return attempt(small).catch(err => {
-      if (small && err && err.http) return attempt(false).catch(() => legacy(false));
-      if (!small && err && err.http) return legacy(false);
+    const chain = local => attempt(small, local).catch(err => {
+      if (small && err && err.http) return attempt(false, local);
       throw err;
     });
+    /* CDN을 쓰는 경우, 거기서 실패하면 원래 서버로 한 번 더 — CDN 장애가 게임을 막지 않게 */
+    return ASSET_BASE ? chain(false).catch(() => chain(true)) : chain(false);
   }).catch(err => fail(err && (err.message || err)));
 }
 const SHEET_MOBILE = MOBILE;

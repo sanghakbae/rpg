@@ -14,7 +14,7 @@ self.addEventListener('activate', e => {
 });
 /* 자산을 다른 호스트(예: cdn.sanghak.kr)에서 받도록 바꿀 경우 여기에 그 오리진을 넣는다.
    game.js의 ASSET_BASE와 짝이다 — 비워 두면 같은 오리진만 캐시한다. */
-const ASSET_HOSTS = [];
+const ASSET_HOSTS = []; /* game.js의 ASSET_BASE와 짝 — 지금은 꺼져 있다 */
 const isAsset = u => /\/assets\/.*\.(png|jpg|jpeg|webp|svg|json|glb|woff2?)$/i.test(u.pathname);
 const isCode = u => u.pathname === '/' || /\.(html|js|webmanifest)$/i.test(u.pathname);
 

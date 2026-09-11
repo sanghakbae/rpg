@@ -1221,7 +1221,10 @@ function profFrame(ms) { /* loopBody 시작에서 호출 — 직전 프레임의
   if (ms > 45 && profCur) {
     const top = Object.entries(profCur).filter(([, v]) => v > 1).sort((a, b) => b[1] - a[1]).slice(0, 3)
       .map(([k, v]) => `${k} ${v.toFixed(0)}`).join(' ');
-    profFrames.push({ t: Math.round(nowP), ms: Math.round(ms), js: Math.round(profLast), out: Math.round(outside), top: top || '-' });
+    /* 창이 가려지거나 포커스를 잃으면 브라우저가 rAF 를 1초에 한 번으로 낮춘다.
+       그때 찍힌 '1000ms 프레임'을 게임 멈춤으로 오해하지 않도록 표시해 둔다. */
+    const bg = document.hidden ? ' [창숨김]' : (document.hasFocus && !document.hasFocus() ? ' [창비활성]' : '');
+    profFrames.push({ t: Math.round(nowP), ms: Math.round(ms), js: Math.round(profLast), out: Math.round(outside), top: (top || '-') + bg });
     if (profFrames.length > 40) profFrames.shift();
   }
   profCur = {}; profStart = nowP;

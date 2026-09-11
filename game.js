@@ -515,7 +515,20 @@ function placeTip(x, y, anchor) {
   tipEl.style.left = lx + 'px';
   tipEl.style.top = ly + 'px';
 }
-function hideTip() { if (tipEl) tipEl.style.display = 'none'; tipLastRaw = ''; }
+function hideTip() { if (tipEl) tipEl.style.display = 'none'; tipLastRaw = ''; tapRaw = ''; }
+/* 1탭 = 정보(착용 중인 장비와 비교) · 2탭 = 착용/사용. 같은 칸을 1.2초 안에 다시 누르면 실행 */
+let tapRaw = '', tapAt = 0;
+function tapInfo(el, rawId, ev) {
+  const now = Date.now();
+  if (tapRaw === rawId && now - tapAt < 1200) { tapRaw = ''; hideTip(); return false; } /* 두 번째 탭 → 원래 동작 */
+  tapRaw = rawId; tapAt = now;
+  try {
+    const r = el.getBoundingClientRect();
+    showTip(itemTipHtml(rawId, true), r.left + r.width / 2, r.top, el); /* compare=true: 착용 장비와 비교 */
+    clearTimeout(tapInfo._t); tapInfo._t = setTimeout(() => { hideTip(); }, 4000);
+  } catch (e) {}
+  return true;
+}
 
 const ITEMS = {
   /* 무기: 직업 전용(cls) — 드롭 시 사냥한 직업의 변형으로 치환됨(WEAPON_VARIANTS) */
@@ -3132,12 +3145,22 @@ async function pickup(lid, l) {
       if (res !== 'autosold') flashInv();
       heroPickT = Date.now(); /* 줍기 숙이기 모션 */
       fxSparks(me.x, me.y - 22, 8, it.color || '#ffd700', 90);
+      if (MOBILE) { /* 모바일: 한 줄로 짧게 */
+        const nm = `${itemIconHtml(item.itemId, 13)} <b style="color:${it.color}">${esc(it.name)}</b>`;
+        if (res === 'autosold') toast(`${nm} 판매 <b style="color:#ffd700">+${soldG.toLocaleString()}G</b>`);
+        else if (res === 'equipped') toast(`${nm} 장착`);
+        else if (res === 'swapped') toast(`${nm} 장착 <b style="color:#ffd700">+${soldG.toLocaleString()}G</b>`);
+        else if (res === 'stacked') toast(`${nm} +1`);
+        else toast(nm);
+        if (res !== 'autosold') float(me.x, me.y - 30, `+ ${it.name}`, it.color);
+      } else {
       if (res === 'autosold') { toast(`💰 <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span> ${esc(it.name)} 자동 판매 <b style="color:#ffd700">+${soldG.toLocaleString()} G</b>`); float(me.x, me.y - 30, `+${soldG} G`, '#ffd700'); }
       else if (res === 'equipped') toast(`${itemIconHtml(item.itemId, 22)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 → <b>자동 장착!</b> <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span>`, 'sysq');
       else if (res === 'swapped') toast(`${itemIconHtml(item.itemId, 22)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 → <b>자동 장착!</b> 기존 장비 자동판매 <b style="color:#ffd700">+${soldG.toLocaleString()} G</b>`, 'sysq');
       else if (res === 'stacked') toast(`${itemIconHtml(item.itemId, 22)} <b style="color:${it.color}">${esc(it.name)}</b> 보유 수량 +1 <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span>`);
       else toast(`${itemIconHtml(item.itemId, 22)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span> → 가방 <b>${Object.keys(me.inv || {}).length}/${bagSize()}</b>`);
       if (res !== 'autosold') float(me.x, me.y - 30, `+ ${it.name}`, it.color);
+      }
     }, PICK_MS);
   } catch (e) {
     lootSkip[lid] = Date.now() + 10000; /* 트랜잭션 오류 시 같은 루팅을 매 프레임 재시도하지 않게 */
@@ -3844,7 +3867,8 @@ function renderInvUI() {
       { const sl = it._base ? setLineFor(it._base) : '';
         div.title = `${it.name} [${RARITY_KR[it.rarity] || '일반'}]\n${itemStat(it) || '소모품'}${sl ? '\n' + sl : ''}\n좌클릭: 장착/사용 · 우클릭: 강화/판매`; }
       let lastTap = 0;
-      div.onclick = () => {
+      div.onclick = e => {
+        if (!enhPick && tapInfo(div, itemId, e)) return; /* 1탭: 정보·비교 / 2탭: 착용·사용 */
         if (enhPick && !it.scroll) { /* 주문서 선택 중 */
           if (it.slot) { const sc = enhPick; setEnhPick(null); openEnhModal(sc, itemId); } else toast('이 아이템은 강화할 수 없습니다 (장비만 가능)');
           return;
@@ -3939,7 +3963,7 @@ function renderInvUI() {
       markSetGlow(div, itemId); /* 장착 슬롯 세트 네온 */
       const sl = it._base ? setLineFor(it._base) : '';
       div.title = `${it.name} [${RARITY_KR[it.rarity] || '일반'}]\n${itemStat(it)}${sl ? '\n' + sl : ''}\n클릭: 해제 · 우클릭: 강화`;
-      div.onclick = () => { if (enhPick && it.slot) { const sc = enhPick; setEnhPick(null); openEnhModal(sc, itemId); return; } unequip(slot); };
+      div.onclick = e => { if (enhPick && it.slot) { const sc = enhPick; setEnhPick(null); openEnhModal(sc, itemId); return; } if (tapInfo(div, itemId, e)) return; unequip(slot); };
       div.oncontextmenu = e => { e.preventDefault(); showEnhMenu(e.clientX, e.clientY, itemId); };
     } else {
       div.innerHTML = `<span class="slbl">${label}</span><span style="color:#556">${SLOT_ICONS[slot]} -</span>`;

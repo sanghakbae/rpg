@@ -746,6 +746,105 @@
   }
 
 
+
+  /* ===== 모달/패널: 화면의 80% 크기 + 하단 메뉴를 가리지 않음 =====
+     --botUI = 하단 독·단축바가 차지하는 높이. 모든 창은 그 위 영역 안에서 80%로 잡힌다. */
+  @media (pointer: coarse) {
+    :root { --botUI: calc(124px + env(safe-area-inset-bottom)); --sideUI: 0px; }
+    .sidepanel, #invPanel {
+      left: 50% !important; right: auto !important; transform: translateX(-50%) !important;
+      top: auto !important; bottom: var(--botUI) !important;
+      width: 80vw !important; max-width: 80vw !important;
+      height: min(80vh, calc(100vh - var(--botUI) - 12px)) !important;
+      max-height: min(80vh, calc(100vh - var(--botUI) - 12px)) !important;
+      border-radius: 12px; display: none; flex-direction: column;
+    }
+    .sidepanel.open, #invPanel.open { display: flex !important; }
+    .sidepanel .spbody, #invPanel .spbody { flex: 1 1 auto; overflow-y: auto; }
+    /* 전체 화면 오버레이형(설정·세계지도·각인·결과·투기장): 하단 메뉴 영역만큼 띄워서 중앙 정렬 */
+    #settingsModal, #worldMap, #hordePick, #hordeEnd, #pvpPlay {
+      padding-bottom: var(--botUI); padding-right: var(--sideUI); box-sizing: border-box;
+    }
+    .modalBox, .hpBox, .heBox, .pvBox {
+      width: 80vw !important; max-width: 80vw !important;
+      max-height: min(80vh, calc(100vh - var(--botUI) - 12px)) !important; overflow-y: auto;
+    }
+    #wmBox {
+      width: 80vw !important; max-width: 80vw !important; left: auto; right: auto;
+      height: min(80vh, calc(100vh - var(--botUI) - 12px)) !important;
+      max-height: min(80vh, calc(100vh - var(--botUI) - 12px)) !important; overflow-y: auto;
+    }
+    #installTip { width: 80vw; max-width: 80vw; bottom: calc(var(--botUI) + 8px); }
+    #enhMenu { max-width: 80vw !important; }
+  }
+  @media (pointer: coarse) and (orientation: landscape) and (max-height: 520px) {
+    :root { --botUI: calc(56px + env(safe-area-inset-bottom)); --sideUI: 96px; } /* 가로: 독이 우측 세로 */
+    .sidepanel, #invPanel { left: calc(50% - var(--sideUI) / 2) !important; }
+  }
+
+  /* 자동 사냥 버튼: 우측 상단(미니맵 아래) */
+  #dockL #autoBtn { position: fixed; right: 12px; top: 92px; bottom: auto; }
+  @media (max-width: 640px), (pointer: coarse) and (max-height: 520px) {
+    #dockL #autoBtn { right: 6px; top: calc(var(--hudB, 150px) + 78px); bottom: auto; }
+  }
+  @media (pointer: coarse) and (orientation: landscape) and (max-height: 520px) {
+    #dockL #autoBtn { right: 8px; top: 6px; bottom: auto; }
+  }
+
+  /* ===== 모바일 단축바: 상단 독 아이콘과 같은 크기 · 이름/번호 숨김 (요청) ===== */
+  @media (max-width: 640px), (pointer: coarse) and (max-height: 520px) {
+    #hotbar .hslot, #hotbar .hslot.pot {
+      width: calc((100vw - 52px) / 10) !important; max-width: 52px !important;
+      height: auto !important; aspect-ratio: 1 !important; border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #hotbar .hslot .nm { display: none !important; }   /* 스킬 이름 숨김 */
+    #hotbar .hslot .key { display: none !important; }  /* 퀵슬롯 번호 숨김 */
+    #hotbar .hslot .ic2 { font-size: 16px; line-height: 1; }
+    #hotbar .hslot .ic2 .skic { width: 74% !important; height: 74% !important; border-radius: 7px; }
+    #hotbar .hslot .ic2 .potic { width: 74% !important; height: 74% !important; }
+    #hotbar { gap: 4px; }
+  }
+  @media (pointer: coarse) and (orientation: landscape) and (max-height: 520px) {
+    #hotbar .hslot, #hotbar .hslot.pot { width: 38px !important; max-width: 38px !important; }
+  }
+
+
+  /* 가방 창: 왼쪽 가방 · 오른쪽 착용 장비 2단 */
+  .invCols { display: flex; gap: 10px; align-items: flex-start; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+  .invColL { flex: 1 1 62%; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+  .invColR { flex: 0 0 36%; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+  .invColL #invGrid, .invColR #equipGrid { overflow-y: auto; min-height: 0; }
+  .invColR #equipGrid { grid-template-columns: repeat(2, 1fr); }
+  @media (max-width: 640px), (pointer: coarse) {
+    .invCols { gap: 6px; }
+    .invColR { flex: 0 0 38%; }
+    .invColR #equipGrid { grid-template-columns: repeat(2, 1fr); gap: 4px; }
+    .invColL h3, .invColR h3 { font-size: 11px; }
+  }
+
+
+  /* 모바일 아이템 정보 팝업: 작게 */
+  @media (max-width: 640px), (pointer: coarse) {
+    #itemTip { max-width: 62vw !important; font-size: 10.5px; line-height: 1.45; padding: 7px 9px; border-radius: 8px; }
+    #itemTip b { font-size: 11.5px; }
+    #itemTip img { width: 16px !important; height: 16px !important; }
+  }
+
+
+  /* 모바일 채팅: 글자 축소 + 가방(독) 아이콘 위쪽에 배치 */
+  @media (max-width: 640px), (pointer: coarse) and (max-height: 520px) {
+    #chatBox { left: 6px; width: calc(100vw - 12px);
+      bottom: calc(var(--botUI, 124px) + 6px) !important; opacity: .95; }
+    #chatLog { max-height: 84px; font-size: 9.5px; line-height: 1.4; }
+    #chatLog div { margin-bottom: 1px; }
+    #chatInput { font-size: 11px; padding: 5px 8px; }
+  }
+  @media (pointer: coarse) and (orientation: landscape) and (max-height: 520px) {
+    #chatBox { width: 300px; bottom: calc(var(--botUI, 56px) + 6px) !important; }
+    #chatLog { max-height: 64px; }
+  }
+
 </style>
 <script>
   /* PWA: 홈 화면에 설치해 전체화면으로 실행. 스프라이트를 캐시해 재접속 로딩을 크게 줄인다 */
@@ -802,10 +901,16 @@
 <div id="modalDim"></div>
 
 <div id="invPanel" class="panel">
-  <h3 class="tog" data-tog="equipGrid">장비 [클릭: 해제] <span class="arr">▾</span></h3>
-  <div id="equipGrid"></div>
+  <div class="invCols">
+  <div class="invColL">
   <h3 class="tog" data-tog="invGrid">가방 [클릭: 장착/사용] <span id="bagCount">0/18</span> <button id="sortBtn">정렬</button> <button id="bulkSellBtn">등급판매</button> <button id="salvageBtn">분해</button> <span class="arr">▾</span></h3>
   <div id="invGrid"></div>
+  </div>
+  <div class="invColR">
+  <h3 class="tog" data-tog="equipGrid">착용 장비 <span class="arr">▾</span></h3>
+  <div id="equipGrid"></div>
+  </div>
+  </div>
 </div>
 
 <div id="shopPanel" class="sidepanel panel">
@@ -979,7 +1084,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=183"
+<script type="module" src="game.js?v=188"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

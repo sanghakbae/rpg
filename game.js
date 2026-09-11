@@ -6195,11 +6195,14 @@ const HERO_SHEET_H = 118; /* 시트 알파 박스(치켜든 무기 끝 포함)�
 /* 매니페스트(있는 시트 키 목록)를 먼저 읽어, 없는 키(스켈레톤·오크 등)는 요청하지 않는다 — 404 소음·모바일 요청 낭비 제거.
    매니페스트가 없으면(구버전 배포) 예전처럼 직접 시도 */
 let sheetManifest = null; /* null=로딩 전, Set=목록, false=없음 */
+let sheetMetaAll = null; /* 시트 메타 묶음 — 예전엔 시트마다 .json을 따로 받아 요청이 80건 넘었다 */
+const sheetMetaP = fetch(`assets/sprites/meta.json?v=${SHEET_VER}`).then(r => r.ok ? r.json() : Promise.reject()).then(m => { sheetMetaAll = m; }).catch(() => { sheetMetaAll = false; });
 const sheetManifestP = fetch(`assets/sprites/manifest.json?v=${SHEET_VER}`).then(r => r.ok ? r.json() : Promise.reject())
   .then(list => { sheetManifest = new Set(list); }).catch(() => { sheetManifest = false; })
   .finally(() => { try {
-    if (sheetManifest) for (const k of PROP_KEYS) propSheet(k); /* 배경 프롭 프리로드(52개·총 0.4MB) */
-    for (const k of ['warrior', 'archer', 'rogue', 'mage']) { if (sheetManifest && sheetManifest.has(k)) heroSheet(k); /* 시트 로드 → 로드 완료 시 초상화 교체 */
+    /* 프롭은 현재 구역에 쓰이는 것만 미리 받는다 — 예전엔 46종을 전부 받아 로그인 요청이 90건 넘었다(나머지는 필요할 때 자동 로드) */
+    if (sheetManifest) { try { const PS = PROP_SETS[(BIOME_PAL[Math.min(9, Math.floor((pageNum() - 1) / 10))] || BIOME_PAL[0]).style] || PROP_SETS.meadow; for (const k of new Set([...PS.trees, ...PS.bushes, ...PS.rocks, ...PS.extra, ...PS.dress])) propSheet(k); } catch (e) {} }
+    for (const k of (MOBILE ? [selectedCls] : ['warrior', 'archer', 'rogue', 'mage'])) { if (sheetManifest && sheetManifest.has(k)) heroSheet(k); /* 모바일은 고른 직업만(나머지는 벡터 초상화) */
       else { const el = document.querySelector(`#loginScreen .lp[data-cls="${k}"] img`); if (el) el.src = heroPortrait(k); } }
   } catch (e) {} });
 /* 시트 로딩: PNG 디코드를 메인 스레드 밖에서(createImageBitmap) 처리하고, 한 번에 한 장씩만 디코드한다.
@@ -6227,7 +6230,10 @@ function loadSheet(key, e) {
      예전에는 원본(최대 3.9MB·2048x3840)을 통째로 받아 푼 뒤 절반으로 줄여서, 메모리는 줄어도
      받고 푸는 순간의 멈춤(아이폰에서 5초 넘게)은 그대로였다. 이제 다운로드·디코드 자체가 1/4이다. */
   const urlFor = sm => `assets/sprites/${sm ? 'm/' : ''}${key}.png?v=${SHEET_VER}`;
-  fetch(`assets/sprites/${key}.json?v=${SHEET_VER}`).then(r => r.ok ? r.json() : Promise.reject(r.status)).then(meta => {
+  const metaP = sheetMetaAll === null
+    ? sheetMetaP.then(() => (sheetMetaAll && sheetMetaAll[key]) || fetch(`assets/sprites/${key}.json?v=${SHEET_VER}`).then(r => r.ok ? r.json() : Promise.reject(r.status)))
+    : (sheetMetaAll && sheetMetaAll[key] ? Promise.resolve(sheetMetaAll[key]) : fetch(`assets/sprites/${key}.json?v=${SHEET_VER}`).then(r => r.ok ? r.json() : Promise.reject(r.status)));
+  metaP.then(meta => {
     const metaFor = sm => sm ? { ...meta, fr: meta.fr / 2, top: meta.top / 2, feet: meta.feet / 2 } : meta;
     const done = (img, sm) => { e.img = img; e.meta = metaFor(sm); e.used = Date.now(); e.loading = false; e.failed = false; sheetReady(key, e); };
     const viaBitmap = sm => fetch(urlFor(sm)).then(r => r.ok ? r.blob() : Promise.reject('http ' + r.status))
@@ -8003,10 +8009,24 @@ function drawLootItems(now) {
   }
 }
 /* 미니맵 — draw() + 3D씬 공용 */
+let miniBase = null, miniKey = '', miniAt = 0;
 function updateMinimap(now) {
+  /* 지형은 구역이 바뀔 때만 160x120으로 한 번 줄여 캐시한다.
+     예전에는 매 프레임 월드 텍스처(최대 4400x3300)를 통째로 축소해 그려서 아이폰이 슬로우 모션이 됐다. */
+  if (MOBILE && now - miniAt < 100) return; /* 모바일은 10fps로 충분 */
+  miniAt = now;
+  const t = getTex(myMap());
+  const key = myMap() + '|' + t.width;
+  if (miniKey !== key) {
+    if (!miniBase) { miniBase = document.createElement('canvas'); miniBase.width = 160; miniBase.height = 120; }
+    const g = miniBase.getContext('2d');
+    g.clearRect(0, 0, 160, 120);
+    g.drawImage(t, 0, 0, t.width, t.height, 0, 0, 160, 120);
+    miniKey = key;
+  }
   mctx.clearRect(0, 0, 160, 120);
   mctx.globalAlpha = .85;
-  { const t = getTex(myMap()); mctx.drawImage(t, 0, 0, t.width, t.height, 0, 0, 160, 120); }
+  mctx.drawImage(miniBase, 0, 0);
   mctx.globalAlpha = 1;
   const k = .1;
   for (const s of sims) {
@@ -9814,7 +9834,7 @@ perfInit();
 
 function loopBody(t) {
   const now = Date.now();
-  const dt = Math.min(50, t - lastT);
+  const dt = Math.min(100, t - lastT); /* 프레임이 느릴 때 게임 시간까지 느려지던 것(20fps 아래 = 슬로우 모션) 완화 — 10fps까지는 실시간으로 진행 */
   lastT = t;
   if (!ready) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);

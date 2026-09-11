@@ -1964,8 +1964,10 @@ function noteErr(e) {
   }
   return false;
 }
+/* 스냅샷 콜백을 감싸 '루프 밖' 시간을 잰다 — 인자 순서만 바꿔 괄호는 그대로 */
+const onSnapT = (label, q, cb, err) => onSnapshot(q, outWrap(label, cb), err);
 function onSnapSafe(label, q, cb) {
-  const sub = () => onSnapshot(q, s => cb(s), err => {
+  const sub = () => onSnapshot(q, outWrap(label + '동기화', s => cb(s)), err => {
     console.error('[' + label + ']', err);
     noteErr(err);
     setTimeout(sub, 5000);
@@ -1976,7 +1978,7 @@ function watchMonsters() {
   if (unsubMon) unsubMon();
   sims = [];
   othersPrev = {};
-  unsubMon = onSnapshot(query(collection(db, 'monsters'), where('page', '==', myPage())), snap => {
+  unsubMon = onSnapT('몬스터동기화', query(collection(db, 'monsters'), where('page', '==', myPage())), snap => {
     monErr = '';
     window.__snapN = (window.__snapN || 0) + 1; window.__snapT = Date.now(); /* 진단: 스냅샷 도착 횟수/시각 */
     const EXPECT = 13;
@@ -2035,7 +2037,7 @@ function watchPlayers() {
      스냅샷마다 others를 통째로 다시 만들어(현 구역 한정) 떠난 플레이어가 쌓이지 않게 한다 */
   if (unsubPlayers) unsubPlayers();
   others = {}; othersPrev = {};
-  const sub = () => unsubPlayers = onSnapshot(query(collection(db, 'players'), where('map', '==', myPage())), snap => {
+  const sub = () => unsubPlayers = onSnapT('플레이어동기화', query(collection(db, 'players'), where('map', '==', myPage())), snap => {
     const next = {};
     snap.forEach(dc => { if (dc.id !== uid && dc.id !== authUid && !dc.id.startsWith(authUid + '__')) next[dc.id] = dc.data(); }); /* 내 다른 직업 캐릭터는 유령으로 보이지 않게(몬스터 어그로까지 뺏겼다) */
     others = next;
@@ -2049,7 +2051,7 @@ function watchLoot() {
   /* 현재 구역만 구독 — 전체 컬렉션 구독은 읽기 쿼터를 세계 전체 드랍에 비례해 소모 */
   if (unsubLoot) unsubLoot();
   lootItems = {};
-  const sub = () => unsubLoot = onSnapshot(query(collection(db, 'loot'), where('map', '==', myPage())), snap => {
+  const sub = () => unsubLoot = onSnapT('전리품동기화', query(collection(db, 'loot'), where('map', '==', myPage())), snap => {
     const keep = {}; for (const [k, v] of Object.entries(lootItems)) if (k.startsWith('local_')) keep[k] = v; /* 로컬 모드에서 떨어진 루팅 유지 */
     lootItems = keep;
     snap.forEach(dc => { if (!lootTaken.has(dc.id)) lootItems[dc.id] = dc.data(); });
@@ -6587,8 +6589,9 @@ function loadSheet(key, e) {
     : (sheetMetaAll && sheetMetaAll[key] ? Promise.resolve(sheetMetaAll[key]) : fetch(asset(`assets/sprites/${key}.json?v=${SHEET_VER}`)).then(r => r.ok ? r.json() : Promise.reject(r.status)));
   metaP.then(meta => {
     const metaFor = sm => sm ? { ...meta, fr: meta.fr / 2, top: meta.top / 2, feet: meta.feet / 2 } : meta;
-    const done = (img, sm) => { const _t = performance.now(); e.img = img; e.meta = metaFor(sm); e.used = Date.now(); e.loading = false; e.failed = false; sheetReady(key, e);
-      if (PROF_ON) { const d = performance.now() - _t; profTot['sheetReady'] = (profTot['sheetReady'] || 0) + d; if (profCur) profCur['sheetReady'] = (profCur['sheetReady'] || 0) + d; } };
+    const done = (img, sm) => { const _t = performance.now(); const _o = performance.now(); e.img = img; e.meta = metaFor(sm); e.used = Date.now(); e.loading = false; e.failed = false; sheetReady(key, e);
+      if (PROF_ON) { const d = performance.now() - _t; profTot['sheetReady'] = (profTot['sheetReady'] || 0) + d; if (profCur) profCur['sheetReady'] = (profCur['sheetReady'] || 0) + d; }
+      outMark('시트처리', _o); };
     const viaBitmap = (sm, local) => { const tF = performance.now();
       return fetch(urlFor(sm, local)).then(r => r.ok ? r.blob() : Promise.reject(Object.assign(new Error('http ' + r.status), { http: r.status })))
       .then(blob => decodeQueue(async () => {
@@ -6754,6 +6757,15 @@ const labCache = new Map();
    브라우저 안쪽(디코드·GC·텍스처 재업로드)에서 일어나는 일이라 코드로 직접 막을 수 없다.
    대신 그런 정지가 반복되면 들고 있는 큰 것들을 스스로 털어 메모리 압박을 낮춘다. */
 let stallN = 0, stallLastAt = 0, memReliefAt = 0, memReliefTold = false;
+/* 프레임 루프 '밖'에서 도는 일(파이어스토어 스냅샷 처리·시트 후처리·지형 굽기)을 항상 조금씩 잰다.
+   예전 계측은 loopBody 안만 봐서, 실제로 5초를 잡아먹는 범인이 '우리코드 0ms'로 찍혔다. */
+const outAcc = {};
+function outMark(name, t0) { const d = performance.now() - t0; outAcc[name] = (outAcc[name] || 0) + d; }
+function outWrap(name, fn) { return function (...a) { const t0 = performance.now(); try { return fn.apply(this, a); } finally { outMark(name, t0); } }; }
+function outTop(n) {
+  return Object.entries(outAcc).filter(([, v]) => v > 3).sort((a, b) => b[1] - a[1]).slice(0, n)
+    .map(([k, v]) => `${k} ${Math.round(v)}ms`).join(' ');
+}
 const stallLog = []; /* 설정 창에 보여줄 최근 정지 기록 */
 window.__stalls = () => stallLog;
 function memoryRelief() {
@@ -6784,7 +6796,8 @@ function memoryRelief() {
 function noteStall(gapMs, jsMs) {
   if (document.hidden || (document.hasFocus && !document.hasFocus())) return; /* 창이 가려져 rAF 가 눌린 것은 정지가 아니다 */
   const now = Date.now();
-  stallLog.push({ at: new Date().toTimeString().slice(0, 8), gap: Math.round(gapMs), js: Math.round(jsMs) });
+  stallLog.push({ at: new Date().toTimeString().slice(0, 8), gap: Math.round(gapMs), js: Math.round(jsMs), out: outTop(2) });
+  for (const k in outAcc) delete outAcc[k]; /* 다음 멈춤까지 새로 센다 */
   while (stallLog.length > 12) stallLog.shift();
   if (now - stallLastAt > 30000) stallN = 0; /* 한참 만에 한 번은 반복으로 보지 않는다 */
   stallLastAt = now; stallN++;
@@ -9729,9 +9742,21 @@ function openSettings() {
   syncGfxUI();
   { /* 멈춤 기록 — 원인 추적용. 'js'가 작고 '간격'만 크면 브라우저(메모리·디코드) 쪽이다 */
     const el = $('setStalls');
-    if (el) el.textContent = stallLog.length
-      ? stallLog.map(v => `${v.at}  간격 ${v.gap}ms  우리코드 ${v.js}ms`).join('\n') + (window.__lastRelief ? '\n→ 그래픽 ' + window.__lastRelief.freed + '장 정리함' : '')
-      : '기록 없음';
+    /* 커스텀 속성은 계산값이 아니라 토큰 그대로 나와서 'max(0px, 0px)' 처럼 읽힌다.
+       실제로 적용되는 px 을 알려면 env() 를 쓴 요소의 계산된 padding 을 봐야 한다. */
+    let sTpx = '?', sBpx = '?';
+    try {
+      const pr = document.createElement('div');
+      pr.style.cssText = 'position:fixed;left:-9999px;top:0;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);';
+      document.body.appendChild(pr);
+      const c3 = getComputedStyle(pr); sTpx = c3.paddingTop; sBpx = c3.paddingBottom;
+      pr.remove();
+    } catch (e) {}
+    if (el) el.textContent = (stallLog.length
+      ? stallLog.map(v => `${v.at} 간격 ${v.gap}ms 루프 ${v.js}ms${v.out ? ' · ' + v.out : ' · (루프 밖 미검출)'}`).join('\n')
+        + (window.__lastRelief ? '\n→ 그래픽 ' + window.__lastRelief.freed + '장 정리함' : '')
+      : '기록 없음')
+      + `\n[${MOBILE ? '모바일' : 'PC'} dpr${dpr} 안전영역 상${sTpx} 하${sBpx} wss${WSS} 시트${Object.keys(HERO_SHEETS).filter(k => HERO_SHEETS[k].img).length}]`;
   }
   m.hidden = false;
 }
@@ -11033,7 +11058,7 @@ async function init() {
      예전에는 이걸 전부 await 해서, 파이어스토어 첫 연결이 느린 모바일에서 검은 화면이 수십 초씩 이어졌다. */
   Promise.all([worldP, ensurePage(pageNum()).catch(e => noteErr && noteErr(e))]).catch(() => {});
 
-  onSnapshot(meRef, s => {
+  onSnapT('내문서동기화', meRef, s => {
     if (!s.exists()) return;
     if (offline || pendKeys.size) return; /* 로컬 모드: 로컬 상태가 권위 — 서버 에코가 진행분을 되돌리지 않게 */
     const d = s.data();

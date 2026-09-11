@@ -851,7 +851,13 @@
   @media (max-width: 640px), (pointer: coarse) {
     #equipWrap { gap: 6px; }
     #equipWrap #equipGrid { grid-template-columns: repeat(3, minmax(0, 52px)); gap: 4px; }
-    #setCol #setRow { font-size: 9.5px !important; line-height: 1.5 !important; padding: 5px 7px !important; max-height: 160px; overflow-y: auto; }
+    /* 좁은 열에서 '효과 목록'과 '세트 이름·개수'를 좌우로 놓으니 글자가 서로 겹쳐 읽을 수 없었다.
+       세로로 쌓고(이름 → 효과 → 착용 부위), 잘라내거나 스크롤시키지 않고 전부 보여준다. */
+    #setCol #setRow { font-size: 9.5px !important; line-height: 1.5 !important; padding: 5px 7px !important; max-height: none; overflow: visible; }
+    #setCol .setline { flex-direction: column; align-items: stretch; gap: 2px; }
+    #setCol .setcnt { order: -1; text-align: left; white-space: normal; }
+    #setCol .seteff { flex-direction: column; flex-wrap: nowrap; gap: 1px; }
+    #setCol .setworn { max-width: none; }
   }
 
 
@@ -1133,7 +1139,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=203"
+<script type="module" src="game.js?v=204"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

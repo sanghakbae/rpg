@@ -6223,40 +6223,24 @@ function loadSheet(key, e) {
   if (e.loading) return;
   e.loading = true; e.tries = (e.tries || 0) + 1;
   const fail = why => { e.loading = false; e.failed = true; e.why = String(why).slice(0, 60); e.nextTry = Date.now() + Math.min(30000, 1500 * e.tries); };
-  const url = `assets/sprites/${key}.png?v=${SHEET_VER}`;
+  /* 모바일은 '미리 절반으로 구워둔' 시트(assets/sprites/m/)를 받는다.
+     예전에는 원본(최대 3.9MB·2048x3840)을 통째로 받아 푼 뒤 절반으로 줄여서, 메모리는 줄어도
+     받고 푸는 순간의 멈춤(아이폰에서 5초 넘게)은 그대로였다. 이제 다운로드·디코드 자체가 1/4이다. */
+  const urlFor = sm => `assets/sprites/${sm ? 'm/' : ''}${key}.png?v=${SHEET_VER}`;
   fetch(`assets/sprites/${key}.json?v=${SHEET_VER}`).then(r => r.ok ? r.json() : Promise.reject(r.status)).then(meta => {
-    const mobileHalf = MOBILE; /* 모바일: 큰 시트는 절반 해상도로(메모리) — 판정은 아래에서 실제 픽셀 면적으로 */
-    const legacy = () => new Promise((res, rej) => { /* createImageBitmap 미지원 브라우저 */
+    const metaFor = sm => sm ? { ...meta, fr: meta.fr / 2, top: meta.top / 2, feet: meta.feet / 2 } : meta;
+    const done = (img, sm) => { e.img = img; e.meta = metaFor(sm); e.used = Date.now(); e.loading = false; e.failed = false; sheetReady(key, e); };
+    const viaBitmap = sm => fetch(urlFor(sm)).then(r => r.ok ? r.blob() : Promise.reject('http ' + r.status))
+      .then(blob => decodeQueue(async () => { const bmp = await createImageBitmap(blob); done(bmp, sm); })); /* 디코드는 메인 스레드 밖 + 한 장씩 */
+    const legacy = sm => new Promise((res, rej) => {
       const img = new Image();
-      img.onload = () => {
-        e.used = Date.now(); e.loading = false; e.failed = false;
-        const wantHalf = mobileHalf && img.naturalWidth * img.naturalHeight > 1.0e6;
-        if (!wantHalf) { e.img = img; e.meta = meta; return res(); }
-        try {
-          const c = document.createElement('canvas'); c.width = img.width >> 1; c.height = img.height >> 1;
-          const g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(img, 0, 0, c.width, c.height);
-          e.img = c; e.meta = { ...meta, fr: meta.fr / 2, top: meta.top / 2, feet: meta.feet / 2 };
-        } catch (err) { e.img = img; e.meta = meta; }
-        res();
-      };
-      img.onerror = rej;
-      img.src = url;
+      img.onload = () => { done(img, sm); res(); };
+      img.onerror = () => rej('img error');
+      img.src = urlFor(sm);
     });
-    if (typeof createImageBitmap !== 'function') return legacy().then(() => sheetReady(key, e));
-    return fetch(url).then(r => r.ok ? r.blob() : Promise.reject(r.status)).then(blob => decodeQueue(async () => {
-      let bmp = await createImageBitmap(blob); /* 디코드: 메인 스레드 밖 */
-      let halved = false;
-      const wantHalf = mobileHalf && bmp.width * bmp.height > 1.0e6; /* 100만 픽셀(=4MB) 초과면 절반으로 — 영웅 시트(4096x512)·큰 프롭까지 포함 */ /* 250만 픽셀(=10MB) 초과분만 축소 — fr 기준은 무거운 시트 대부분을 놓쳤다 */
-      if (wantHalf) {
-        try {
-          const half = await createImageBitmap(bmp, { resizeWidth: bmp.width >> 1, resizeHeight: bmp.height >> 1, resizeQuality: 'high' });
-          if (half && half.width && half.width < bmp.width) { try { bmp.close(); } catch (err) {} bmp = half; halved = true; }
-        } catch (err) { /* 리사이즈 옵션 미지원(구형 Safari) → 원본 해상도 유지 */ }
-      }
-      e.img = bmp; e.used = Date.now(); e.loading = false; e.failed = false; /* 방금 로드한 시트가 LRU에서 '가장 오래된 것'으로 몰려 즉시 제거되던 문제 */
-      e.meta = halved ? { ...meta, fr: meta.fr / 2, top: meta.top / 2, feet: meta.feet / 2 } : meta;
-      sheetReady(key, e);
-    })).catch(() => legacy().then(() => sheetReady(key, e)).catch(err => fail(err && (err.message || err))));
+    const attempt = sm => (typeof createImageBitmap === 'function' ? viaBitmap(sm) : legacy(sm));
+    const small = MOBILE;
+    return attempt(small).catch(() => attempt(!small)).catch(() => legacy(!small)); /* 축소본 실패 시 원본으로 */
   }).catch(err => fail(err && (err.message || err)));
 }
 const SHEET_MOBILE = MOBILE;
@@ -9816,7 +9800,7 @@ function perfTick(ms, t) {
     `FPS ${fps}   간격 p50 ${pg(.5).toFixed(0)} p95 ${pg(.95).toFixed(0)} max ${perfWorstGap.toFixed(0)}ms\n` +
     `끊김(>33ms) ${perfDrops}   연산 med ${p(.5).toFixed(1)} p95 ${p(.95).toFixed(1)} max ${perfWorst.toFixed(0)}ms\n` +
     `sheets ok ${Object.keys(HERO_SHEETS).filter(k => HERO_SHEETS[k].img).length} / 실패 ${Object.keys(HERO_SHEETS).filter(k => HERO_SHEETS[k].failed && !HERO_SHEETS[k].missing).length} / 로딩 ${Object.keys(HERO_SHEETS).filter(k => HERO_SHEETS[k].loading).length}  ${sh}MB  hue ${hueSheetCache.size}\n` +
-    `wss ${WSS} tex ${bioTexCache.size}  sims ${sims.filter(s => s.alive).length}  heap ${mem}` +
+    `wss ${WSS} tex ${bioTexCache.size}  sims ${sims.filter(s => s.alive).length}  heap ${mem}  시트 ${MOBILE ? '축소본' : '원본'}` +
     (() => { const f = Object.entries(HERO_SHEETS).find(([, v]) => v.failed && !v.missing); return f ? `\n실패: ${f[0]} — ${f[1].why || '?'}` : ''; })() +
     (() => { const b = Object.entries(HERO_SHEETS).filter(([, v]) => v.img).sort((x, y) => y[1].img.width * y[1].img.height - x[1].img.width * x[1].img.height)[0]; return b ? `\n최대시트 ${b[0]} ${b[1].img.width}x${b[1].img.height}` : ''; })();
 }

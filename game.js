@@ -21,10 +21,16 @@ const MOBILE = (() => {
     if (q === '1') return true;
     if (q === '0') return false;
     const coarse = matchMedia('(pointer: coarse)').matches;
+    const touch = (navigator.maxTouchPoints || 0) > 1;
     const shortSide = Math.min(screen.width || innerWidth, screen.height || innerHeight);
     if (/iPhone|iPod|Android.*Mobile|Windows Phone/i.test(navigator.userAgent)) return true;
     if (/iPad|Android|Tablet/i.test(navigator.userAgent)) return true;
-    if (navigator.maxTouchPoints > 1 && coarse && shortSide <= 900) return true;   /* 터치 기기 + 짧은 변 900 이하 */
+    /* 사파리의 '데스크톱용 웹사이트 요청'을 켜면 아이폰도 맥 UA 를 보낸다.
+       그러면 UA 검사가 전부 빗나가 원본 시트(디코드 8MB, 축소본의 4배)와 4000x3000 지형 텍스처를 받고,
+       시트 상한(6장)도 풀려서 메모리 압박으로 몇 초씩 멈춘다 — PC 는 멀쩡한데 폰만 멈추는 전형적인 증상.
+       터치가 되고 포인터가 거칠면 화면 크기와 무관하게 모바일 자산을 쓴다(맥·일반 PC 는 이 조합이 안 나온다). */
+    if (touch && coarse) return true;
+    if (touch && shortSide <= 900) return true;
   } catch (e) {}
   return innerWidth <= 640;
 })();
@@ -1242,7 +1248,8 @@ function profShow() {
   const dec = profDecodes.filter(d => d.decMs > 150 || d.fetchMs > 400 || !d.sm).slice(-6).map(d => `${(d.at / 1000).toFixed(1)}s ${d.key} ${d.sm ? '축소' : '원본!'} ${d.kb}KB fetch${d.fetchMs} dec${d.decMs}`).join('\n');
   const cs = getComputedStyle(document.documentElement);
   const env = `MOBILE=${MOBILE ? 'Y' : 'N'} dpr=${dpr} ${innerWidth}x${innerHeight} 화면${screen.width}x${screen.height} touch=${navigator.maxTouchPoints}`
-    + `\n안전영역 상${cs.getPropertyValue('--sT').trim() || '?'} 하${cs.getPropertyValue('--sB').trim() || '?'} standalone=${(matchMedia('(display-mode: standalone)').matches || navigator.standalone) ? 'Y' : 'N'} v=${GAME_VER}`;
+    + `\n안전영역 상${cs.getPropertyValue('--sT').trim() || '?'} 하${cs.getPropertyValue('--sB').trim() || '?'} standalone=${(matchMedia('(display-mode: standalone)').matches || navigator.standalone) ? 'Y' : 'N'} v=${GAME_VER}`
+    + `\ncoarse=${matchMedia('(pointer: coarse)').matches ? 'Y' : 'N'} wss=${WSS} cap=${SHEET_CAP} UA=${navigator.userAgent.replace(/^Mozilla\/5\.0 /, '').slice(0, 46)}`;
   dv.textContent = env + '\n긴 프레임 tot=간격 js=우리코드 out=밖\n' + (fr || '없음')
     + '\n\n느린 시트(디코드 끝난 시각)\n' + (dec || '없음') + '\n\n누적\n' + tot;
   dv.onclick = () => dv.remove();
@@ -4770,7 +4777,9 @@ WSS = calcWSS();
 function calcWSS() {
   if (MOBILE) return 1.0; /* 모바일: 월드를 축소해 보여 1.0으로 충분(메모리 우선) */
   const need = (innerWidth * Math.min(devicePixelRatio || 1, 3)) / WORLD.w;
-  return clampN(Math.ceil(need * 4) / 4, 1.5, 2.75); /* 0.25 단위 올림 — 텍셀이 화면 픽셀보다 모자라지 않게(내림하면 살짝 흐려진다) */
+  /* 화면이 작으면 하한도 1.0으로 내린다 — 기기 판별이 빗나가 '데스크톱'으로 잡힌 폰이
+     1600x1200 대신 2400x1800(17MB) 텍스처를 굽는 것을 막는 안전장치. */
+  return clampN(Math.ceil(need * 4) / 4, innerWidth < 900 ? 1.0 : 1.5, 2.75); /* 0.25 단위 올림 — 텍셀이 화면 픽셀보다 모자라지 않게(내림하면 살짝 흐려진다) */
 }
 /* 구형 기본 월드 텍스처. 실제 구역(p1~p100)은 전부 bioTexCache를 쓰므로 이건 사실상 폴백이다.
    그런데도 접속하자마자 통째로 만들어 칠하고 있었다 — 모바일 1600x1200(7.7MB), 데스크톱 4000x3000(48MB).
@@ -6568,9 +6577,9 @@ function loadSheet(key, e) {
   }).catch(err => fail(err && (err.message || err)));
 }
 const SHEET_MOBILE = MOBILE;
-const SHEET_CAP = SHEET_MOBILE ? 6 : 999; /* 12장(장당 2~8MB 디코드)은 iOS 캔버스 메모리 한계를 넘겨 텍스처 스래싱을 일으켰다 — 한 구역은 3장이면 충분 */ /* 모바일: 로드된 몹 시트 상한 — 초과 시 최근 미사용분 제거(누적 메모리로 Safari 텍스처 스래싱 방지) */
+const SHEET_CAP = SHEET_MOBILE ? 6 : 20; /* 데스크톱도 무제한은 위험 — 33종을 원본으로 다 들면 260MB가 넘는다 */ /* 12장(장당 2~8MB 디코드)은 iOS 캔버스 메모리 한계를 넘겨 텍스처 스래싱을 일으켰다 — 한 구역은 3장이면 충분 */ /* 모바일: 로드된 몹 시트 상한 — 초과 시 최근 미사용분 제거(누적 메모리로 Safari 텍스처 스래싱 방지) */
 function evictSheets() {
-  if (!SHEET_MOBILE) return;
+  /* 예전에는 모바일에서만 정리해서, 판별이 빗나간 폰은 시트를 무한히 쌓았다 — 이제 상한만 다르고 정리는 항상 한다 */
   const now = Date.now();
   let mob = Object.keys(HERO_SHEETS).filter(k => k.startsWith('mob_') && HERO_SHEETS[k] && HERO_SHEETS[k].img);
   if (mob.length <= SHEET_CAP) return;

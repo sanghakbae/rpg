@@ -2506,7 +2506,15 @@ function autoCombat(now) {
     }
   }
 }
-function toggleAuto() { if (hordeOn()) { toast('🌀 쇄도 중에는 자동 사냥을 쓸 수 없습니다 (평타는 자동으로 나갑니다)'); return; } autoHunt = !autoHunt; if (autoHunt) { dest = null; } updateAutoBtn(); toast(autoHunt ? '⚔️ 자동 사냥 켜짐 — 이동 키를 누르면 해제' : '자동 사냥 꺼짐', 'sysq'); sfx('click'); }
+function toggleAuto() {
+  autoHunt = !autoHunt;
+  if (autoHunt) { dest = null; }
+  updateAutoBtn();
+  /* 쇄도에서는 몬스터가 알아서 몰려오므로 쫓아갈 필요가 없다 — 스킬·물약만 자동으로 돌린다.
+     (예전에는 쇄도 중 토글 자체를 막아, 10분 내내 스킬과 물약을 손으로 눌러야 했다) */
+  toast(autoHunt ? (hordeOn() ? '⚔️ 자동 전투 켜짐 — 스킬·물약 자동 (이동은 직접)' : '⚔️ 자동 사냥 켜짐 — 이동 키를 누르면 해제') : '자동 사냥 꺼짐', 'sysq');
+  sfx('click');
+}
 function updateAutoBtn() { const b = $('autoBtn'); if (b) b.classList.toggle('on', autoHunt); }
 function tryAttack(now, forced = null) {
   if (!ready || me.dead || worldMapOpen() || paused) return; /* 지도 오버레이 뒤에서 눈먼 전투 방지 */
@@ -5651,7 +5659,7 @@ function hordeStart() {
   if (unsubPlayers) { try { unsubPlayers(); } catch (e) {} unsubPlayers = null; }
   sims = []; others = {}; othersPrev = {}; lootItems = {}; pickHide.clear(); attackTargetSimId = null; dest = null; /* 구역의 남은 전리품은 쇄도에 들고 들어가지 않음(복귀 시 구독으로 복원) */
   dmgQueue.clear(); /* 쇄도 id(hd_N)는 런마다 처음부터 다시 쓰므로, 지난 런의 대기 피해가 남으면 새 몬스터가 안 죽는다 */
-  if (autoHunt) { autoHunt = false; updateAutoBtn(); } /* 이동은 직접 — 대신 사거리 안의 적은 자동 공격(아래 hordeTick) */
+  /* 자동 전투는 켜둔 채로 들어간다 — 쇄도에서는 추격 없이 스킬·물약만 자동으로 돈다(아래 자동 분기) */
   horde = { st: 'run', left: HORDE_MS, waveLeft: HORDE_WAVE_MS, wave: 1, kills: 0, gold: 0, exp: 0,
     b: {}, lv: {}, seq: 0, spawnT: 0, boomDepth: 0, hpBefore: me.hp, backX: me.x, backY: me.y }; /* backX/Y: 결계 좌표가 저장에 새지 않게(입장 전 위치) */
   me.hp = maxHpOf(); me.mp = maxMpOf(); hpDirty = true;
@@ -10196,11 +10204,13 @@ function loopBody(t) {
       glideToward(me.x + dx / len * 120, me.y + dy / len * 120, maxSpd, dt, 0);
     } else {
       if (autoHunt && !attackTargetSimId && !dest && !nearestSim(9999, simSkip) && nearestSim(9999)) { for (const k in simSkip) delete simSkip[k]; } /* 모두 제외돼 대상이 없으면 초기화 — 캐릭터가 멈춰 서던 원인 */
-      if (autoHunt && !attackTargetSimId && !dest) { /* 자동 사냥: 주변 루팅 먼저 → 없으면 가장 가까운 몬스터 */
+      if (autoHunt && !attackTargetSimId && !dest && !hordeOn()) { /* 자동 사냥: 주변 루팅 먼저 → 없으면 가장 가까운 몬스터 */
         const loot = now < bagFullUntil ? null : nearestLoot(280); /* 가방 가득이면 루팅 경로 생략 → 사냥 계속 */
         if (loot) dest = { x: loot.x, y: loot.y, loot: loot.lid, t0: now };
         else { const t = nearestSim(9999, simSkip); if (t) { attackTargetSimId = t.id; targetT0 = now; targetBest = 1e9; } }
       }
+      /* 쇄도: 사거리 안의 적만 조준한다. 추격하면 무리 한가운데로 걸어 들어가 죽는다 */
+      if (autoHunt && hordeOn() && !attackTargetSimId) { const t = nearestSim(atkRange()); if (t) attackTargetSimId = t.id; }
       if (autoHunt) autoCombat(now);
     }
     if (dx || dy) { /* (위 분기에서 처리됨) */ }
@@ -10208,12 +10218,15 @@ function loopBody(t) {
       const s = sims.find(v => v.id === attackTargetSimId && v.map === myMap());
       if (!s || !s.alive) { attackTargetSimId = null; brake(dt); }
       else if (Math.hypot(s.x - me.x, s.y - me.y) > atkRange()) {
+        if (hordeOn()) { attackTargetSimId = null; brake(dt); } /* 쇄도: 추격 없음 — 사거리를 벗어나면 놓고 다음 적을 본다 */
+        else {
         if (autoHunt) { /* 진짜로 '막힌' 경우에만 제외 — 단순히 멀어서 오래 걸리는 몬스터까지 빼면 대상이 하나도 남지 않아 캐릭터가 멈춘다 */
           const dNow = Math.hypot(s.x - me.x, s.y - me.y);
           if (dNow < targetBest - 8) { targetBest = dNow; targetT0 = now; }   /* 가까워지는 중 → 계속 추격 */
           else if (now - targetT0 > 5000) { simSkip[s.id] = now + 15000; attackTargetSimId = null; targetT0 = 0; targetBest = 1e9; } /* 5초 동안 한 발짝도 못 좁힘 */
         }
         const w = navStep(s.x, s.y); glideToward(w.x, w.y, maxSpd, dt, 0);
+        }
       }
       else { targetT0 = now; brake(dt); tryAttack(now, s); }
     } else if (dest) {

@@ -6,6 +6,24 @@ import {
   connectFirestoreEmulator
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
+/* 모바일 기기 판정: 창 폭이 아니라 '기기'로 본다.
+   예전에는 innerWidth <= 640 만 봤기 때문에 아이폰을 가로로 들면(852px) PC로 분류돼
+   시트 절반축소·시트 상한·지형 디테일·DPR 제한 등 모바일 최적화가 전부 꺼진 채 돌았다. */
+const MOBILE = (() => {
+  try {
+    const q = new URLSearchParams(location.search).get('mobile'); /* ?mobile=1 강제 / ?mobile=0 해제 — 태블릿·검증용 */
+    if (q === '1') return true;
+    if (q === '0') return false;
+    const coarse = matchMedia('(pointer: coarse)').matches;
+    const shortSide = Math.min(screen.width || innerWidth, screen.height || innerHeight);
+    if (/iPhone|iPod|Android.*Mobile|Windows Phone/i.test(navigator.userAgent)) return true;
+    if (/iPad|Android|Tablet/i.test(navigator.userAgent)) return true;
+    if (navigator.maxTouchPoints > 1 && coarse && shortSide <= 900) return true;   /* 터치 기기 + 짧은 변 900 이하 */
+  } catch (e) {}
+  return innerWidth <= 640;
+})();
+window.__MOBILE = () => MOBILE;
+
 const app = initializeApp(window.firebaseConfig);
 const db = initializeFirestore(app, { ignoreUndefinedProperties: true }); /* 중첩 undefined로 updateDoc이 영구 실패(보류분 고착)하는 것 방지 */
 const auth = getAuth(app);
@@ -1481,7 +1499,7 @@ function toast(html, kind = '') {
   box.appendChild(d);
   setTimeout(() => d.classList.add('fade'), 2800);
   setTimeout(() => d.remove(), 3400);
-  while (box.children.length > 6) box.firstChild.remove();
+  while (box.children.length > (MOBILE ? 3 : 6)) box.firstChild.remove(); /* 모바일은 3줄까지만 — 화면을 덜 가리게 */
 }
 function flashInv() {
   for (const p of [$('invPanel'), document.querySelector('#dockL [data-p="invPanel"]')]) { /* 패널이 닫혀 있으면 독의 가방 버튼이 대신 번쩍 */
@@ -4515,23 +4533,6 @@ function drawSprite(name, x, y, scale = 4, opts = {}) {
 const cv = $('game'), ctx = cv.getContext('2d');
 const mm = $('minimap'), mctx = mm.getContext('2d');
 /* 백버퍼를 기기 픽셀비만큼 키워 렌더 — cvW/cvH는 CSS 픽셀 기준(기존 코드 의미 유지) */
-/* 모바일 기기 판정: 창 폭이 아니라 '기기'로 본다.
-   예전에는 innerWidth <= 640 만 봤기 때문에 아이폰을 가로로 들면(852px) PC로 분류돼
-   시트 절반축소·시트 상한·지형 디테일·DPR 제한 등 모바일 최적화가 전부 꺼진 채 돌았다. */
-const MOBILE = (() => {
-  try {
-    const q = new URLSearchParams(location.search).get('mobile'); /* ?mobile=1 강제 / ?mobile=0 해제 — 태블릿·검증용 */
-    if (q === '1') return true;
-    if (q === '0') return false;
-    const coarse = matchMedia('(pointer: coarse)').matches;
-    const shortSide = Math.min(screen.width || innerWidth, screen.height || innerHeight);
-    if (/iPhone|iPod|Android.*Mobile|Windows Phone/i.test(navigator.userAgent)) return true;
-    if (/iPad|Android|Tablet/i.test(navigator.userAgent)) return true;
-    if (navigator.maxTouchPoints > 1 && coarse && shortSide <= 900) return true;   /* 터치 기기 + 짧은 변 900 이하 */
-  } catch (e) {}
-  return innerWidth <= 640;
-})();
-window.__MOBILE = () => MOBILE;
 let dpr = 1, cvW = 0, cvH = 0, resizeT = 0;
 let wssT = 0;
 const DQ = MOBILE ? .45 : 1; /* 모바일 지형 디테일 계수 — 구역을 옮길 때마다 지형을 새로 굽는 비용(아이폰 100ms+)이 화면을 멈추게 했다. 축소 화면이라 밀도를 줄여도 차이가 거의 없다 */
@@ -5067,7 +5068,7 @@ function drawWaterFx(now) {
 }
 /* 바이옴 입자: 낙엽/눈/불씨/포자/먼지/반짝이/물방울 — 뷰포트 주변 월드 좌표에서 순환 */
 let gfxForce = ''; try { const g0 = new URLSearchParams(location.search).get('gfx'); if (['high','mid','low'].includes(g0)) gfxForce = g0; } catch (e) {} /* ?gfx=low 로 강제(저사양 기기·QA) */
-const gfx = () => gfxForce || settings.gfx || (MOBILE ? 'mid' : 'high'); /* 화질: 낮음이면 입자·틴트·비네트·흔들림을 끈다 */
+const gfx = () => gfxForce || settings.gfx || (MOBILE ? 'low' : 'high'); /* 모바일 기본 = 낮음(부드러움 우선) */ /* 화질: 낮음이면 입자·틴트·비네트·흔들림을 끈다 */
 const ambCount = () => { const g = gfx(); return g === 'low' ? 0 : g === 'mid' ? 14 : 40; };
 let ambient = [], ambStyle = '';
 function ambientKind(style) { return { meadow: 'leaf', jungle: 'leaf', swamp: 'spore', snow: 'snow', volcano: 'ember', desert: 'dust', cave: 'drip', ruin: 'dust', abyss: 'spark', sky: 'spark' }[style] || 'leaf'; }
@@ -9658,7 +9659,7 @@ requestAnimationFrame(loop);
 }
 /* 중앙 모달 + 일시정지 (독/ESC 등 모든 토글은 MutationObserver가 자동 감지) */
 const isLandscapePhone = () => { try { return matchMedia('(pointer: coarse) and (orientation: landscape) and (max-height: 520px)').matches; } catch (e) { return false; } };
-let paused = false, pauseStart = 0, chatVisible = !((() => { try { return matchMedia('(pointer: coarse) and (orientation: landscape) and (max-height: 520px)').matches; } catch (e) { return false; } })()); /* 가로 모드에서는 채팅을 접고 시작 */
+let paused = false, pauseStart = 0, chatVisible = false; /* 접속 시 채팅은 접어 둔다(채팅 버튼으로 열기) */
 function syncModal() {
   const open = !!document.querySelector('#invPanel.open,.sidepanel.open,#worldMap.open,#enhModal,#enhMenu,#hordePick.open,#hordeEnd.open,#pvpPlay.open');
   const dim = $('modalDim');
@@ -10144,7 +10145,7 @@ function showCharSelect(chars, preferred) {
       el.onclick = () => { sel = k; selectedCls = k; try { localStorage.setItem('selCls', k); } catch (e2) {} paint(); };
       el.ondblclick = () => { sel = k; done(); };
     });
-    const done = () => { scr.style.display = 'none'; resolve(sel); };
+    const done = () => { scr.style.display = 'none'; const ld = $('loading'); if (ld) { ld.textContent = '월드에 접속 중...'; ld.style.display = 'flex'; } resolve(sel); }; /* 준비될 때까지 검은 화면 유지 */
     scr.style.display = 'flex';
     paint();
     $('charGoBtn').onclick = done;
@@ -10563,7 +10564,9 @@ async function init() {
   watchRank();
 
   try { checkDaily(); } catch (e) {} /* 일일 초기화(출석/일일퀘) */
+  try { getTex(myMap()); } catch (e) {} /* 지형을 미리 굽고 나서 화면을 보여준다 */
   ready = true;
+  { const ld = $('loading'); if (ld) ld.style.display = 'none'; } /* 준비 완료 → 검은 화면 해제 */
   loginAt = Date.now();
   window.__HIT = (sx, sy) => { const r = simAt(sx, sy); return { world: r.w, hit: r.s ? { id: r.s.id, kind: r.s.kind, x: Math.round(r.s.x), y: Math.round(r.s.y) } : null }; };
   window.__SIMS = () => sims.filter(v => v.alive && v.map === myMap()).slice(0, 8).map(v => ({ id: v.id, kind: v.kind, hp: v.hp, maxHp: v.maxHp, x: Math.round(v.x), y: Math.round(v.y), r: (sdef(v).r || 16), sx: Math.round((v.x - view.x) * (view.z || 1)), sy: Math.round((v.y - view.y) * (view.z || 1)) }));

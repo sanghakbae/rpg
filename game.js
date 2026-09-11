@@ -3730,12 +3730,12 @@ function countScrolls() {
   return c;
 }
 /* 길게 누르기 → 강화/판매 메뉴. 가방 칸에만 있어서 착용 중인 장비는 모바일에서 강화할 방법이 없었다. */
-function bindLongPressEnh(div, itemId) {
+function bindLongPressEnh(div, itemId, noSell) {
   let lpT = null;
   div.addEventListener('touchstart', e => {
     const t = e.changedTouches[0];
     clearTimeout(lpT);
-    lpT = setTimeout(() => { lpT = null; try { sfx('click'); } catch (e2) {} showEnhMenu(t.clientX, t.clientY, itemId); }, 450);
+    lpT = setTimeout(() => { lpT = null; try { sfx('click'); } catch (e2) {} showEnhMenu(t.clientX, t.clientY, itemId, noSell); }, 450);
   }, { passive: true });
   const cancel = () => { clearTimeout(lpT); };
   div.addEventListener('touchmove', cancel, { passive: true });
@@ -3745,7 +3745,7 @@ function bindLongPressEnh(div, itemId) {
 let enhMenuEl = null;
 function closeEnhMenu() { if (enhMenuEl) { enhMenuEl.remove(); enhMenuEl = null; document.removeEventListener('pointerdown', onEnhAway); } }
 function onEnhAway(e) { if (enhMenuEl && !enhMenuEl.contains(e.target)) closeEnhMenu(); }
-function showEnhMenu(x, y, rawId) {
+function showEnhMenu(x, y, rawId, noSell) {
   closeEnhMenu();
   const c = countScrolls();
   const it0 = getItem(rawId);
@@ -3761,6 +3761,18 @@ function showEnhMenu(x, y, rawId) {
     b.disabled = !c[g];
     b.onclick = () => { closeEnhMenu(); enhanceItem(rawId, g); };
     enhMenuEl.appendChild(b);
+  }
+  if (noSell) { /* 착용 중인 장비는 실수로 파는 사고가 커서 판매 항목을 아예 넣지 않는다 */
+    const note = document.createElement('div');
+    note.style.cssText = 'padding:4px 6px 0;font-size:11px;color:#778;text-align:center;';
+    note.textContent = '착용 중 — 판매하려면 먼저 해제';
+    enhMenuEl.appendChild(note);
+    document.body.appendChild(enhMenuEl);
+    const r0 = enhMenuEl.getBoundingClientRect();
+    enhMenuEl.style.left = Math.min(x, innerWidth - r0.width - 10) + 'px';
+    enhMenuEl.style.top = Math.min(y, innerHeight - r0.height - 10) + 'px';
+    setTimeout(() => document.addEventListener('pointerdown', onEnhAway), 0);
+    return;
   }
   const sb = document.createElement('button');
   sb.style.cssText = 'display:flex;justify-content:space-between;gap:12px;padding:7px 10px;font-size:13px;background:#2a1620;color:#ff9b9b;border:1px solid #4a2530;border-radius:6px;cursor:pointer;text-align:left;';
@@ -4159,10 +4171,10 @@ function renderInvUI() {
       div.dataset.raw = itemId;
       markSetGlow(div, itemId); /* 장착 슬롯 세트 네온 */
       const sl = it._base ? setLineFor(it._base) : '';
-      div.title = `${it.name} [${RARITY_KR[it.rarity] || '일반'}]\n${itemStat(it)}${sl ? '\n' + sl : ''}\n더블클릭: 해제 · 우클릭(모바일은 꾹): 강화·판매`;
+      div.title = `${it.name} [${RARITY_KR[it.rarity] || '일반'}]\n${itemStat(it)}${sl ? '\n' + sl : ''}\n더블클릭: 해제 · 우클릭(모바일은 꾹): 강화`;
       div.onclick = e => { if (enhPick && it.slot) { const sc = enhPick; setEnhPick(null); openEnhModal(sc, itemId); return; } if (tapInfo(div, itemId, e)) return; unequip(slot); };
-      div.oncontextmenu = e => { e.preventDefault(); showEnhMenu(e.clientX, e.clientY, itemId); };
-      bindLongPressEnh(div, itemId); /* 착용 장비도 꾹 누르면 강화·판매 메뉴 — 모바일엔 우클릭이 없어 여기로만 갈 수 있다 */
+      div.oncontextmenu = e => { e.preventDefault(); showEnhMenu(e.clientX, e.clientY, itemId, true); };
+      bindLongPressEnh(div, itemId, true); /* 착용 장비도 꾹 누르면 강화 메뉴 — 단, 판매는 빼서 사고를 막는다 */
     } else {
       div.innerHTML = `<span class="slbl">${label}</span><span style="color:#556">${SLOT_ICONS[slot]} -</span>`;
     }
@@ -6720,6 +6732,52 @@ function hueBakeStep() {
    iOS 캔버스에서 strokeText+fillText가 프레임당 30회 이상 돌아 지속적인 끊김을 만들었다.
    한 번 구운 작은 캔버스를 blit한다(문자열·글꼴·색·배율이 같으면 재사용). */
 const labCache = new Map();
+/* ================= 멈춤 자가 대응 =================
+   실기(아이폰)에서 우리 JS 시간이 0인데 프레임 간격만 몇 초씩 벌어지는 정지가 관찰된다.
+   브라우저 안쪽(디코드·GC·텍스처 재업로드)에서 일어나는 일이라 코드로 직접 막을 수 없다.
+   대신 그런 정지가 반복되면 들고 있는 큰 것들을 스스로 털어 메모리 압박을 낮춘다. */
+let stallN = 0, stallLastAt = 0, memReliefAt = 0, memReliefTold = false;
+const stallLog = []; /* 설정 창에 보여줄 최근 정지 기록 */
+window.__stalls = () => stallLog;
+function memoryRelief() {
+  let freed = 0;
+  try {
+    /* 1) 지금 이 구역에 살아 있는 몬스터 것만 남기고 시트를 놓는다 */
+    const keep = new Set();
+    for (const sm of sims) { if (!sm.alive || sm.map !== myMap()) continue; try { keep.add('mob_' + (sdef(sm).base || '')); } catch (e) {} }
+    for (const k of Object.keys(HERO_SHEETS)) {
+      if (!k.startsWith('mob_') || keep.has(k)) continue;
+      const e = HERO_SHEETS[k];
+      if (!e || !e.img) continue;
+      try { dropHueOf(e.img); } catch (e2) {}
+      try { if (e.img.close) e.img.close(); else if (e.img.tagName === 'CANVAS') { e.img.width = 0; e.img.height = 0; } } catch (e2) {}
+      delete HERO_SHEETS[k]; freed++;
+    }
+    /* 2) 색조 캔버스(시트 크기와 같다)는 전부 비운다 — 다시 필요하면 다시 굽는다 */
+    for (const e of hueSheetCache.values()) { try { e.c.width = 0; e.c.height = 0; } catch (e2) {} }
+    hueSheetCache.clear(); hueBakeQ.length = 0;
+    /* 3) 현재 구역 외 지형 텍스처 해제 */
+    const cur = pageNum();
+    for (const [n2, t2] of [...bioTexCache]) if (n2 !== cur) { freeTex(t2); bioTexCache.delete(n2); }
+    /* 4) 글자 비트맵 캐시 */
+    labCache.clear();
+  } catch (e) {}
+  return freed;
+}
+function noteStall(gapMs, jsMs) {
+  if (document.hidden || (document.hasFocus && !document.hasFocus())) return; /* 창이 가려져 rAF 가 눌린 것은 정지가 아니다 */
+  const now = Date.now();
+  stallLog.push({ at: new Date().toTimeString().slice(0, 8), gap: Math.round(gapMs), js: Math.round(jsMs) });
+  while (stallLog.length > 12) stallLog.shift();
+  if (now - stallLastAt > 30000) stallN = 0; /* 한참 만에 한 번은 반복으로 보지 않는다 */
+  stallLastAt = now; stallN++;
+  if (gapMs >= 1200 && stallN >= 2 && now - memReliefAt > 60000) {
+    memReliefAt = now;
+    const freed = memoryRelief();
+    if (!memReliefTold) { memReliefTold = true; try { toast('🧹 멈춤이 반복돼 화면 밖 그래픽을 정리했습니다', 'sysq'); } catch (e) {} }
+    try { window.__lastRelief = { at: now, freed }; } catch (e) {}
+  }
+}
 function labelBmp(txt, font, fill, col, w, sc) {
   const key = txt + '|' + font + '|' + fill + '|' + col + '|' + w + '|' + sc;
   let e = labCache.get(key);
@@ -9646,6 +9704,12 @@ function openSettings() {
   document.querySelectorAll('#setAutoSell [data-rar]').forEach(b => b.classList.toggle('on', !!(settings.autoSell || {})[b.dataset.rar]));
   updateInstallUI();
   syncGfxUI();
+  { /* 멈춤 기록 — 원인 추적용. 'js'가 작고 '간격'만 크면 브라우저(메모리·디코드) 쪽이다 */
+    const el = $('setStalls');
+    if (el) el.textContent = stallLog.length
+      ? stallLog.map(v => `${v.at}  간격 ${v.gap}ms  우리코드 ${v.js}ms`).join('\n') + (window.__lastRelief ? '\n→ 그래픽 ' + window.__lastRelief.freed + '장 정리함' : '')
+      : '기록 없음';
+  }
   m.hidden = false;
 }
 { const hs = $('hudSettings'); if (hs) hs.onclick = e => { e.stopPropagation(); openSettings(); }; }
@@ -10191,7 +10255,9 @@ perfInit();
 
 function loopBody(t) {
   const now = Date.now();
-  profFrame(t - lastT);
+  const rawGap = t - lastT; /* 클램프 전 실제 프레임 간격 */
+  profFrame(rawGap);
+  if (ready && rawGap > 300) noteStall(rawGap, profLast);
   if (ldOff && !ldErr) { const _ld = $('loading'); if (_ld && _ld.style.display !== 'none') _ld.style.display = 'none'; } /* 안전장치: 준비가 끝났는데 로딩 화면이 남아 있으면 즉시 내린다 */
   const dt = Math.min(100, t - lastT); /* 프레임이 느릴 때 게임 시간까지 느려지던 것(20fps 아래 = 슬로우 모션) 완화 — 10fps까지는 실시간으로 진행 */
   lastT = t;

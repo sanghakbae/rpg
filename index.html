@@ -264,8 +264,9 @@
   .setrow input[type=checkbox] { width: 18px; height: 18px; accent-color: #ffd700; }
   .setNote { color: #778; font-size: 11px; line-height: 1.5; margin-top: 10px; }
   .setSellHd { color: #ffd700; font-size: 12px; font-weight: bold; margin: 10px 0 6px; } .setSellHd em { color: #778; font-style: normal; font-size: 10.5px; font-weight: normal; }
-  .setSell { display: flex; flex-wrap: wrap; gap: 5px; }
-  .setSell button { font-size: 11px; padding: 4px 10px; border-radius: 12px; border: 1px solid var(--rc,#556); color: var(--rc,#aab); background: rgba(0,0,0,.25); }
+  /* 등급 6개를 항상 한 줄에 — 좁으면 글자·여백이 같이 줄어든다(예전에는 두 줄로 접혔다) */
+  .setSell { display: flex; flex-wrap: nowrap; gap: 4px; }
+  .setSell button { flex: 1 1 0; min-width: 0; font-size: clamp(9px, 2.6vw, 11px); padding: 4px 2px; border-radius: 12px; border: 1px solid var(--rc,#556); color: var(--rc,#aab); background: rgba(0,0,0,.25); white-space: nowrap; }
   .setSell button.on { background: var(--rc,#ffd700); color: #16181d; font-weight: bold; }
   #statsBtn { font-size: 10px; padding: 1px 6px; background: rgba(93,173,226,.2); color: #7fc7ff; border: 1px solid rgba(93,173,226,.4); border-radius: 5px; margin-right: 4px; }
   #sortBtn { font-size: 10px; padding: 2px 8px; margin-left: 6px; background: linear-gradient(#5d8ab8,#2c5470); color: #fff; border-radius: 6px; }
@@ -304,6 +305,9 @@
   body.skilldrag .hslot:not(.pot) { border-color: rgba(255,215,0,.55); }
   .hslot.dropok { border-color: #ffd700 !important; box-shadow: 0 0 14px rgba(255,215,0,.8); transform: scale(1.08); }
   body.skilldrag { user-select: none; -webkit-user-select: none; }
+  /* 아이폰은 길게 누르면 '복사하기' 말풍선과 이미지 저장 메뉴를 띄운다 — 꾹 눌러 강화 메뉴를 여는 칸에서는 꺼야 한다 */
+  .islot, .eslot, .hslot, #dockL button, #autoBtn, .islot *, .eslot *, .hslot * {
+    -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; -webkit-user-drag: none; }
   /* 퀵슬롯 클릭 → 배운 스킬 선택 팝오버 */
   #slotPick { position: fixed; z-index: 80; display: none; flex-direction: column; gap: 4px; padding: 8px; min-width: 190px;
     background: rgba(10,14,22,.96); border: 1px solid rgba(255,215,0,.45); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.7); }
@@ -1036,6 +1040,8 @@
     <div class="setrow"><span>🧪 자동 물약 HP <b id="setHpVal">45</b>%</span><input type="range" id="setHp" min="0" max="90" step="5"></div>
     <div class="setrow"><span>💧 자동 물약 MP <b id="setMpVal">20</b>%</span><input type="range" id="setMp" min="0" max="90" step="5"></div>
     <div class="setSellHd">💰 자동 판매 <em>(선택 등급은 주우면 즉시 판매)</em></div>
+    <div class="setSellHd" style="margin-top:12px">🩺 최근 멈춤 <em>(0.3초 넘게 화면이 멎은 기록 — 없으면 정상)</em></div>
+    <div id="setStalls" style="font:11px/1.6 monospace;color:#8a93a6;white-space:pre-wrap;max-height:96px;overflow-y:auto;background:rgba(0,0,0,.25);border-radius:6px;padding:6px 8px;">-</div>
     <div id="setAutoSell" class="setSell">
       <button data-rar="common" style="--rc:#aaa">일반</button>
       <button data-rar="uncommon" style="--rc:#2ecc71">고급</button>
@@ -1139,7 +1145,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=205"
+<script type="module" src="game.js?v=207"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

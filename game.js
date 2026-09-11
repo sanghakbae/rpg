@@ -9719,7 +9719,12 @@ function openSettings() {
   $('setHp').value = settings.autoPotHp; $('setHpVal').textContent = settings.autoPotHp;
   $('setMp').value = settings.autoPotMp; $('setMpVal').textContent = settings.autoPotMp;
   document.querySelectorAll('#setAutoSell [data-rar]').forEach(b => b.classList.toggle('on', !!(settings.autoSell || {})[b.dataset.rar]));
-  { const v = $('setVerNow'); if (v) v.textContent = 'v' + GAME_VER; }
+  { const v = $('setVerNow'); if (v) v.textContent = 'v' + GAME_VER;
+    const nt = $('setVerNote');
+    if (nt) nt.innerHTML = (updLast
+      ? `마지막 확인 ${updLast.at} · 서버 <b>v${esc(updLast.srv)}</b> / 지금 <b>v${esc(GAME_VER)}</b>${updLast.err ? ' · 실패: ' + esc(updLast.err) : ''}<br>`
+      : '아직 확인 전<br>')
+      + '홈 화면에서 실행하면 옛 버전이 남아 있을 수 있습니다. 서버 쪽 번호가 더 큰데도 안 바뀌면 <b>새로 받기</b>를 누르세요(진행은 먼저 저장됩니다).'; }
   updateInstallUI();
   syncGfxUI();
   { /* 멈춤 기록 — 원인 추적용. 'js'가 작고 '간격'만 크면 브라우저(메모리·디코드) 쪽이다 */
@@ -10125,14 +10130,19 @@ function toggleTree() { togglePanel('treePanel'); if ($('treePanel').classList.c
    지금 실행 중인 game.js 버전과 비교하고, 다르면 배너로 알린다. */
 const GAME_VER = (() => { try { return new URL(import.meta.url).searchParams.get('v') || '0'; } catch (e) { return '0'; } })();
 let updBar = null, updBusy = false;
+let updLast = null; /* 마지막 확인 결과 — 설정 창에 보여준다(안내가 안 뜨는 이유를 눈으로 확인) */
 async function checkUpdate(manual) {
   try {
-    const html = await fetch('index.html?t=' + Date.now(), { cache: 'no-store' }).then(r => r.ok ? r.text() : Promise.reject(r.status));
+    const html = await fetch('index.html?t=' + Date.now(), { cache: 'no-store' }).then(r => r.ok ? r.text() : Promise.reject('HTTP ' + r.status));
     const m = /game\.js\?v=(\d+)/.exec(html);
+    updLast = { at: new Date().toTimeString().slice(0, 8), srv: m ? m[1] : '?', cur: GAME_VER, err: '' };
     if (!m) return;
     if ((+m[1] || 0) > (+GAME_VER || 0)) showUpdateBar(m[1]);
     else if (manual) toast(`최신 버전입니다 (v${GAME_VER})`);
-  } catch (e) { if (manual) toast('업데이트 확인 실패 — 네트워크를 확인하세요'); }
+  } catch (e) {
+    updLast = { at: new Date().toTimeString().slice(0, 8), srv: '-', cur: GAME_VER, err: String((e && (e.message || e.code)) || e).slice(0, 40) };
+    if (manual) toast('업데이트 확인 실패 — ' + updLast.err);
+  }
 }
 function showUpdateBar(newVer) {
   if (updBar) return;

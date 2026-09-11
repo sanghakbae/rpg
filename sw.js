@@ -10,7 +10,12 @@ self.addEventListener('install', e => {
   e.waitUntil(caches.open(SHELL).then(c => Promise.all(SHELL_URLS.map(u => c.add(u).catch(() => {})))).catch(() => {}).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => !k.startsWith(VER)).map(k => caches.delete(k)))).then(() => self.clients.claim()));
+  /* 새 워커가 뜰 때마다 '코드 캐시'는 통째로 비운다.
+     예전에는 옛 index.html/game.js 가 캐시에 남아, 홈 화면 앱이 계속 옛 버전으로 켜지고
+     업데이트 안내조차 못 보는 상태가 됐다. 스프라이트(-asset)는 그대로 둬서 재다운로드는 없다. */
+  e.waitUntil(caches.keys()
+    .then(ks => Promise.all(ks.map(k => (!k.startsWith(VER) || k === SHELL) ? caches.delete(k) : null)))
+    .then(() => self.clients.claim()));
 });
 /* 자산을 다른 호스트(예: cdn.sanghak.kr)에서 받도록 바꿀 경우 여기에 그 오리진을 넣는다.
    game.js의 ASSET_BASE와 짝이다 — 비워 두면 같은 오리진만 캐시한다. */

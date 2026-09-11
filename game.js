@@ -4786,7 +4786,7 @@ function drawSprite(name, x, y, scale = 4, opts = {}) {
   ctx.scale((opts.squashX || 1) + hsq, (opts.squashY || 1) - hsq * .9);
   /* 레티나 백버퍼에선 서브픽셀 1개 ≈ 1 기기픽셀이라 최근접 샘플링이 가장 선명. 저DPR(1x)만 보간 */
   ctx.imageSmoothingEnabled = (dpr || 1) < 1.5;
-  ctx.imageSmoothingQuality = 'high';
+  ctx.imageSmoothingQuality = MOBILE ? 'low' : 'high'; /* 스프라이트마다 고품질 보간을 돌리면 폰에서 부담이 크다 */
   const alpha = opts.alpha != null ? opts.alpha : 1;
   if (alpha < 1) ctx.globalAlpha = alpha;
   if (opts.rot) ctx.rotate(opts.rot);
@@ -4812,7 +4812,14 @@ const dq = n => n > 0 ? Math.max(1, Math.round(n * DQ)) : 0;
 let WSS = 2; /* 지형 텍스처 배율 — 아래 calcWSS()가 해상도에 맞춰 정하고, resize마다 갱신된다(함수 선언은 호이스팅되므로 첫 resize에서도 안전) */
 function resize() {
   const mob = MOBILE;
-  let d = Math.min(devicePixelRatio || 1, mob ? 2 : 3);
+  /* 모바일에서 가장 큰 GPU 비용은 '매 프레임 칠하는 픽셀 수'다.
+     402x874 화면을 dpr 2 로 그리면 프레임마다 140만 픽셀을 지형 텍스처에서 읽어 확대해 칠한다.
+     화질을 낮출수록 이 백버퍼 자체를 줄인다(낮음 1.25 → 55만 픽셀, 61% 감소).
+     UI 는 CSS px 기준이라 버튼·글자 크기는 그대로다. */
+  /* gfx()/settings 는 이 파일 아래쪽에서 선언된다 — 첫 resize()는 그보다 먼저 돌아 TDZ 에 걸린다 */
+  let gq = 'low'; try { gq = gfx(); } catch (e) {}
+  const gcap = mob ? ({ low: 1.25, mid: 1.5, high: 2 })[gq] || 1.25 : 3;
+  let d = Math.min(devicePixelRatio || 1, gcap);
   /* 백버퍼 픽셀 예산: 모바일 2.4M / 데스크톱 16M — 초과하면 배율을 낮춰 인앱 브라우저 메모리 멈춤 방지.
      9M이던 시절엔 2K 이상 창(레티나)에서 배율이 2→1.75/1.5로 깎여 화면 전체가 흐릿하게 확대됐다. UI는 CSS px 기준이라 크기 변화 없음 */
   const budget = mob ? 2.4e6 : 16e6;
@@ -9142,7 +9149,14 @@ function draw(now) {
   ctx.save();
   ctx.scale(z, z);
   ctx.translate(-cx + shx / z, -cy + shy / z);
-  ctx.drawImage(getTex(myMap()), 0, 0, WORLD.w, WORLD.h);
+  /* 보이는 부분만 그린다. 예전에는 1600x1200 전체를 매 프레임 넘겨 브라우저 클리핑에 맡겼다.
+     원본 사각형을 직접 지정하면 GPU 가 화면에 필요한 만큼만 샘플링한다.
+     확대 보간도 모바일에서는 'low' 로 — 'high' 는 전체 화면 확대에 매 프레임 값을 치른다. */
+  { const texT = getTex(myMap()), k = texT.width / WORLD.w;
+    const sx = clampN(cx, 0, WORLD.w), sy = clampN(cy, 0, WORLD.h);
+    const sw = Math.min(WORLD.w - sx, vw / z + 2), sh = Math.min(WORLD.h - sy, vh / z + 2);
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = MOBILE ? 'low' : 'high';
+    if (sw > 0 && sh > 0) ctx.drawImage(texT, sx * k, sy * k, sw * k, sh * k, sx, sy, sw, sh); }
   drawWaterFx(now); /* 물/용암 반짝임 */
   if (hordeOn()) drawHordeArena(now); /* 쇄도 결계 */
 
@@ -9800,7 +9814,7 @@ function openSettings() {
 { const el = $('setAuto'); if (el) el.onchange = () => { if (el.checked !== autoHunt) toggleAuto(); }; }
 { const el = $('setDmg'); if (el) el.onchange = () => { settings.dmgText = el.checked; saveSettings(); }; }
 { const el = $('setShake'); if (el) el.onchange = () => { settings.screenShake = el.checked; saveSettings(); }; }
-{ const box = $('setGfx'); if (box) box.querySelectorAll('[data-g]').forEach(b => b.onclick = () => { settings.gfx = b.dataset.g; saveSettings(); ambient = []; syncGfxUI(); sfx('click'); toast(`화질: ${b.textContent}`); }); }
+{ const box = $('setGfx'); if (box) box.querySelectorAll('[data-g]').forEach(b => b.onclick = () => { settings.gfx = b.dataset.g; saveSettings(); ambient = []; syncGfxUI(); try { resize(); } catch (e) {} /* 화질에 따라 백버퍼 해상도도 바뀐다 */ sfx('click'); toast(`화질: ${b.textContent}`); }); }
 function syncGfxUI() { const box = $('setGfx'); if (!box) return; const g = gfx(); box.querySelectorAll('[data-g]').forEach(b => b.classList.toggle('on', b.dataset.g === g)); }
 { const el = $('setHp'); if (el) el.oninput = () => { settings.autoPotHp = +el.value; $('setHpVal').textContent = el.value; saveSettings(); }; }
 { const el = $('setMp'); if (el) el.oninput = () => { settings.autoPotMp = +el.value; $('setMpVal').textContent = el.value; saveSettings(); }; }

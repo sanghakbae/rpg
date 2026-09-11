@@ -44,7 +44,14 @@ self.addEventListener('fetch', e => {
        업데이트 확인이 만드는 index.html?t=<시각>과 버전마다 다른 game.js?v=N이
        삭제되지 않고 무한히 쌓였다(10분마다 한 건씩). */
     const key = new Request(u.origin + u.pathname);
-    e.respondWith(fetch(req).then(res => {
+    /* 문서(index.html)만 HTTP 캐시를 건너뛴다.
+       GitHub Pages 가 max-age=600 을 붙여, '네트워크 우선'이라 해놓고도 브라우저 캐시가
+       최대 10분 동안 옛 index.html 을 돌려줘 새 버전이 늦게 반영됐다.
+       game.js 는 ?v=N 으로 URL 자체가 바뀌므로 낡을 일이 없다 — 여기에 no-store 를 걸면
+       접속할 때마다 700KB를 다시 받아 로그인이 느려진다. */
+    const isDoc = u.pathname === '/' || /\.html$/i.test(u.pathname);
+    const netReq = isDoc ? new Request(u.href, { cache: 'no-store', credentials: 'same-origin' }) : req;
+    e.respondWith(fetch(netReq).then(res => {
       if (res && res.ok) {
         const cp = res.clone();
         caches.open(SHELL).then(async c => {

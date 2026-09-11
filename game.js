@@ -1237,7 +1237,9 @@ function profShow() {
   const tot = Object.entries(profTot).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, v]) => `${k} ${Math.round(v)}ms x${profCnt[k] || 0}`).join('\n');
   const fr = profFrames.slice(-10).map(f => `${(f.t / 1000).toFixed(1)}s tot${f.ms} js${f.js} out${f.out} ${f.top}`).join('\n');
   const dec = profDecodes.filter(d => d.decMs > 150 || d.fetchMs > 400 || !d.sm).slice(-6).map(d => `${(d.at / 1000).toFixed(1)}s ${d.key} ${d.sm ? '축소' : '원본!'} ${d.kb}KB fetch${d.fetchMs} dec${d.decMs}`).join('\n');
-  const env = `MOBILE=${MOBILE ? 'Y' : 'N'} dpr=${dpr} ${innerWidth}x${innerHeight} 화면${screen.width}x${screen.height} touch=${navigator.maxTouchPoints}`;
+  const cs = getComputedStyle(document.documentElement);
+  const env = `MOBILE=${MOBILE ? 'Y' : 'N'} dpr=${dpr} ${innerWidth}x${innerHeight} 화면${screen.width}x${screen.height} touch=${navigator.maxTouchPoints}`
+    + `\n안전영역 상${cs.getPropertyValue('--sT').trim() || '?'} 하${cs.getPropertyValue('--sB').trim() || '?'} standalone=${(matchMedia('(display-mode: standalone)').matches || navigator.standalone) ? 'Y' : 'N'} v=${GAME_VER}`;
   dv.textContent = env + '\n긴 프레임 tot=간격 js=우리코드 out=밖\n' + (fr || '없음')
     + '\n\n느린 시트(디코드 끝난 시각)\n' + (dec || '없음') + '\n\n누적\n' + tot;
   dv.onclick = () => dv.remove();

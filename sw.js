@@ -12,6 +12,9 @@ self.addEventListener('install', e => {
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => !k.startsWith(VER)).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
+/* 자산을 다른 호스트(예: cdn.sanghak.kr)에서 받도록 바꿀 경우 여기에 그 오리진을 넣는다.
+   game.js의 ASSET_BASE와 짝이다 — 비워 두면 같은 오리진만 캐시한다. */
+const ASSET_HOSTS = [];
 const isAsset = u => /\/assets\/.*\.(png|jpg|jpeg|webp|svg|json|glb|woff2?)$/i.test(u.pathname);
 const isCode = u => u.pathname === '/' || /\.(html|js|webmanifest)$/i.test(u.pathname);
 
@@ -19,7 +22,7 @@ self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
   let u; try { u = new URL(req.url); } catch (err) { return; }
-  if (u.origin !== self.location.origin) return;            /* Firebase·gstatic 등은 그대로 통과 */
+  if (u.origin !== self.location.origin && !(ASSET_HOSTS.includes(u.origin) && isAsset(u))) return; /* Firebase·gstatic 등은 그대로 통과 */
   if (u.pathname === '/sw.js') return;
 
   if (isAsset(u)) {                                          /* 캐시 우선 */

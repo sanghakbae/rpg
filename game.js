@@ -9,6 +9,11 @@ import {
 /* 모바일 기기 판정: 창 폭이 아니라 '기기'로 본다.
    예전에는 innerWidth <= 640 만 봤기 때문에 아이폰을 가로로 들면(852px) PC로 분류돼
    시트 절반축소·시트 상한·지형 디테일·DPR 제한 등 모바일 최적화가 전부 꺼진 채 돌았다. */
+/* 정적 자산(스프라이트·아이콘)을 다른 호스트에서 받고 싶을 때만 채운다. 예: 'https://cdn.sanghak.kr'
+   비워 두면 지금처럼 같은 오리진에서 받는다. 바꿀 때 sw.js의 ASSET_HOSTS도 같이 맞춰야 서비스워커가 캐시한다.
+   cdn을 쓰려면 그 호스트가 Access-Control-Allow-Origin을 내려줘야 한다(fetch로 blob을 읽기 때문). */
+const ASSET_BASE = '';
+const asset = path => ASSET_BASE ? ASSET_BASE.replace(/\/$/, '') + '/' + path.replace(/^\//, '') : path;
 const MOBILE = (() => {
   try {
     const q = new URLSearchParams(location.search).get('mobile'); /* ?mobile=1 강제 / ?mobile=0 해제 — 태블릿·검증용 */
@@ -264,7 +269,7 @@ function glyphImg(path) {
   ITEM_ICON_IMG[path] = im;
   return im;
 }
-const itemIconImg = name => glyphImg(`assets/icons/items/${name}.svg`);
+const itemIconImg = name => glyphImg(asset(`assets/icons/items/${name}.svg`));
 /* 아이콘이 새로 로드되면 캐시를 비우고 열려 있는 UI를 다시 그림 */
 let iconRefreshT = 0;
 function itemIconsChanged() {
@@ -437,7 +442,7 @@ function drawItemIcon(rawId, x, y, size, opts = {}) {
 }
 /* 시작 시 전부 프리로드 (39개, 총 160KB) — 가방을 열 때쯤엔 전부 준비되어 폴백이 안 보인다 */
 setTimeout(() => { for (const n of ['broadsword','bow-arrow','plain-dagger','wizard-staff','breastplate','leather-armor','leather-vest','visored-helm','barbute','pointy-hat','trousers','gloves','boots','ring','health-potion','heart-bottle','magic-potion','round-potion','square-bottle','scroll-unfurled','crown','gem-pendant','emerald','ring-box','dripping-sword','water-drop','crystal-wand','two-handed-sword','crossbow','curvy-knife','hood','chain-mail','steeltoe-boots','gauntlet','bracers','diamond-ring','pearl-necklace','potion-ball','bubbling-flask']) itemIconImg(n);
-  for (const n of ['sword-brandish','whirlwind','muscle-up','shield','arrow-cluster','high-shot','eye-target','boots','ninja-mask','daggers','crescent-blade','sprint','fireball','ice-bolt','magic-swirl','shield-reflect','healing','crossed-swords','lightning-branches','heart-plus','punch-blast','bullseye']) glyphImg(`assets/icons/${n}.svg`); }, 0);
+  for (const n of ['sword-brandish','whirlwind','muscle-up','shield','arrow-cluster','high-shot','eye-target','boots','ninja-mask','daggers','crescent-blade','sprint','fireball','ice-bolt','magic-swirl','shield-reflect','healing','crossed-swords','lightning-branches','heart-plus','punch-blast','bullseye']) glyphImg(asset(`assets/icons/${n}.svg`)); }, 0);
 /* 리치 호버 툴팁 */
 let tipEl = null, tipLastRaw = '', tipLastT = 0;
 function itemTipHtml(rawId, compare = false) {
@@ -1229,8 +1234,9 @@ function profShow() {
   dv.style.cssText = 'position:fixed;left:4px;top:100px;z-index:99999;background:rgba(0,0,0,.9);color:#9fe;font:10px/1.45 monospace;padding:6px 8px;white-space:pre;border-radius:6px;max-width:96vw;max-height:70vh;overflow:auto;';
   const tot = Object.entries(profTot).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, v]) => `${k} ${Math.round(v)}ms x${profCnt[k] || 0}`).join('\n');
   const fr = profFrames.slice(-10).map(f => `${(f.t / 1000).toFixed(1)}s tot${f.ms} js${f.js} out${f.out} ${f.top}`).join('\n');
-  const dec = profDecodes.filter(d => d.decMs > 150 || d.fetchMs > 400).slice(-6).map(d => `${(d.at / 1000).toFixed(1)}s ${d.key} ${d.kb}KB fetch${d.fetchMs} dec${d.decMs}`).join('\n');
-  dv.textContent = '긴 프레임 tot=간격 js=우리코드 out=밖\n' + (fr || '없음')
+  const dec = profDecodes.filter(d => d.decMs > 150 || d.fetchMs > 400 || !d.sm).slice(-6).map(d => `${(d.at / 1000).toFixed(1)}s ${d.key} ${d.sm ? '축소' : '원본!'} ${d.kb}KB fetch${d.fetchMs} dec${d.decMs}`).join('\n');
+  const env = `MOBILE=${MOBILE ? 'Y' : 'N'} dpr=${dpr} ${innerWidth}x${innerHeight} 화면${screen.width}x${screen.height} touch=${navigator.maxTouchPoints}`;
+  dv.textContent = env + '\n긴 프레임 tot=간격 js=우리코드 out=밖\n' + (fr || '없음')
     + '\n\n느린 시트(디코드 끝난 시각)\n' + (dec || '없음') + '\n\n누적\n' + tot;
   dv.onclick = () => dv.remove();
   if (!dv.parentNode) document.body.appendChild(dv);
@@ -6461,8 +6467,8 @@ const HERO_SHEET_H = 118; /* 시트 알파 박스(치켜든 무기 끝 포함)�
    매니페스트가 없으면(구버전 배포) 예전처럼 직접 시도 */
 let sheetManifest = null; /* null=로딩 전, Set=목록, false=없음 */
 let sheetMetaAll = null; /* 시트 메타 묶음 — 예전엔 시트마다 .json을 따로 받아 요청이 80건 넘었다 */
-const sheetMetaP = fetch(`assets/sprites/meta.json?v=${SHEET_VER}`).then(r => r.ok ? r.json() : Promise.reject()).then(m => { sheetMetaAll = m; }).catch(() => { sheetMetaAll = false; });
-const sheetManifestP = fetch(`assets/sprites/manifest.json?v=${SHEET_VER}`).then(r => r.ok ? r.json() : Promise.reject())
+const sheetMetaP = fetch(asset(`assets/sprites/meta.json?v=${SHEET_VER}`)).then(r => r.ok ? r.json() : Promise.reject()).then(m => { sheetMetaAll = m; }).catch(() => { sheetMetaAll = false; });
+const sheetManifestP = fetch(asset(`assets/sprites/manifest.json?v=${SHEET_VER}`)).then(r => r.ok ? r.json() : Promise.reject())
   .then(list => { sheetManifest = new Set(list); }).catch(() => { sheetManifest = false; })
   .finally(() => { try {
     /* 프롭은 현재 구역에 쓰이는 것만 미리 받는다 — 예전엔 46종을 전부 받아 로그인 요청이 90건 넘었다(나머지는 필요할 때 자동 로드) */
@@ -6475,10 +6481,20 @@ const sheetManifestP = fetch(`assets/sprites/manifest.json?v=${SHEET_VER}`).then
 /* 시트 로딩: PNG 디코드를 메인 스레드 밖에서(createImageBitmap) 처리하고, 한 번에 한 장씩만 디코드한다.
    예전에는 img.onload 뒤 곧바로 메인 스레드에서 디코드+절반 축소가 일어나 구역을 옮길 때마다 30~60ms씩 화면이 멈췄다. */
 let decodeChain = Promise.resolve();
-const decodeQueue = fn => (decodeChain = decodeChain.then(() => Promise.race([
-  Promise.resolve().then(fn),
-  new Promise(r => setTimeout(r, 8000)), /* 한 장이 멎어도 이후 시트 로딩이 통째로 멈추지 않게 */
-]), () => {}));
+/* 한 장씩 순서대로 디코드하되, 호출자는 자기 작업의 성공/실패를 제대로 돌려받아야 한다.
+   예전에는 체인 프로미스를 그대로 돌려줘서 (1) 디코드가 실패해도 호출자에겐 성공으로 보이고
+   (2) 8초 타임아웃이 이기면 done()이 불리지 않은 채 e.loading=true로 굳어 그 시트가 영영 안 떴다. */
+const decodeQueue = fn => {
+  let res, rej;
+  const p = new Promise((a, b) => { res = a; rej = b; });
+  decodeChain = decodeChain.then(() => {
+    let settled = false;
+    const fin = (ok, v) => { if (settled) return; settled = true; ok ? res(v) : rej(v); };
+    const task = Promise.resolve().then(fn).then(v => fin(true, v), e => fin(false, e));
+    return Promise.race([task, new Promise(r => setTimeout(() => { fin(false, new Error('decode-timeout')); r(); }, 8000))]); /* 한 장이 멎어도 이후 시트 로딩이 통째로 멈추지 않게 */
+  }, () => {});
+  return p;
+};
 function sheetReady(key, e) { /* 로드 완료 후 후처리(기존과 동일) */
   if (key.startsWith('mob_')) { try { evictSheets(); } catch (e2) {} if ($('dexPanel')?.classList.contains('open')) { try { renderDex(); } catch (err) {} } }
   if (key.startsWith('prop_')) { try { onPropLoaded(); } catch (e3) {} }
@@ -6496,21 +6512,23 @@ function loadSheet(key, e) {
   /* 모바일은 '미리 절반으로 구워둔' 시트(assets/sprites/m/)를 받는다.
      예전에는 원본(최대 3.9MB·2048x3840)을 통째로 받아 푼 뒤 절반으로 줄여서, 메모리는 줄어도
      받고 푸는 순간의 멈춤(아이폰에서 5초 넘게)은 그대로였다. 이제 다운로드·디코드 자체가 1/4이다. */
-  const urlFor = sm => `assets/sprites/${sm ? 'm/' : ''}${key}.png?v=${SHEET_VER}`;
+  const urlFor = sm => asset(`assets/sprites/${sm ? 'm/' : ''}${key}.png?v=${SHEET_VER}`);
+  e.small = null; /* 실제로 어떤 판본을 받았는지 진단용 */
   const metaP = sheetMetaAll === null
-    ? sheetMetaP.then(() => (sheetMetaAll && sheetMetaAll[key]) || fetch(`assets/sprites/${key}.json?v=${SHEET_VER}`).then(r => r.ok ? r.json() : Promise.reject(r.status)))
-    : (sheetMetaAll && sheetMetaAll[key] ? Promise.resolve(sheetMetaAll[key]) : fetch(`assets/sprites/${key}.json?v=${SHEET_VER}`).then(r => r.ok ? r.json() : Promise.reject(r.status)));
+    ? sheetMetaP.then(() => (sheetMetaAll && sheetMetaAll[key]) || fetch(asset(`assets/sprites/${key}.json?v=${SHEET_VER}`)).then(r => r.ok ? r.json() : Promise.reject(r.status)))
+    : (sheetMetaAll && sheetMetaAll[key] ? Promise.resolve(sheetMetaAll[key]) : fetch(asset(`assets/sprites/${key}.json?v=${SHEET_VER}`)).then(r => r.ok ? r.json() : Promise.reject(r.status)));
   metaP.then(meta => {
     const metaFor = sm => sm ? { ...meta, fr: meta.fr / 2, top: meta.top / 2, feet: meta.feet / 2 } : meta;
     const done = (img, sm) => { const _t = performance.now(); e.img = img; e.meta = metaFor(sm); e.used = Date.now(); e.loading = false; e.failed = false; sheetReady(key, e);
       if (PROF_ON) { const d = performance.now() - _t; profTot['sheetReady'] = (profTot['sheetReady'] || 0) + d; if (profCur) profCur['sheetReady'] = (profCur['sheetReady'] || 0) + d; } };
     const viaBitmap = sm => { const tF = performance.now();
-      return fetch(urlFor(sm)).then(r => r.ok ? r.blob() : Promise.reject('http ' + r.status))
+      return fetch(urlFor(sm)).then(r => r.ok ? r.blob() : Promise.reject(Object.assign(new Error('http ' + r.status), { http: r.status })))
       .then(blob => decodeQueue(async () => {
         const tD = performance.now();
         const bmp = await createImageBitmap(blob);
         const tE = performance.now();
-        if (PROF_ON) { profDecodes.push({ key, fetchMs: Math.round(tD - tF), decMs: Math.round(tE - tD), at: Math.round(tE), kb: Math.round(blob.size / 1024) }); if (profDecodes.length > 60) profDecodes.shift(); }
+        if (PROF_ON) { profDecodes.push({ key, sm, fetchMs: Math.round(tD - tF), decMs: Math.round(tE - tD), at: Math.round(tE), kb: Math.round(blob.size / 1024) }); if (profDecodes.length > 60) profDecodes.shift(); }
+        e.small = sm;
         done(bmp, sm);
       })); }; /* 디코드는 메인 스레드 밖 + 한 장씩 */
     const legacy = sm => new Promise((res, rej) => {
@@ -6521,7 +6539,14 @@ function loadSheet(key, e) {
     });
     const attempt = sm => (typeof createImageBitmap === 'function' ? viaBitmap(sm) : legacy(sm));
     const small = MOBILE;
-    return attempt(small).catch(() => attempt(!small)).catch(() => legacy(!small)); /* 축소본 실패 시 원본으로 */
+    /* 축소본이 '없을 때'(404)만 원본으로 내려간다.
+       디코드 실패는 대개 메모리 압박인데, 예전에는 그때도 4배 큰 원본(8MB 디코드)을 받아
+       상황을 더 나쁘게 만들었다. 그런 실패는 그냥 던져서 heroSheet의 재시도(백오프)에 맡긴다. */
+    return attempt(small).catch(err => {
+      if (small && err && err.http) return attempt(false).catch(() => legacy(false));
+      if (!small && err && err.http) return legacy(false);
+      throw err;
+    });
   }).catch(err => fail(err && (err.message || err)));
 }
 const SHEET_MOBILE = MOBILE;

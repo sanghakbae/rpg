@@ -839,6 +839,51 @@
     #autoBtn { right: calc(160px + env(safe-area-inset-right)); top: calc(4px + var(--sT)); bottom: auto; }  /* 미니맵(right 80 + 74px) 왼쪽 */
   }
 
+  /* ===== 큰 화면(PC): UI 를 화면 크기에 맞춰 키운다 =====
+     모든 크기가 고정 px 이라 27인치·울트라와이드에서는 아이콘과 아이템 칸이 화면 대비 아주 작아 보였다.
+     세계는 화면을 채우도록 확대되는데 UI 만 그대로여서 차이가 더 커졌다. */
+  @media (min-width: 1700px) and (pointer: fine) {
+    #hud { width: min(380px, 24vw); font-size: 17px; padding: 11px 16px 12px; }
+    #hud .lv { font-size: 28px; } #hud .cls { font-size: 15px; }
+    .barwrap { height: 22px; } .bartext { font-size: 15px; margin-top: -25px; }
+    #stats { font-size: 16px; } #goldRow { font-size: 17px; }
+    #minimap { width: 220px; height: 165px; }
+    #onlineCnt { font-size: 14px; padding: 6px 16px; }
+    #dockL { bottom: 112px; }  /* 단축바가 커진 만큼 위로 — 안 그러면 서로 겹친다 */
+    #dockL button { width: 84px; height: 84px; }
+    #dockL button span { font-size: 12px; }
+    #invPanel.open, .sidepanel.open { bottom: 230px; }
+    #autoBtn { width: 52px; height: 52px; right: 246px; }
+    #autoBtn .ah { font-size: 20px; }
+    .hslot { width: 72px; height: 72px; } .hslot.pot { width: 56px; }
+    .hslot .ic2 .skic { width: 44px; height: 44px; } .hslot .ic2 .potic { width: 46px !important; height: 46px !important; }
+    .hslot .nm { font-size: 11px; } .hslot .key { font-size: 12px; }
+    #invGrid { grid-template-columns: repeat(auto-fill, 58px); gap: 6px; }
+    .islot .ic { width: 48px; height: 48px; line-height: 48px; font-size: 30px; }
+    #equipGrid { grid-template-columns: repeat(3, 84px); gap: 8px; }
+    .eslot .eic { width: 40px; height: 40px; }
+    .sidepanel { width: 400px; right: 250px; font-size: 15px; }
+    #rankPanel { font-size: 14px; }
+  }
+  @media (min-width: 2400px) and (pointer: fine) {
+    #hud { width: min(460px, 22vw); font-size: 20px; }
+    #hud .lv { font-size: 34px; }
+    .barwrap { height: 26px; } .bartext { font-size: 17px; margin-top: -29px; }
+    #minimap { width: 280px; height: 210px; }
+    #dockL { bottom: 132px; }
+    #dockL button { width: 104px; height: 104px; }
+    #dockL button span { font-size: 14px; }
+    #invPanel.open, .sidepanel.open { bottom: 262px; }
+    #autoBtn { width: 64px; height: 64px; right: 306px; }
+    .hslot { width: 90px; height: 90px; } .hslot.pot { width: 70px; }
+    .hslot .ic2 .skic { width: 56px; height: 56px; } .hslot .ic2 .potic { width: 58px !important; height: 58px !important; }
+    #invGrid { grid-template-columns: repeat(auto-fill, 72px); gap: 7px; }
+    .islot .ic { width: 60px; height: 60px; line-height: 60px; font-size: 38px; }
+    #equipGrid { grid-template-columns: repeat(3, 104px); gap: 9px; }
+    .eslot .eic { width: 50px; height: 50px; }
+    .sidepanel { width: 480px; right: 320px; font-size: 17px; }
+  }
+
   /* ===== 모바일 단축바: 상단 독 아이콘과 같은 크기 · 이름/번호 숨김 (요청) ===== */
   @media (max-width: 640px), (pointer: coarse) and (max-height: 520px) {
     #hotbar .hslot, #hotbar .hslot.pot {
@@ -1161,7 +1206,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=216"
+<script type="module" src="game.js?v=217"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

@@ -1144,7 +1144,8 @@ const ldT0 = Date.now(), ldMarks = []; /* 단계별 소요 시간 — 어느 구
 function ldPaint() { const b = $('ldBar'); if (b) b.style.width = ldCur.toFixed(1) + '%'; }
 function ldStep() {
   if (ldCur >= ldTo) { clearInterval(ldTimer); ldTimer = 0; return; } /* 구간 끝까지 올라갔으면 타이머를 쉰다(다음 ldProg가 다시 켠다) */
-  ldCur = Math.min(ldTo, ldCur + Math.max(0.05, (ldTo - ldCur) * 0.05)); /* 최소 속도가 있어 어떤 단계에서도 멈춰 보이지 않는다 */
+  /* 최소 속도 0.35/60ms ≈ 초당 6% — 예전(초당 0.8%)에는 단계가 바뀔 때만 툭툭 뛰는 것처럼 보였다 */
+  ldCur = Math.min(ldTo, ldCur + Math.max(0.35, (ldTo - ldCur) * 0.12));
   ldPaint();
 }
 /* from: 이 단계 시작 시 최소 진행률, to: 이 단계가 끝나기 전까지 서서히 다가갈 상한 */
@@ -1161,14 +1162,22 @@ function ldProg(from, to, msg) {
 function ldShow(from, to, msg) { const ld = $('loading'); if (ld) ld.style.display = 'flex'; ldProg(from, to, msg); }
 function ldHide() { const ld = $('loading'); if (ld) ld.style.display = 'none'; }
 let ldOff = false, ldErr = false; /* ldOff: 로딩 끝(프레임 루프가 검은 화면을 걷어낸다) · ldErr: 오류 안내 표시 중(걷어내면 안 된다) */
-function ldDone(msg) { /* 100%까지 채운 뒤 곧바로 사라진다 */
+function ldDone(msg) {
   if (ldTimer) { clearInterval(ldTimer); ldTimer = 0; }
-  ldOff = true;
-  if (ldErr) return; /* 로딩 중 오류 안내가 떠 있으면 지우지 않는다 — 예전엔 안내가 조용히 사라지고 반쯤 망가진 상태로 들어갔다 */
-  ldCur = ldTo = 100; ldPaint();
+  if (ldErr) { ldOff = true; return; } /* 로딩 중 오류 안내가 떠 있으면 지우지 않는다 */
   if (msg) { const m = $('ldMsg'); if (m) m.textContent = msg; }
-  ldHide();
-  setTimeout(() => { if (!ldErr) ldHide(); }, 200); /* 이 시점에 다른 코드가 다시 띄웠어도 확실히 내린다 */
+  /* 남은 구간을 눈에 보이게 채우고 나서 사라진다.
+     예전에는 곧바로 100 을 찍고 같은 프레임에 숨겨서, 바가 중간에서 사라지는 것처럼 보였다. */
+  ldTo = 100;
+  const from = ldCur, t0 = performance.now(), DUR = 260;
+  const fin = () => { ldOff = true; ldCur = ldTo = 100; ldPaint(); ldHide(); };
+  const step = () => {
+    const k = Math.min(1, (performance.now() - t0) / DUR);
+    ldCur = from + (100 - from) * k; ldPaint();
+    if (k < 1) requestAnimationFrame(step); else setTimeout(fin, 110);
+  };
+  requestAnimationFrame(step);
+  setTimeout(fin, 800); /* 안전장치: rAF 가 눌려도 반드시 걷힌다 */
 }
 /* 무거운 동기 작업(지형 굽기) 전에 한 프레임 양보 — 그래야 방금 올린 진행바가 실제로 그려진다 */
 const ldYield = () => new Promise(r => { let d = false; const f = () => { if (d) return; d = true; setTimeout(r, 0); }; requestAnimationFrame(f); setTimeout(f, 50); });
@@ -10049,9 +10058,16 @@ function stageMode() {
   };
   sl();
 }
+/* 모바일 프레임 상한.
+   전체 화면 지형 블릿 + 스프라이트 + 효과를 초당 60번 그리면 폰이 뜨거워지고, 그 열 때문에
+   기기가 스스로 속도를 낮춰 '중간중간 멈춤'으로 이어진다. 30fps면 GPU 일이 절반이고
+   시뮬레이션은 dt 기반이라 게임 속도는 그대로다. 화질을 '높음'으로 올리면 60fps로 돌아간다. */
+let lastFrameAt = 0;
+const frameCapMs = () => (MOBILE && gfx() !== 'high') ? 32 : 0;
 function loop(t) {
 requestAnimationFrame(loop);
   if (window.__stage) return;
+  { const cap = frameCapMs(); if (cap && t - lastFrameAt < cap - 2) return; lastFrameAt = t; }
   const _t0 = perfOn ? performance.now() : 0;
   try {
     loopBody(t);

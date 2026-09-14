@@ -6802,6 +6802,18 @@ function outTop(n) {
 }
 const stallLog = []; /* 설정 창에 보여줄 최근 정지 기록 */
 window.__stalls = () => stallLog;
+/* 화면에 보여줄 그래픽 메모리 추정(MB). 캔버스·비트맵은 JS 힙에 안 잡혀서
+   '메모리 관리가 안 된다'는 느낌을 숫자로 확인할 수 있어야 한다. */
+function gfxMem() {
+  let sheet = 0, hue = 0, tex = 0, cvs = 0;
+  try { for (const k in HERO_SHEETS) { const im = HERO_SHEETS[k] && HERO_SHEETS[k].img; if (im && im.width) sheet += im.width * im.height * 4; } } catch (e) {}
+  try { for (const e of hueSheetCache.values()) { if (e.c && e.c.width) hue += e.c.width * e.c.height * 4; } } catch (e) {}
+  try { for (const t of bioTexCache.values()) { if (t && t.width) tex += t.width * t.height * 4; } } catch (e) {}
+  try { document.querySelectorAll('canvas').forEach(c => { cvs += (c.width || 0) * (c.height || 0) * 4; }); } catch (e) {}
+  const mb = v => Math.round(v / 1048576);
+  return { sheet: mb(sheet), hue: mb(hue), tex: mb(tex), cvs: mb(cvs), total: mb(sheet + hue + tex + cvs) };
+}
+window.__gfxMem = gfxMem;
 function memoryRelief() {
   let freed = 0;
   try {
@@ -9798,7 +9810,8 @@ function openSettings() {
       ? stallLog.map(v => `${v.at} 간격 ${v.gap}ms 루프 ${v.js}ms${v.out ? ' · ' + v.out : ' · (루프 밖 미검출)'}`).join('\n')
         + (window.__lastRelief ? '\n→ 그래픽 ' + window.__lastRelief.freed + '장 정리함' : '')
       : '기록 없음')
-      + `\n[${MOBILE ? '모바일' : 'PC'} dpr${dpr} 안전영역 상${sTpx} 하${sBpx} wss${WSS} 시트${Object.keys(HERO_SHEETS).filter(k => HERO_SHEETS[k].img).length}]`;
+      + `\n[${MOBILE ? '모바일' : 'PC'} dpr${dpr} 안전영역 상${sTpx} 하${sBpx} wss${WSS}]`
+      + (() => { const g = gfxMem(); return `\n[그래픽 메모리 약 ${g.total}MB — 시트 ${g.sheet} · 색조 ${g.hue} · 지형 ${g.tex} · 캔버스 ${g.cvs}]`; })();
   }
   m.hidden = false;
 }

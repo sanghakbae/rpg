@@ -1420,7 +1420,7 @@ let horde = null; /* 쇄도(생존 웨이브) 런 상태 — 아래 쇄도 섹�
 const hordeOn = () => !!horde && horde.st === 'run';
 const hb = k => (horde && horde.st === 'run' && horde.b[k]) || 0; /* 각인 배율(런 밖에서는 0) */
 let autoHunt = false, autoSkillT = 0, autoPotT = 0, targetT0 = 0, targetBest = 1e9; const simSkip = {}; /* 자동 사냥: '가까워지지 않을 때만' 제외(멀어서 오래 걸리는 것과 구분) */
-const settings = { autoPotHp: 45, autoPotMp: 20, dmgText: true, screenShake: true, autoSell: {}, gfx: '' }; /* gfx: high|mid|low (빈값=기기 기본) */ /* autoSell: 등급별 자동 판매 on/off */
+const settings = { autoPotHp: 45, autoPotMp: 20, dmgText: true, screenShake: true, autoSell: {}, gfx: '', fps: true }; /* gfx: high|mid|low (빈값=기기 기본) */ /* autoSell: 등급별 자동 판매 on/off */
 try { const sv = JSON.parse(localStorage.getItem('settings') || '{}'); Object.assign(settings, sv); } catch (e) {}
 /* 예전에는 모바일 기본이 '낮음'이었고 그게 30프레임 상한까지 걸어 '버벅인다'는 말이 나왔다.
    이제 낮음=절약(30프레임), 보통=부드럽게(60프레임)로 나눴으므로, 예전 기본값을 쓰던 사람은 한 번만 보통으로 올린다.
@@ -9870,6 +9870,7 @@ function openSettings() {
   const m = $('settingsModal'); if (!m) return;
   $('setSound').checked = !muted;
   $('setAuto').checked = autoHunt;
+  { const f = $('setFps'); if (f) f.checked = !!settings.fps; }
   $('setDmg').checked = settings.dmgText;
   $('setShake').checked = settings.screenShake;
   $('setHp').value = settings.autoPotHp; $('setHpVal').textContent = settings.autoPotHp;
@@ -9915,6 +9916,7 @@ function openSettings() {
 { const el = $('setSound'); if (el) el.onchange = () => { if (el.checked === muted) toggleMute(); }; }
 { const el = $('setAuto'); if (el) el.onchange = () => { if (el.checked !== autoHunt) toggleAuto(); }; }
 { const el = $('setDmg'); if (el) el.onchange = () => { settings.dmgText = el.checked; saveSettings(); }; }
+{ const el = $('setFps'); if (el) el.onchange = () => { settings.fps = el.checked; saveSettings(); const t = $('fpsTag'); if (t && !el.checked) t.hidden = true; }; }
 { const el = $('setShake'); if (el) el.onchange = () => { settings.screenShake = el.checked; saveSettings(); }; }
 { const box = $('setGfx'); if (box) box.querySelectorAll('[data-g]').forEach(b => b.onclick = () => { settings.gfx = b.dataset.g; saveSettings(); ambient = []; syncGfxUI(); try { resize(); } catch (e) {} /* 화질에 따라 백버퍼 해상도도 바뀐다 */ sfx('click'); toast(`화질: ${b.textContent}`); }); }
 function syncGfxUI() { const box = $('setGfx'); if (!box) return; const g = gfx(); box.querySelectorAll('[data-g]').forEach(b => b.classList.toggle('on', b.dataset.g === g)); }
@@ -10250,6 +10252,24 @@ function stageMode() {
    기기가 스스로 속도를 낮춰 '중간중간 멈춤'으로 이어진다. 30fps면 GPU 일이 절반이고
    시뮬레이션은 dt 기반이라 게임 속도는 그대로다. 화질을 '높음'으로 올리면 60fps로 돌아간다. */
 let lastFrameAt = 0;
+/* 좌측 하단 실시간 프레임 표시 — 설정에서 끌 수 있다.
+   '버벅인다'를 숫자로 확인하기 위한 것: 숫자가 낮으면 그리기 부담, 높은데도 끊기면 다른 원인이다. */
+let fpsN = 0, fpsT0 = 0, fpsWorst = 0, fpsEl = null;
+function fpsTick(t, gap) {
+  if (!settings.fps) { if (fpsEl && !fpsEl.hidden) fpsEl.hidden = true; return; }
+  if (!fpsEl) fpsEl = $('fpsTag');
+  if (!fpsEl) return;
+  if (fpsEl.hidden) fpsEl.hidden = false;
+  fpsN++;
+  if (gap > fpsWorst) fpsWorst = gap;
+  if (!fpsT0) { fpsT0 = t; return; }
+  const span = t - fpsT0;
+  if (span < 500) return;
+  const fps = Math.round(fpsN / span * 1000);
+  fpsEl.textContent = `${fps}fps · 최대 ${Math.round(fpsWorst)}ms`;
+  fpsEl.classList.toggle('bad', fps < 25 || fpsWorst > 120);
+  fpsN = 0; fpsT0 = t; fpsWorst = 0;
+}
 /* 프레임 상한은 '낮음'에서만. 예전엔 '보통'까지 30fps 로 묶여 부드럽지 않다는 말이 나왔다. */
 const frameCapMs = () => (MOBILE && gfx() === 'low') ? 32 : 0;
 function loop(t) {
@@ -10474,6 +10494,7 @@ perfInit();
 function loopBody(t) {
   const now = Date.now();
   const rawGap = t - lastT; /* 클램프 전 실제 프레임 간격 */
+  fpsTick(t, rawGap);
   profFrame(rawGap);
   if (ready && rawGap > 300) noteStall(rawGap, profLast);
   if (ldOff && !ldErr) { const _ld = $('loading'); if (_ld && _ld.style.display !== 'none') _ld.style.display = 'none'; } /* 안전장치: 준비가 끝났는데 로딩 화면이 남아 있으면 즉시 내린다 */

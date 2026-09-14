@@ -658,6 +658,11 @@
   .dexmon.unseen .dexnm { color: #667; }
   .dexsum { color: #ffd700; font-size: 12px; margin: 2px 2px 10px; }
 
+  /* 실시간 프레임 표시(좌측 하단) — 설정에서 끌 수 있다 */
+  #fpsTag { position: fixed; left: 6px; bottom: calc(24px + var(--sB)); z-index: 90; pointer-events: none;
+    font: 11px/1.4 ui-monospace, monospace; color: #9fe; background: rgba(0,0,0,.55); border-radius: 5px; padding: 2px 6px; white-space: nowrap; }
+  #fpsTag.bad { color: #ff9b9b; }
+  @media (max-width: 640px), (pointer: coarse) { #fpsTag { bottom: calc(var(--botUI, 100px) + 4px); font-size: 10px; } }
   /* 푸터 + 개인정보처리방침 */
   #footer { position: fixed; bottom: 0; left: 0; right: 0; height: 20px; z-index: 8;
     background: rgba(5,8,14,.75); border-top: 1px solid rgba(255,255,255,.08);
@@ -1035,6 +1040,7 @@
 </div>
 <!-- 자동 사냥: 독 밖(고정 배치). #dockL은 transform을 쓰므로 그 안에서는 position:fixed가 화면 기준이 되지 않는다 -->
 <button id="autoBtn" title="자동 사냥 [P]"><span class="ah">⚔️</span><span>자동</span></button>
+<div id="fpsTag" hidden></div>
 <div id="modalDim"></div>
 
 <div id="invPanel" class="panel">
@@ -1105,6 +1111,7 @@
     <div class="modalHd">⚙️ 설정 <button id="setClose">✕</button></div>
     <label class="setrow"><span>🔊 소리</span><input type="checkbox" id="setSound"></label>
     <label class="setrow"><span>⚔️ 자동 사냥 <em>(P)</em></span><input type="checkbox" id="setAuto"></label>
+    <label class="setrow"><span>📈 프레임 표시 <em>(좌측 하단)</em></span><input type="checkbox" id="setFps"></label>
     <label class="setrow"><span>💥 데미지 숫자</span><input type="checkbox" id="setDmg"></label>
     <label class="setrow"><span>📳 화면 흔들림</span><input type="checkbox" id="setShake"></label>
     <div class="setrow"><span>🎚 화면 <em>(모바일 기준)</em></span><span id="setGfx" class="gfxSel">
@@ -1221,7 +1228,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=224"
+<script type="module" src="game.js?v=225"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

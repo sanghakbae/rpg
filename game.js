@@ -9818,6 +9818,16 @@ function learnedActives() {
   const ids = new Set();
   for (const [id, d] of Object.entries(SKILLS)) if (d.type === 'active' && (d.cls === myCls || d.cls === 'all') && hasSkill(id)) ids.add(id);
   try { for (const id of classActiveIds()) if (hasSkill(id)) ids.add(id); } catch (e) {}
+  /* 배운 '트리' 발동 스킬도 넣는다.
+     예전에는 기본 스킬(SKILLS)만 훑어서, 트리에서 배운 발동 스킬이 퀵슬롯 목록에 아예 안 떴다
+     — 스킬트리 창에서 직접 지정하는 길밖에 없었다. */
+  try {
+    for (const [id, d] of Object.entries(TREES_ALL)) {
+      if (d.kind !== 'active') continue;
+      if (d.cls && d.cls !== 'all' && d.cls !== myCls) continue;
+      if ((me.tree || {})[id]) ids.add(id);
+    }
+  } catch (e) {}
   if (hasSkill('heal')) ids.add('heal');
   return [...ids];
 }

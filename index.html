@@ -438,6 +438,13 @@
   .eslot[data-r="epic"] { border-color: #9b59b6; border-style: solid; }
   .eslot[data-r="legend"] { border-color: #ffd700; border-style: solid; }
   .eslot[data-r="unique"] { border-color: #ff4d4d; border-style: solid; box-shadow: 0 0 8px rgba(255,77,77,.4); }
+  /* 등급별 바탕색 — 테두리만으로는 한눈에 안 들어와서 칸 배경 자체를 다르게 한다 */
+  .islot[data-r="common"],   .eslot[data-r="common"]   { background: rgba(170,170,170,.10); }
+  .islot[data-r="uncommon"], .eslot[data-r="uncommon"] { background: rgba(46,204,113,.16); }
+  .islot[data-r="rare"],     .eslot[data-r="rare"]     { background: rgba(52,152,219,.18); }
+  .islot[data-r="epic"],     .eslot[data-r="epic"]     { background: rgba(155,89,182,.20); }
+  .islot[data-r="legend"],   .eslot[data-r="legend"]   { background: rgba(255,215,0,.18); }
+  .islot[data-r="unique"],   .eslot[data-r="unique"]   { background: rgba(255,77,77,.20); }
   .islot .ic { font-size: 17px; }
 
   /* 스탯 포인트 */
@@ -1213,7 +1220,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=219"
+<script type="module" src="game.js?v=222"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

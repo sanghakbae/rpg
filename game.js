@@ -715,6 +715,25 @@ const GEAR_CLASS = {
 };
 const GEAR_SLOTS = ['weapon', 'armor', 'helmet', 'pants', 'gloves', 'boots', 'bracelet', 'necklace', 'ring'];
 const zoneGearId = (band, cls, slot) => `${slot}_${cls}_b${band}`;
+/* 구역 장비 변형: 슬롯·직업·밴드마다 1종뿐이라 '같은 것만 나온다'는 말이 나왔다 → 10종으로 늘린다.
+   0번은 기존 id 그대로(이미 가진 아이템과 호환), 1~9번은 _v1.._v9. */
+const RARITY_ORDER = ['common', 'uncommon', 'rare', 'epic', 'legend', 'unique'];
+const zoneGearIdV = (band, cls, slot, v) => v ? `${slot}_${cls}_b${band}_v${v}` : zoneGearId(band, cls, slot);
+/* 변형별 성격: 이름 접두어 · 능력치 배분 · 등급 보정(0=밴드 등급, 1=한 단계 위, 2=두 단계 위) */
+const GEAR_VARIANTS = [
+  { adj: '',        m: {},                               up: 0 },
+  { adj: '맹공의',   m: { atk: 1.35, def: .80 },           up: 0 },
+  { adj: '수호의',   m: { def: 1.35, atk: .80 },           up: 0 },
+  { adj: '질풍의',   m: { spd: 1.70, def: .90 },           up: 0 },
+  { adj: '강건한',   m: { hp: 1.55, atk: .85 },            up: 0 },
+  { adj: '예리한',   m: { crit: 1.70, def: .85 },          up: 0 },
+  { adj: '현자의',   m: { mp: 1.70, atk: .90 },            up: 0 },
+  { adj: '광전사의', m: { atk: 1.50, hp: .80, def: .85 },  up: 1 },
+  { adj: '철벽의',   m: { def: 1.50, hp: 1.25, atk: .70 }, up: 1 },
+  { adj: '명인의',   m: { atk: 1.15, def: 1.15, hp: 1.15, crit: 1.15, spd: 1.15, mp: 1.15 }, up: 2 },
+];
+const GEAR_VAR_W = [14, 13, 13, 11, 11, 10, 10, 8, 6, 4]; /* 뒤쪽(강한) 변형일수록 드물게 */
+const pickGearVariant = () => { const tot = GEAR_VAR_W.reduce((a, b) => a + b, 0); let r = Math.random() * tot; for (let i = 0; i < GEAR_VAR_W.length; i++) { r -= GEAR_VAR_W[i]; if (r < 0) return i; } return 0; };
 (function genZoneGear() {
   const shadeHex = (hex, f) => { const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)); return '#' + [r, g, b].map(v => Math.max(0, Math.min(255, Math.round(v * f))).toString(16).padStart(2, '0')).join(''); };
   for (let band = 0; band < 10; band++) {
@@ -723,19 +742,29 @@ const zoneGearId = (band, cls, slot) => `${slot}_${cls}_b${band}`;
       const color = shadeHex(G.hue, .75 + band * .05);
       const pieces = [];
       for (const slot of GEAR_SLOTS) {
-        const id = zoneGearId(band, cls, slot);
-        const it = { name: `${GEAR_BAND_ADJ[band]} ${G.pieces[slot]}`, slot, cls, color, rarity: GEAR_RARITY_BY_BAND[band], band };
-        if (slot === 'weapon') it.atk = Math.round(4 * k * G.stat.atk);
-        else if (slot === 'armor') { it.def = Math.round(2.2 * k * G.stat.def); it.hp = Math.round(12 * k * G.stat.hp); }
-        else if (slot === 'helmet') { it.def = Math.round(1.4 * k * G.stat.def); if (G.stat.mp) it.mp = Math.round(8 * k); }
-        else if (slot === 'pants') it.def = Math.round(1.6 * k * G.stat.def);
-        else if (slot === 'gloves') { it.def = Math.round(.8 * k * G.stat.def); it.atk = Math.round(1.2 * k * G.stat.atk); }
-        else if (slot === 'boots') { it.def = Math.round(.8 * k * G.stat.def); it.spd = Math.round(6 * k * G.stat.spd / 3); }
-        else if (slot === 'bracelet') { it.def = Math.round(.6 * k * G.stat.def); it.atk = Math.round(.8 * k * G.stat.atk); }
-        else if (slot === 'necklace') { it.atk = Math.round(1.4 * k * G.stat.atk); if (G.stat.mp) it.mp = Math.round(6 * k); }
-        else if (slot === 'ring') it.crit = +(0.012 * k * G.stat.crit).toFixed(3);
-        ITEMS[id] = it;
-        if (slot !== 'weapon') pieces.push(id);
+        for (let v = 0; v < GEAR_VARIANTS.length; v++) {
+          const V = GEAR_VARIANTS[v], mm = f => V.m[f] || 1;
+          const id = zoneGearIdV(band, cls, slot, v);
+          const rIdx = Math.min(RARITY_ORDER.length - 1, RARITY_ORDER.indexOf(GEAR_RARITY_BY_BAND[band]) + V.up);
+          const rar = RARITY_ORDER[rIdx];
+          const it = { name: `${GEAR_BAND_ADJ[band]}${V.adj ? ' ' + V.adj : ''} ${G.pieces[slot]}`, slot, cls,
+            color: RARITY_COLOR[rar] || color, rarity: rar, band, v };
+          if (slot === 'weapon') it.atk = Math.round(4 * k * G.stat.atk * mm('atk'));
+          else if (slot === 'armor') { it.def = Math.round(2.2 * k * G.stat.def * mm('def')); it.hp = Math.round(12 * k * G.stat.hp * mm('hp')); }
+          else if (slot === 'helmet') { it.def = Math.round(1.4 * k * G.stat.def * mm('def')); if (G.stat.mp) it.mp = Math.round(8 * k * mm('mp')); }
+          else if (slot === 'pants') it.def = Math.round(1.6 * k * G.stat.def * mm('def'));
+          else if (slot === 'gloves') { it.def = Math.round(.8 * k * G.stat.def * mm('def')); it.atk = Math.round(1.2 * k * G.stat.atk * mm('atk')); }
+          else if (slot === 'boots') { it.def = Math.round(.8 * k * G.stat.def * mm('def')); it.spd = Math.round(6 * k * G.stat.spd / 3 * mm('spd')); }
+          else if (slot === 'bracelet') { it.def = Math.round(.6 * k * G.stat.def * mm('def')); it.atk = Math.round(.8 * k * G.stat.atk * mm('atk')); }
+          else if (slot === 'necklace') { it.atk = Math.round(1.4 * k * G.stat.atk * mm('atk')); if (G.stat.mp) it.mp = Math.round(6 * k * mm('mp')); }
+          else if (slot === 'ring') it.crit = +(0.012 * k * G.stat.crit * mm('crit')).toFixed(3);
+          if (V.m.spd && !it.spd) it.spd = Math.max(1, Math.round(2 * k * G.stat.spd / 3));
+          if (V.m.hp && !it.hp) it.hp = Math.round(8 * k * G.stat.hp);
+          if (V.m.crit && !it.crit) it.crit = +(0.006 * k * G.stat.crit).toFixed(3);
+          if (V.m.mp && !it.mp) it.mp = Math.round(5 * k);
+          ITEMS[id] = it;
+          if (slot !== 'weapon') pieces.push(id); /* 변형도 같은 밴드 세트로 인정 */
+        }
       }
       SETS[`b${band}_${cls}`] = { name: `${GEAR_BAND_ADJ[band]} ${G.setName}`, color, pieces,
         bonus: { 2: { def: Math.round(2 * k) }, 4: { hp: Math.round(40 * k), atk: Math.round(2 * k) }, 6: { crit: +(.02 + band * .004).toFixed(3), atkMul: .06 + band * .01 }, 8: { defMul: .08 + band * .01, critDmgMul: .1 + band * .02 } } };
@@ -1056,7 +1085,7 @@ function castTreeSkill(id) {
   if (!d) return false;
   const now = Date.now(), castPage = myPage();
   const col = TREE_COL[d.cls] || '#ffd700';
-  const pow = totalAtk() * skillPow() * (SKILL_GRADE_MUL[skillGrade(id, d)] || 1); /* 등급 배율 */
+  const pow = totalAtk() * skillPow() * (SKILL_GRADE_MUL[skillGrade(id, d)] || 1) * (1 + .1 * (((me.skillEnh || {})[id]) || 0)); /* 등급 배율 · 강화 +10%/단계 */
   const hit = (t, m, crit) => attackResult(t, Math.max(1, Math.round(pow * m * rand(.9, 1.1))), crit);
   me.swing = now;
   if (d.arch === 'heal') {
@@ -2203,8 +2232,8 @@ const classWeapon = raw => {
   if (ti >= 0) { suf = id.slice(ti); id = id.slice(0, ti); }
   const fam = WEAPON_FAMILY_OF[id];
   if (fam && fam[myCls]) return fam[myCls] + suf;
-  const zm = /^(\w+?)_(warrior|archer|rogue|mage)_b(\d)$/.exec(id); /* 구역 장비(방어구 포함)도 내 직업 변형으로 — 타 직업 방어구가 가방에 쌓이지 않게 */
-  if (zm && zm[2] !== myCls && ITEMS[`${zm[1]}_${myCls}_b${zm[3]}`]) return `${zm[1]}_${myCls}_b${zm[3]}` + suf;
+  const zm = /^(\w+?)_(warrior|archer|rogue|mage)_b(\d)(_v\d+)?$/.exec(id); /* 구역 장비도 내 직업 것으로 — 변형 번호는 유지 */
+  if (zm && zm[2] !== myCls) { const alt = `${zm[1]}_${myCls}_b${zm[3]}${zm[4] || ''}`; if (ITEMS[alt]) return alt + suf; }
   return id + suf;
 };
 function rollDrops(type) {
@@ -2217,7 +2246,7 @@ function rollDrops(type) {
   if (Math.random() < UNIQUE_RATE && uniqPool.length) drops.push(classWeapon(uniqPool[Math.floor(Math.random() * uniqPool.length)]));
   /* 구역 장비: 일반 몹 7% / 보스 60% 확률로 현재 밴드·내 직업 장비 1종(슬롯 무작위) */
   const gearP = (type === 'boss' || type === 'orc' || type === 'lich') ? .6 : .07;
-  if (Math.random() < gearP) drops.push(zoneGearId(band, myCls, GEAR_SLOTS[Math.floor(Math.random() * GEAR_SLOTS.length)]));
+  if (Math.random() < gearP) drops.push(zoneGearIdV(band, myCls, GEAR_SLOTS[Math.floor(Math.random() * GEAR_SLOTS.length)], pickGearVariant()));
   /* 스킬서: 유니크(보스급) 처치 시 30% — 내 직업 트리 스킬(현재 밴드 티어 ±1, 미습득 우선) 70% / 기본 스킬 30% */
   if (type === 'boss' || type === 'orc' || type === 'lich') {
     if (Math.random() < .30) {
@@ -3321,12 +3350,13 @@ async function pickup(lid, l) {
       const giveId = classWeapon(cand.itemId);
       const gi = getItem(giveId);
       /* 등급 자동 판매: 설정에 켠 등급의 장비는 가방에 담지 않고 즉시 판매(골드만) */
-      if (gi.slot && !gi.scroll && !gi.heal && !gi.mana && !gi.book && settings.autoSell && settings.autoSell[gi.rarity]) {
+      const uselessBook = !!(gi.book && bookUseless(gi.book, psnap.data())); /* 이미 배운/최대치 스킬서는 등급과 무관하게 즉시 판매 */
+      if (uselessBook || (gi.slot && !gi.scroll && !gi.heal && !gi.mana && !gi.book && settings.autoSell && settings.autoSell[gi.rarity])) {
         const price = sellPrice(giveId);
         const pq = { ...(psnap.data().q || {}) }; pq.items = (pq.items || 0) + 1; /* 자동 판매도 '아이템 획득'으로 집계(업적·일일퀘) */
         tx.delete(ref);
         tx.update(meRef, { gold: (psnap.data().gold || 0) + price, q: pq });
-        item = { ...cand, itemId: giveId }; res = 'autosold'; soldG = price;
+        item = { ...cand, itemId: giveId }; res = uselessBook ? 'bookSold' : 'autosold'; soldG = price;
         return;
       }
       const r = computeAddToInv(psnap.data(), giveId);
@@ -3363,24 +3393,27 @@ async function pickup(lid, l) {
       for (let i = pickFx.length - 1; i >= 0; i--) if (pickFx[i].lid === lid) pickFx.splice(i, 1);
       if (myMap() !== map0) return; /* 날아오는 중 맵 이동 시 알림 생략 */
       sfx('pickup');
-      if (res !== 'autosold') flashInv();
+      const sold = res === 'autosold' || res === 'bookSold';
+      if (!sold) flashInv();
       heroPickT = Date.now(); /* 줍기 숙이기 모션 */
       fxSparks(me.x, me.y - 22, 8, it.color || '#ffd700', 90);
       if (MOBILE) { /* 모바일: 한 줄로 짧게 */
         const nm = `${itemIconHtml(item.itemId, 13)} <b style="color:${it.color}">${esc(it.name)}</b>`;
-        if (res === 'autosold') toast(`${nm} 판매 <b style="color:#ffd700">+${soldG.toLocaleString()}G</b>`);
+        if (res === 'bookSold') toast(`${nm} <span style="color:#8aa">이미 습득</span> 판매 <b style="color:#ffd700">+${soldG.toLocaleString()}G</b>`);
+        else if (res === 'autosold') toast(`${nm} 판매 <b style="color:#ffd700">+${soldG.toLocaleString()}G</b>`);
         else if (res === 'equipped') toast(`${nm} 장착`);
         else if (res === 'swapped') toast(`${nm} 장착 <b style="color:#ffd700">+${soldG.toLocaleString()}G</b>`);
         else if (res === 'stacked') toast(`${nm} +1`);
         else toast(nm);
-        if (res !== 'autosold') float(me.x, me.y - 30, `+ ${it.name}`, it.color);
+        if (!sold) float(me.x, me.y - 30, `+ ${it.name}`, it.color);
       } else {
-      if (res === 'autosold') { toast(`💰 <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span> ${esc(it.name)} 자동 판매 <b style="color:#ffd700">+${soldG.toLocaleString()} G</b>`); float(me.x, me.y - 30, `+${soldG} G`, '#ffd700'); }
+      if (res === 'bookSold') { toast(`📘 ${esc(it.name)} — <span style="color:#8aa">이미 습득한 스킬</span> 자동 판매 <b style="color:#ffd700">+${soldG.toLocaleString()} G</b>`); }
+      else if (res === 'autosold') { toast(`💰 <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span> ${esc(it.name)} 자동 판매 <b style="color:#ffd700">+${soldG.toLocaleString()} G</b>`); float(me.x, me.y - 30, `+${soldG} G`, '#ffd700'); }
       else if (res === 'equipped') toast(`${itemIconHtml(item.itemId, 22)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 → <b>자동 장착!</b> <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span>`, 'sysq');
       else if (res === 'swapped') toast(`${itemIconHtml(item.itemId, 22)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 → <b>자동 장착!</b> 기존 장비 자동판매 <b style="color:#ffd700">+${soldG.toLocaleString()} G</b>`, 'sysq');
       else if (res === 'stacked') toast(`${itemIconHtml(item.itemId, 22)} <b style="color:${it.color}">${esc(it.name)}</b> 보유 수량 +1 <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span>`);
       else toast(`${itemIconHtml(item.itemId, 22)} <b style="color:${it.color}">${esc(it.name)}</b> 획득 <span style="color:#8aa">[${RARITY_KR[it.rarity] || '일반'}]</span> → 가방 <b>${Object.keys(me.inv || {}).length}/${bagSize()}</b>`);
-      if (res !== 'autosold') float(me.x, me.y - 30, `+ ${it.name}`, it.color);
+      if (!sold) float(me.x, me.y - 30, `+ ${it.name}`, it.color);
       }
     }, PICK_MS);
   } catch (e) {
@@ -3519,6 +3552,18 @@ function slotClick(rawId) {
 }
 
 /* 스킬서 사용: 트리 스킬 → 습득(골드 불필요) / 기본 스킬 → 레벨업(MAX면 강화+1, 주문서·골드 불필요) */
+/* 이 스킬서가 지금 나에게 아무 쓸모가 없는가?
+   - 트리 스킬: 이미 배운 것(한 번만 배울 수 있다)
+   - 발동/패시브 스킬: 레벨도 강화도 최대
+   - 타 직업 전용
+   가방을 채우기만 하므로 주울 때 바로 판다. 판단은 서버 문서(p) 기준. */
+function bookUseless(sid, p) {
+  const d = skillDef(sid);
+  if (!d) return false;
+  if (d.cls && d.cls !== 'all' && d.cls !== myCls) return true;
+  if (TREES_ALL[sid]) return !!((p.tree || {})[sid]) && ((p.skillEnh || {})[sid] || 0) >= 5; /* 배웠고 강화도 최대일 때만 무용 */
+  return ((p.skills || {})[sid] || 0) >= MAX_SKILL_LV && ((p.skillEnh || {})[sid] || 0) >= 5;
+}
 function useSkillBook(rawId) {
   const [bid] = splitStack(rawId);
   const it = getItem(bid);
@@ -3535,10 +3580,20 @@ function useSkillBook(rawId) {
     if (!key) return 'nokey';
     let res;
     if (TREES_ALL[sid]) {
-      if ((p.tree || {})[sid]) return 'have';
-      delete inv[key];
-      tx.update(meRef, { inv: sortInvMap(inv), [`tree.${sid}`]: true, q: { ...(p.q || {}), skills_bought: ((p.q || {}).skills_bought || 0) + 1 } });
-      res = 'learn';
+      /* 예전에는 트리 스킬을 한 번 배우면 같은 스킬서가 전부 쓸모없어졌다(강화되는 건 기본 스킬 3개뿐).
+         이미 배운 트리 스킬은 같은 책으로 +5까지 강화한다 — 강화 1단계당 위력 +10%. */
+      if ((p.tree || {})[sid]) {
+        const enh = { ...(p.skillEnh || {}) };
+        if ((enh[sid] || 0) >= 5) return 'max';
+        enh[sid] = (enh[sid] || 0) + 1;
+        delete inv[key];
+        tx.update(meRef, { inv: sortInvMap(inv), skillEnh: enh });
+        res = 'enh';
+      } else {
+        delete inv[key];
+        tx.update(meRef, { inv: sortInvMap(inv), [`tree.${sid}`]: true, q: { ...(p.q || {}), skills_bought: ((p.q || {}).skills_bought || 0) + 1 } });
+        res = 'learn';
+      }
     } else {
       const skills = { ...(p.skills || {}) }, enh = { ...(p.skillEnh || {}) };
       const lv = skills[sid] || 0;
@@ -4000,7 +4055,7 @@ function renderTree() {
       const gr = skillGrade(id, d), pas = isPassiveSkill(d);
       html += `<div class="tnode ${has ? 'owned' : can ? 'can' : 'lock'} ${pas ? 'pas' : 'act'}" data-tree="${id}" title="${esc(d.name)} [${RARITY_KR[gr] || '일반'} · ${pas ? '패시브' : '발동'}] — ${esc(d.desc)}${d.mp ? ` · 마나 ${d.mp}` : ''}">`
         + `<div class="ti">${skillIconHtml(id, d)}</div><div class="tn" style="color:${RARITY_COLOR[gr] || '#cdd'}">${esc(d.name)}</div>`
-        + `<div class="tc">${has ? '✔' : cost.toLocaleString() + 'G'}</div>`
+        + `<div class="tc">${has ? ((((me.skillEnh || {})[id]) || 0) ? `<b style="color:#ffd700">+${(me.skillEnh || {})[id]}</b>` : '✔') : cost.toLocaleString() + 'G'}</div>`
         + (has && d.kind === 'active' ? bindBtns(id) : '') + `</div>`;
     }
     html += `</div></div>`;
@@ -11149,12 +11204,20 @@ async function init() {
   await ldYield(); /* 바를 한 번 그려주고 나서 무거운 지형 굽기로 들어간다 */
   ldProg(58, 70, '지형 그리는 중...');
   try { getTex(myMap()); } catch (e) { noteErr && noteErr(e); } /* 지형을 미리 굽고 나서 화면을 보여준다 */
-  ldProg(70, 84, '몬스터 준비 중...');
-  /* 이 구역 몬스터 시트는 폴백이 있으니 기다리지 않고 미리 받기만 시작한다 */
-  try { const pd = pageDef(pageNum()); for (const k of [...pd.kinds, pd.boss]) heroSheet('mob_' + k.base); } catch (e) {}
-  /* 실제로 기다리는 건 내 영웅 시트 하나뿐 — 늦으면 상한에서 끊고 바로 플레이에 들어간다 */
-  await ldWaitSheets([myCls || 'warrior'], 5000, 84, 98, '영웅 그래픽 불러오는 중...');
+  ldProg(70, 80, '몬스터 준비 중...');
+  /* 이 구역에서 쓸 스프라이트를 '전부' 받아 두고 시작한다.
+     플레이 중에 디코드가 끼어들면 그때마다 화면이 끊기므로, 로딩이 길어지더라도 여기서 끝낸다(요청). */
+  const warmKeys = [myCls || 'warrior'];
+  try { const pd = pageDef(pageNum()); for (const k of [...pd.kinds, pd.boss]) warmKeys.push('mob_' + k.base); } catch (e) {}
+  await ldWaitSheets([...new Set(warmKeys)], 9000, 80, 92, '그래픽 불러오는 중...');
   ready = true;
+  /* 첫 프레임에 몰리는 준비 작업(HUD·단축바·가방 DOM, 영웅/몬스터 프레임 베이크)을
+     아직 검은 화면일 때 미리 돌린다. 예전에는 이게 전부 플레이 시작 직후로 밀려 뚝뚝 끊겼다. */
+  ldProg(92, 98, '화면 준비 중...');
+  for (let i = 0; i < 3; i++) {
+    await ldYield();
+    try { loopBody(performance.now()); } catch (e) { noteErr && noteErr(e); }
+  }
   ldMarks.push({ msg: '완료', at: Date.now() - ldT0 });
   ldDone('접속 완료!'); /* 준비 완료 → 검은 화면 해제 */
   try { if (new URLSearchParams(location.search).get('ldt') === '1') { /* QA: 단계별 로딩 시간을 화면에 남긴다(탭하면 사라짐) */
@@ -11206,6 +11269,15 @@ if (PROF_ON) { const _o_getTex = getTex; getTex = prof('getTex', _o_getTex); }
 if (PROF_ON) { const _o_hueSheet = hueSheet; hueSheet = prof('hueSheet', _o_hueSheet); }
 if (PROF_ON) { const _o_heroFrames = heroFrames; heroFrames = prof('heroFrames', _o_heroFrames); }
 if (PROF_ON) { const _o_evictSheets = evictSheets; evictSheets = prof('evictSheets', _o_evictSheets); }
+/* 루프 안에서 아직 이름이 안 붙던 것들 — 230ms 짜리 한 방이 어디서 나오는지 보려면 필요하다 */
+if (PROF_ON) { const a = updateHUD; updateHUD = prof('updateHUD', a); }
+if (PROF_ON) { const a = updateHotbar; updateHotbar = prof('updateHotbar', a); }
+if (PROF_ON) { const a = syncModal; syncModal = prof('syncModal', a); }
+if (PROF_ON) { const a = autoCombat; autoCombat = prof('autoCombat', a); }
+if (PROF_ON) { const a = tryAttack; tryAttack = prof('tryAttack', a); }
+if (PROF_ON) { const a = updateAmbient; updateAmbient = prof('updateAmbient', a); }
+if (PROF_ON) { const a = drawLootItems; drawLootItems = prof('drawLootItems', a); }
+if (PROF_ON) { const a = renderStatButtons; renderStatButtons = prof('renderStatButtons', a); }
 
 /* buildWorld()는 더 이상 접속 즉시 돌지 않는다(worldTexGet이 필요할 때 부른다) */
 

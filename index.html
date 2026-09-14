@@ -251,8 +251,14 @@
     background: linear-gradient(180deg, rgba(26,32,48,.95), rgba(10,14,22,.95)); color: #ccd; box-shadow: 0 4px 14px rgba(0,0,0,.45); }
   #autoBtn .ah { font-size: 16px; line-height: 1; } #autoBtn span:last-child { font-size: 8px; letter-spacing: 0; color: #cfd6e4; }
   #autoBtn:hover { border-color: #ffd700; }  /* 독 밖으로 뺐더니 '#dockL button:hover'가 안 걸려 사라졌던 반응 */
-  #autoBtn.on { border-color: #ffd700; color: #ffd700; box-shadow: 0 0 14px rgba(255,215,0,.55); animation: autopulse 1.2s ease-in-out infinite; }
-  @keyframes autopulse { 50% { box-shadow: 0 0 22px rgba(255,215,0,.8); } }
+  /* box-shadow 를 애니메이션하면 매 프레임 다시 칠해야 해서 폰이 뜨거워진다(자동 사냥 중엔 계속 돈다).
+     정적인 그림자를 가진 가짜 레이어의 opacity 만 흔든다 — 이건 합성 단계에서 처리돼 훨씬 싸다. */
+  #autoBtn.on { border-color: #ffd700; color: #ffd700; box-shadow: 0 0 14px rgba(255,215,0,.55); }
+  #autoBtn.on::after { content: ''; position: absolute; inset: -2px; border-radius: inherit; pointer-events: none;
+    box-shadow: 0 0 22px rgba(255,215,0,.85); opacity: 0; animation: autoglow 1.2s ease-in-out infinite; will-change: opacity; }
+  @keyframes autoglow { 50% { opacity: 1; } }
+  /* 모바일에서는 아예 끈다 — 켜짐 표시는 금색 테두리만으로 충분하다 */
+  @media (max-width: 640px), (pointer: coarse) { #autoBtn.on::after { display: none; } }
   .modalWrap { position: fixed; inset: 0; z-index: 130; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.6); }
   .modalWrap[hidden] { display: none; }
   .modalBox { width: min(340px, 90vw); background: #141a26; border: 1px solid #3a4a66; border-radius: 12px; padding: 14px 16px; box-shadow: 0 10px 40px rgba(0,0,0,.6); }
@@ -330,6 +336,7 @@
   .buyBtn, .claimBtn { padding: 6px 10px; font-size: 12px; background: linear-gradient(#c9a227, #8f6f14); color: #fff; white-space: nowrap; }
   .buyBtn:disabled, .claimBtn:disabled { background: #444; color: #777; cursor: not-allowed; }
   .claimBtn.ready { background: linear-gradient(#27ae60, #1e8449); animation: glow 1.2s infinite; }
+  @media (pointer: coarse) { .claimBtn.ready, .wmcell.wmcur { animation: none; } } /* 그림자 애니메이션은 모바일에서 발열 원인 */
   @keyframes glow { 50% { box-shadow: 0 0 12px rgba(46,204,113,.8); } }
   .qbar { height: 5px; background: #222; border-radius: 3px; margin-top: 4px; overflow: hidden; }
   .qbar div { height: 100%; background: #27ae60; }
@@ -1206,7 +1213,7 @@
 
 <script src="firebase-config.js?v=16"></script>
 <!-- game.js 수정 배포 시 아래 ?v= 숫자를 올릴 것 (동적 import는 일부 인앱 브라우저에서 module specifier 해석 실패) -->
-<script type="module" src="game.js?v=218"
+<script type="module" src="game.js?v=219"
   onerror="(function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='스크립트 로드 실패: 네트워크 상태를 확인한 뒤 새로고침해 주세요';}})()"></script>
 <script nomodule>
   (function(){var el=document.getElementById('loading');if(el){el.style.display='flex';el.textContent='브라우저 버전이 낮아 게임을 실행할 수 없습니다. 최신 브라우저로 접속해 주세요.';}})();

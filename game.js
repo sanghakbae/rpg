@@ -5773,7 +5773,13 @@ function gotoPage(n) {
      예전에는 아래 본문이 파이어스토어 응답을 기다리다 멈추면 검은 화면이 영영 남았다
      (#mapFade 는 z-index 50 이라 체력창·미니맵은 가려지고 독만 보인다 — 정확히 그 증상). */
   clearTimeout(mapFadeGuard);
-  mapFadeGuard = setTimeout(() => { if (ov) ov.style.opacity = 0; mapFading = false; }, 3000);
+  mapFadeGuard = setTimeout(() => { if (ov) ov.style.opacity = 0; mapFading = false; if (fl) fl.remove(); }, 9000);
+  /* 암전 위에 준비 상태를 적어 준다 — 몇 초 걸려도 멈춘 게 아니라는 걸 알 수 있게 */
+  let fl = document.getElementById('mapFadeTxt');
+  if (!fl) { fl = document.createElement('div'); fl.id = 'mapFadeTxt';
+    fl.style.cssText = 'position:fixed;left:0;right:0;top:50%;transform:translateY(-50%);z-index:51;text-align:center;color:#8a93a6;font-size:13px;pointer-events:none;';
+    document.body.appendChild(fl); }
+  fl.textContent = `${pageDef(n).name} 준비 중...`;
   setTimeout(async () => {
    try {
     /* 몬스터 시드는 기다리지 않는다 — 서버 응답이 늦어도 이동은 진행되고,
@@ -5805,8 +5811,27 @@ function gotoPage(n) {
         if (sets.length) toast(`📍 ${BIOMES[b].name}: ${sets.map(sid => `◈${SETS[sid].name}`).join(' ')} 세트 드랍 지역!`, 'sysq');
       }
     } catch (e) {}
+    /* 새 구역 스프라이트를 암전 뒤에서 다 받고 나서 화면을 연다.
+       예전에는 페이드가 0.3초 뒤 무조건 걷혀, 그 다음에 시트 3~4장(장당 최대 950KB)을
+       받고 푸는 동안 화면이 몇 초씩 멈췄다 — '스테이지 넘어가면 0fps' 의 정체. */
+    try {
+      const keys = [];
+      const pd2 = pageDef(n);
+      for (const k of [...pd2.kinds, pd2.boss]) keys.push('mob_' + k.base);
+      const uniq = [...new Set(keys)];
+      const doneN = () => uniq.filter(k => { const e = HERO_SHEETS[k]; return e && (e.img || e.failed || e.missing); }).length;
+      for (const k of uniq) { try { heroSheet(k); } catch (e2) {} }
+      const t0 = Date.now();
+      while (doneN() < uniq.length && Date.now() - t0 < 6000) {
+        if (fl) fl.textContent = `${pd2.name} 준비 중... (${doneN()}/${uniq.length})`;
+        await new Promise(r => setTimeout(r, 80));
+      }
+      if (fl) fl.textContent = `${pd2.name} 준비 중...`;
+      /* 몬스터·영웅 프레임 베이크도 암전 뒤에서 한 번 돌린다 */
+      for (let i = 0; i < 2; i++) { await new Promise(r => requestAnimationFrame(() => r())); try { loopBody(performance.now()); } catch (e2) {} }
+    } catch (e) { noteErr && noteErr(e); }
    } catch (e) { noteErr && noteErr(e); }
-   finally { clearTimeout(mapFadeGuard); setTimeout(() => { if (ov) ov.style.opacity = 0; mapFading = false; }, 300); }
+   finally { clearTimeout(mapFadeGuard); if (fl) fl.remove(); setTimeout(() => { if (ov) ov.style.opacity = 0; mapFading = false; }, 300); }
   }, 380);
 }
 
@@ -10264,21 +10289,26 @@ function stageMode() {
 let lastFrameAt = 0;
 /* 좌측 하단 실시간 프레임 표시 — 설정에서 끌 수 있다.
    '버벅인다'를 숫자로 확인하기 위한 것: 숫자가 낮으면 그리기 부담, 높은데도 끊기면 다른 원인이다. */
-let fpsN = 0, fpsT0 = 0, fpsWorst = 0, fpsEl = null;
+/* 최근 1초 안의 프레임 시각만 남겨 그 구간으로 계산한다.
+   예전에는 '마지막 표시 이후 전체'로 나눠서, 창이 가려졌다 돌아오거나 긴 정지가 있으면
+   분모가 수십 초가 되어 0fps 로 찍혔다. */
+let fpsWorst = 0, fpsEl = null, fpsShown = 0;
+const fpsBuf = [];
 function fpsTick(t, gap) {
   if (!settings.fps) { if (fpsEl && !fpsEl.hidden) fpsEl.hidden = true; return; }
   if (!fpsEl) fpsEl = $('fpsTag');
   if (!fpsEl) return;
   if (fpsEl.hidden) fpsEl.hidden = false;
-  fpsN++;
+  fpsBuf.push(t);
+  while (fpsBuf.length > 2 && t - fpsBuf[0] > 1000) fpsBuf.shift();
   if (gap > fpsWorst) fpsWorst = gap;
-  if (!fpsT0) { fpsT0 = t; return; }
-  const span = t - fpsT0;
-  if (span < 500) return;
-  const fps = Math.round(fpsN / span * 1000);
-  fpsEl.textContent = `${fps}fps · 최대 ${Math.round(fpsWorst)}ms`;
-  fpsEl.classList.toggle('bad', fps < 25 || fpsWorst > 120);
-  fpsN = 0; fpsT0 = t; fpsWorst = 0;
+  if (t - fpsShown < 400) return;
+  fpsShown = t;
+  const span = fpsBuf.length > 1 ? t - fpsBuf[0] : 0;
+  const fps = span > 30 ? Math.round((fpsBuf.length - 1) / span * 1000) : 0;
+  fpsEl.textContent = fps > 0 ? `${fps}fps · 최대 ${Math.round(fpsWorst)}ms` : '측정 중...';
+  fpsEl.classList.toggle('bad', fps > 0 && (fps < 25 || fpsWorst > 120));
+  fpsWorst = 0;
 }
 /* 프레임 상한은 '낮음'에서만. 예전엔 '보통'까지 30fps 로 묶여 부드럽지 않다는 말이 나왔다. */
 const frameCapMs = () => (MOBILE && gfx() === 'low') ? 32 : 0;

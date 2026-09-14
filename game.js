@@ -1174,9 +1174,31 @@ function ldPaint() { const b = $('ldBar'); if (b) b.style.width = ldCur.toFixed(
 function ldStep() {
   if (ldCur >= ldTo) { clearInterval(ldTimer); ldTimer = 0; return; } /* 구간 끝까지 올라갔으면 타이머를 쉰다(다음 ldProg가 다시 켠다) */
   /* 최소 속도 0.35/60ms ≈ 초당 6% — 예전(초당 0.8%)에는 단계가 바뀔 때만 툭툭 뛰는 것처럼 보였다 */
-  ldCur = Math.min(ldTo, ldCur + Math.max(0.35, (ldTo - ldCur) * 0.12));
+  ldCur = Math.min(ldTo, ldCur + Math.max(0.35, (ldTo - ldCur) * 0.22)); /* 실제 진행률을 빠르게 따라잡되 튀지 않게 */
   ldPaint();
 }
+/* ===== 실제 작업량 기준 진행률 =====
+   예전에는 단계마다 퍼센트를 손으로 박아 둬서, 실제로 오래 걸리는 구간과 바의 위치가 따로 놀았다.
+   이제 각 작업에 '예상 소요(ms)'를 무게로 주고 끝난 무게 / 전체 무게로 계산한다.
+   시트 개수는 구역을 알아야 정해지므로 4장으로 잡아 두고 실제 값이 나오면 보정한다(뒤로는 안 간다). */
+const LDW = { auth: 700, doc: 20, me: 120, terrain: 300, sheet: 250, frame: 120 };
+let ldTot = LDW.auth + LDW.doc * 5 + LDW.me + LDW.terrain + LDW.sheet * 4 + LDW.frame * 3;
+let ldGot = 0;
+function ldApply(msg) {
+  if (msg) {
+    const m = $('ldMsg'); if (m) m.textContent = msg;
+    if (!ldMarks.length || ldMarks[ldMarks.length - 1].msg !== msg) ldMarks.push({ msg, at: Date.now() - ldT0 });
+  }
+  const pct = ldTot > 0 ? Math.min(99, ldGot / ldTot * 100) : 0;
+  if (pct > ldTo) ldTo = pct;           /* 뒤로 가지 않는다 */
+  if (!ldTimer) ldTimer = setInterval(ldStep, 60);
+  ldPaint();
+}
+/* w 만큼 끝났다 */
+function ldWork(w, msg) { ldGot += w; ldApply(msg); }
+/* 전체 무게 보정(시트 개수를 알게 됐을 때) */
+function ldTotal(w) { ldTot = Math.max(1, w); ldApply(); }
+window.__ldState = () => ({ got: Math.round(ldGot), tot: Math.round(ldTot), pct: +(ldGot / ldTot * 100).toFixed(1), cur: +ldCur.toFixed(1) });
 /* from: 이 단계 시작 시 최소 진행률, to: 이 단계가 끝나기 전까지 서서히 다가갈 상한 */
 function ldProg(from, to, msg) {
   if (from > ldCur) ldCur = from;
@@ -1212,15 +1234,15 @@ function ldDone(msg) {
 const ldYield = () => new Promise(r => { let d = false; const f = () => { if (d) return; d = true; setTimeout(r, 0); }; requestAnimationFrame(f); setTimeout(f, 50); });
 /* 필수 스프라이트가 도착할 때까지만(상한 있음) 기다리며 그 진척을 바에 반영한다.
    몬스터 시트는 픽셀 폴백이 있으므로 기다리지 않고 백그라운드로 흘려보낸다. */
-async function ldWaitSheets(keys, capMs, from, to, msg) {
+async function ldWaitSheets(keys, capMs, msg) {
   const t0 = Date.now();
   for (const k of keys) { try { heroSheet(k); } catch (e) {} }
   const doneN = () => keys.filter(k => { const e = HERO_SHEETS[k]; return e && (e.img || e.failed || e.missing); }).length;
-  while (doneN() < keys.length && Date.now() - t0 < capMs) {
-    ldProg(from + (to - from) * (doneN() / keys.length), to, msg);
-    await new Promise(r => setTimeout(r, 80));
-  }
-  ldProg(to, to, msg);
+  let counted = 0;
+  const sync = () => { const d = doneN(); if (d > counted) { ldWork(LDW.sheet * (d - counted), `${msg} (${d}/${keys.length})`); counted = d; } };
+  while (doneN() < keys.length && Date.now() - t0 < capMs) { sync(); await new Promise(r => setTimeout(r, 80)); }
+  sync();
+  if (counted < keys.length) ldWork(LDW.sheet * (keys.length - counted), msg); /* 상한에서 끊겼어도 무게는 소진 처리 */
 }
 window.__ldMarks = () => ldMarks.map((v, i) => `${v.at}ms +${v.at - (i ? ldMarks[i - 1].at : 0)} ${v.msg}`);
 window.__ld = (f, t, m) => { if (f != null) ldProg(f, t, m); return { cur: +ldCur.toFixed(1), to: ldTo, msg: ($('ldMsg') || {}).textContent }; }; /* 진단: 진행바 상태/강제 이동 */
@@ -1235,7 +1257,7 @@ function ldFail(html) { /* 오류는 진행바를 걷어내고 안내만 남긴�
   const ld = $('loading'); if (!ld) return;
   ld.style.display = 'flex'; ld.innerHTML = html;
 }
-ldProg(2, 8, '게임 데이터 준비 중...');
+ldApply('게임 데이터 준비 중...');
 
 /* ================= 프레임 프로파일러 (?prof=1) =================
    "접속하고 나서 멈춘다"를 추측으로 고치지 않기 위해, 긴 프레임이 생겼을 때
@@ -1400,6 +1422,16 @@ const hb = k => (horde && horde.st === 'run' && horde.b[k]) || 0; /* 각인 배�
 let autoHunt = false, autoSkillT = 0, autoPotT = 0, targetT0 = 0, targetBest = 1e9; const simSkip = {}; /* 자동 사냥: '가까워지지 않을 때만' 제외(멀어서 오래 걸리는 것과 구분) */
 const settings = { autoPotHp: 45, autoPotMp: 20, dmgText: true, screenShake: true, autoSell: {}, gfx: '' }; /* gfx: high|mid|low (빈값=기기 기본) */ /* autoSell: 등급별 자동 판매 on/off */
 try { const sv = JSON.parse(localStorage.getItem('settings') || '{}'); Object.assign(settings, sv); } catch (e) {}
+/* 예전에는 모바일 기본이 '낮음'이었고 그게 30프레임 상한까지 걸어 '버벅인다'는 말이 나왔다.
+   이제 낮음=절약(30프레임), 보통=부드럽게(60프레임)로 나눴으므로, 예전 기본값을 쓰던 사람은 한 번만 보통으로 올린다.
+   직접 절약을 고른 사람은 이 뒤로는 그대로 유지된다(gfxV 로 1회만 적용). */
+try {
+  if ((settings.gfxV || 0) < 2) {
+    if (settings.gfx === 'low' || !settings.gfx) settings.gfx = 'mid';
+    settings.gfxV = 2;
+    localStorage.setItem('settings', JSON.stringify(settings));
+  }
+} catch (e) {}
 const saveSettings = () => { try { localStorage.setItem('settings', JSON.stringify(settings)); } catch (e) {} };
 const view = { x: 0, y: 0, z: 1 };
 /* 사용자 확대/축소 배율 (핀치·휠). 실제 배율은 draw()에서 화면 채움 배율과 곱해 clamp된다. */
@@ -4873,7 +4905,7 @@ function resize() {
      UI 는 CSS px 기준이라 버튼·글자 크기는 그대로다. */
   /* gfx()/settings 는 이 파일 아래쪽에서 선언된다 — 첫 resize()는 그보다 먼저 돌아 TDZ 에 걸린다 */
   let gq = 'low'; try { gq = gfx(); } catch (e) {}
-  const gcap = mob ? ({ low: 1.25, mid: 1.5, high: 2 })[gq] || 1.25 : 3;
+  const gcap = mob ? ({ low: 1.25, mid: 1.25, high: 2 })[gq] || 1.25 : 3; /* 보통도 해상도는 낮게 — 차이는 프레임 상한뿐 */
   let d = Math.min(devicePixelRatio || 1, gcap);
   /* 백버퍼 픽셀 예산: 모바일 2.4M / 데스크톱 16M — 초과하면 배율을 낮춰 인앱 브라우저 메모리 멈춤 방지.
      9M이던 시절엔 2K 이상 창(레티나)에서 배율이 2→1.75/1.5로 깎여 화면 전체가 흐릿하게 확대됐다. UI는 CSS px 기준이라 크기 변화 없음 */
@@ -5431,7 +5463,9 @@ function drawWaterFx(now) {
 }
 /* 바이옴 입자: 낙엽/눈/불씨/포자/먼지/반짝이/물방울 — 뷰포트 주변 월드 좌표에서 순환 */
 let gfxForce = ''; try { const g0 = new URLSearchParams(location.search).get('gfx'); if (['high','mid','low'].includes(g0)) gfxForce = g0; } catch (e) {} /* ?gfx=low 로 강제(저사양 기기·QA) */
-const gfx = () => gfxForce || settings.gfx || (MOBILE ? 'low' : 'high'); /* 모바일 기본 = 낮음(부드러움 우선) */ /* 화질: 낮음이면 입자·틴트·비네트·흔들림을 끈다 */
+/* 모바일 기본은 '보통' — 해상도는 낮게(발열↓) 두되 프레임은 60 그대로(부드러움).
+   '낮음'은 30프레임 상한까지 걸어 배터리·발열을 더 아끼는 모드다. */
+const gfx = () => gfxForce || settings.gfx || (MOBILE ? 'mid' : 'high'); /* 모바일 기본 = 낮음(부드러움 우선) */ /* 화질: 낮음이면 입자·틴트·비네트·흔들림을 끈다 */
 const ambCount = () => { const g = gfx(); return g === 'low' ? 0 : g === 'mid' ? 14 : 40; };
 let ambient = [], ambStyle = '';
 function ambientKind(style) { return { meadow: 'leaf', jungle: 'leaf', swamp: 'spore', snow: 'snow', volcano: 'ember', desert: 'dust', cave: 'drip', ruin: 'dust', abyss: 'spark', sky: 'spark' }[style] || 'leaf'; }
@@ -10216,7 +10250,8 @@ function stageMode() {
    기기가 스스로 속도를 낮춰 '중간중간 멈춤'으로 이어진다. 30fps면 GPU 일이 절반이고
    시뮬레이션은 dt 기반이라 게임 속도는 그대로다. 화질을 '높음'으로 올리면 60fps로 돌아간다. */
 let lastFrameAt = 0;
-const frameCapMs = () => (MOBILE && gfx() !== 'high') ? 32 : 0;
+/* 프레임 상한은 '낮음'에서만. 예전엔 '보통'까지 30fps 로 묶여 부드럽지 않다는 말이 나왔다. */
+const frameCapMs = () => (MOBILE && gfx() === 'low') ? 32 : 0;
 function loop(t) {
 requestAnimationFrame(loop);
   if (window.__stage) return;
@@ -10707,7 +10742,7 @@ function buildCreateUI(resolve) {
     let n = $('nameInput').value.trim().slice(0, 12);
     if (!n) n = '모험가' + Math.floor(rand(1000, 9999));
     $('create').style.display = 'none';
-    ldShow(34, 44, '캐릭터를 만드는 중...');
+    { const ld = $('loading'); if (ld) ld.style.display = 'flex'; } ldApply('캐릭터를 만드는 중...');
     resolve({ name: n, cls: selectedCls });
   }
   $('nameInput').onkeydown = e => { if (e.key === 'Enter') submit(); }; /* addEventListener면 생성 화면을 두 번 열 때 옛 submit이 남아 진행바가 뒤로 간다 */
@@ -10748,7 +10783,7 @@ function showCharSelect(chars, preferred) {
       el.onclick = () => { sel = k; selectedCls = k; try { localStorage.setItem('selCls', k); } catch (e2) {} paint(); };
       el.ondblclick = () => { sel = k; done(); };
     });
-    const done = () => { scr.style.display = 'none'; ldShow(34, 44, '월드에 접속 중...'); resolve(sel); }; /* 준비될 때까지 검은 화면 유지 */
+    const done = () => { scr.style.display = 'none'; const ld = $('loading'); if (ld) ld.style.display = 'flex'; ldApply('월드에 접속 중...'); resolve(sel); }; /* 준비될 때까지 검은 화면 유지 */
     scr.style.display = 'flex';
     paint();
     $('charGoBtn').onclick = done;
@@ -10975,13 +11010,13 @@ function waitForLoginClick() {
       btn.disabled = true;
       btn.textContent = '로그인 창 여는 중...';
       scr.style.display = 'none';
-      ldShow(8, 16, '구글 로그인 중...');
+      { const ld = $('loading'); if (ld) ld.style.display = 'flex'; } ldApply('구글 로그인 중...');
       try {
         resolve(await signInWithPopup(auth, new GoogleAuthProvider()).then(c => c.user));
       } catch (e) {
         if (['auth/popup-blocked', 'auth/operation-not-supported-in-this-environment'].includes(e.code)) {
           try {
-            ldProg(10, 18, '구글 로그인 페이지로 이동 중...');
+            ldApply('구글 로그인 페이지로 이동 중...');
             await setPersistence(auth, browserLocalPersistence);
             await signInWithRedirect(auth, new GoogleAuthProvider());
             return;
@@ -11038,7 +11073,7 @@ function soloMode() {
 async function init() {
   if (location.search.includes('stage=1')) { stageMode(); return; } /* 검증 스테이지: 로그인 건너뜀 */
   if (location.search.includes('solo=1')) { soloMode(); return; }   /* 성능 QA: 서버 없이 실제 루프 */
-  ldProg(6, 12, '계정 확인 중...');
+  ldApply('계정 확인 중...');
   try {
     await setPersistence(auth, browserLocalPersistence);
     await getRedirectResult(auth);
@@ -11054,7 +11089,7 @@ async function init() {
   });
   if (!user) {
     if (location.search.includes('dev=1')) {
-      ldProg(8, 16, '테스트 계정으로 접속 중...');
+      ldApply('테스트 계정으로 접속 중...');
       const cred = await signInAnonymously(auth);
       user = cred.user;
       googleName = '테스터';
@@ -11073,7 +11108,8 @@ async function init() {
   }
   authUid = user.uid;
   googleName = user.displayName || '';
-  ldShow(18, 24, '캐릭터 정보 불러오는 중...');
+  ldWork(LDW.auth, '캐릭터 정보 불러오는 중...');
+  { const ld = $('loading'); if (ld) ld.style.display = 'flex'; }
   /* 월드 시드는 내 캐릭터와 무관하다 — 캐릭터 조회·영웅 선택과 동시에 굴려 대기 시간을 겹친다 */
   const worldP = Promise.all([ensureWorld().catch(e => noteErr && noteErr(e)), ensureWorldM2().catch(e => noteErr && noteErr(e))]);
   /* 계정의 직업별 캐릭터를 모두 조회 — 처음 만든 캐릭터는 players/{uid}, 나머지는 players/{uid}__{cls} */
@@ -11085,7 +11121,7 @@ async function init() {
   /* 5개 문서(대표 + 직업별 4개)를 한 번에 요청한다.
      예전에는 대표를 받은 뒤 나머지를 하나씩 순서대로 받아, 왕복 지연이 4번 쌓여 모바일에서 수십 초가 걸렸다. */
   let done5 = 0;
-  const tick5 = () => ldProg(24 + (++done5) * 1.6, 33, `캐릭터 정보 불러오는 중... (${done5}/5)`);
+  const tick5 = () => ldWork(LDW.doc, `캐릭터 정보 불러오는 중... (${++done5}/5)`);
   const rd = ref => getDoc(ref).then(r => { tick5(); return r; }, e => { tick5(); throw e; });
   /* 네트워크가 흔들리면 getDoc 은 몇 분이고 매달린다 — 진행바가 얼어붙는 대신 안내를 띄우도록 시간 제한 */
   const all5 = await withTimeout(Promise.allSettled([rd(primaryRef), ...CLASS_KEYS.map(k => rd(doc(db, 'players', `${authUid}__${k}`)))]), 15000)
@@ -11105,14 +11141,14 @@ async function init() {
       if (r.value.exists()) chars[k] = r.value.data();
     }
   }
-  ldProg(33, 34, '캐릭터 정보 불러오는 중...');
+  ldApply('캐릭터 정보 불러오는 중...');
   /* 캐릭터가 하나도 없으면 생성 화면, 있으면 영웅 선택 화면 */
   try { const sc = localStorage.getItem('selCls'); if (sc && CLASS_KEYS.includes(sc)) selectedCls = sc; } catch (e) {} /* 리다이렉트 로그인으로 선택이 날아가는 것 방지 */
   let pickCls = primary ? await showCharSelect(chars, chars[selectedCls] ? selectedCls : primaryCls) : null;
   uid = primary ? charIdOf(authUid, pickCls, primaryCls) : authUid;
   meRef = doc(db, 'players', uid);
 
-  ldProg(44, 50, '캐릭터 데이터 불러오는 중...');
+  ldApply('캐릭터 데이터 불러오는 중...');
   let snap;
   if (!primary || pickCls === primaryCls) snap = primarySnap; /* 대표 문서는 이미 받아 뒀다 */
   else { /* 위에서 한꺼번에 받아둔 스냅샷을 재사용 — 같은 문서를 두 번 읽지 않는다 */
@@ -11121,7 +11157,7 @@ async function init() {
     if (pre && pre.status === 'fulfilled') snap = pre.value;
     else { try { snap = await getDoc(meRef); } catch (e) { loadFail(e); return; } }
   }
-  ldProg(50, 54, '캐릭터 데이터 불러오는 중...');
+  ldWork(LDW.me, '캐릭터 데이터 불러오는 중...');
   if (!snap.exists()) {
     let baseName, cls;
     if (primary) { baseName = baseNameOf(primary); cls = pickCls; } /* 다른 직업 캐릭터는 같은 이름으로 즉시 생성 */
@@ -11200,23 +11236,27 @@ async function init() {
   watchRank();
 
   try { checkDaily(); } catch (e) {} /* 일일 초기화(출석/일일퀘) */
-  ldProg(56, 70, '지형 생성 중...');
+  ldApply('지형 생성 중...');
   await ldYield(); /* 바를 한 번 그려주고 나서 무거운 지형 굽기로 들어간다 */
-  ldProg(58, 70, '지형 그리는 중...');
+  ldApply('지형 그리는 중...');
   try { getTex(myMap()); } catch (e) { noteErr && noteErr(e); } /* 지형을 미리 굽고 나서 화면을 보여준다 */
-  ldProg(70, 80, '몬스터 준비 중...');
+  ldWork(LDW.terrain, '몬스터 준비 중...');
   /* 이 구역에서 쓸 스프라이트를 '전부' 받아 두고 시작한다.
      플레이 중에 디코드가 끼어들면 그때마다 화면이 끊기므로, 로딩이 길어지더라도 여기서 끝낸다(요청). */
   const warmKeys = [myCls || 'warrior'];
   try { const pd = pageDef(pageNum()); for (const k of [...pd.kinds, pd.boss]) warmKeys.push('mob_' + k.base); } catch (e) {}
-  await ldWaitSheets([...new Set(warmKeys)], 9000, 80, 92, '그래픽 불러오는 중...');
+  { const uniq = [...new Set(warmKeys)];
+    /* 실제 시트 개수로 전체 무게를 다시 잡는다 */
+    ldTotal(LDW.auth + LDW.doc * 5 + LDW.me + LDW.terrain + LDW.sheet * uniq.length + LDW.frame * 3);
+    await ldWaitSheets(uniq, 9000, '그래픽 불러오는 중...'); }
   ready = true;
   /* 첫 프레임에 몰리는 준비 작업(HUD·단축바·가방 DOM, 영웅/몬스터 프레임 베이크)을
      아직 검은 화면일 때 미리 돌린다. 예전에는 이게 전부 플레이 시작 직후로 밀려 뚝뚝 끊겼다. */
-  ldProg(92, 98, '화면 준비 중...');
+  ldApply('화면 준비 중...');
   for (let i = 0; i < 3; i++) {
     await ldYield();
     try { loopBody(performance.now()); } catch (e) { noteErr && noteErr(e); }
+    ldWork(LDW.frame);
   }
   ldMarks.push({ msg: '완료', at: Date.now() - ldT0 });
   ldDone('접속 완료!'); /* 준비 완료 → 검은 화면 해제 */

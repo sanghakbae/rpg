@@ -1220,7 +1220,8 @@ function ldDone(msg) {
   /* 남은 구간을 눈에 보이게 채우고 나서 사라진다.
      예전에는 곧바로 100 을 찍고 같은 프레임에 숨겨서, 바가 중간에서 사라지는 것처럼 보였다. */
   ldTo = 100;
-  const from = ldCur, t0 = performance.now(), DUR = 260;
+  /* 남은 거리에 맞춰 채운다 — 절반에서 갑자기 게임으로 넘어가는 것처럼 보이지 않게 */
+  const from = ldCur, t0 = performance.now(), DUR = Math.max(240, Math.min(700, (100 - from) * 8));
   const fin = () => { ldOff = true; ldCur = ldTo = 100; ldPaint(); ldHide(); };
   const step = () => {
     const k = Math.min(1, (performance.now() - t0) / DUR);
@@ -1228,7 +1229,7 @@ function ldDone(msg) {
     if (k < 1) requestAnimationFrame(step); else setTimeout(fin, 110);
   };
   requestAnimationFrame(step);
-  setTimeout(fin, 800); /* 안전장치: rAF 가 눌려도 반드시 걷힌다 */
+  setTimeout(fin, DUR + 600); /* 안전장치: rAF 가 눌려도 반드시 걷힌다 */
 }
 /* 무거운 동기 작업(지형 굽기) 전에 한 프레임 양보 — 그래야 방금 올린 진행바가 실제로 그려진다 */
 const ldYield = () => new Promise(r => { let d = false; const f = () => { if (d) return; d = true; setTimeout(r, 0); }; requestAnimationFrame(f); setTimeout(f, 50); });
@@ -5773,11 +5774,11 @@ function gotoPage(n) {
      예전에는 아래 본문이 파이어스토어 응답을 기다리다 멈추면 검은 화면이 영영 남았다
      (#mapFade 는 z-index 50 이라 체력창·미니맵은 가려지고 독만 보인다 — 정확히 그 증상). */
   clearTimeout(mapFadeGuard);
-  mapFadeGuard = setTimeout(() => { if (ov) ov.style.opacity = 0; mapFading = false; if (fl) fl.remove(); }, 9000);
+  mapFadeGuard = setTimeout(() => { if (ov) ov.style.opacity = 0; mapFading = false; if (fl) fl.remove(); }, 4000);
   /* 암전 위에 준비 상태를 적어 준다 — 몇 초 걸려도 멈춘 게 아니라는 걸 알 수 있게 */
   let fl = document.getElementById('mapFadeTxt');
   if (!fl) { fl = document.createElement('div'); fl.id = 'mapFadeTxt';
-    fl.style.cssText = 'position:fixed;left:0;right:0;top:50%;transform:translateY(-50%);z-index:51;text-align:center;color:#8a93a6;font-size:13px;pointer-events:none;';
+    fl.style.cssText = 'position:fixed;left:0;right:0;top:50%;transform:translateY(-50%);z-index:95;text-align:center;color:#cfd6e4;font-size:15px;letter-spacing:1px;text-shadow:0 2px 8px #000;pointer-events:none;';
     document.body.appendChild(fl); }
   fl.textContent = `${pageDef(n).name} 준비 중...`;
   setTimeout(async () => {
@@ -5822,7 +5823,9 @@ function gotoPage(n) {
       const doneN = () => uniq.filter(k => { const e = HERO_SHEETS[k]; return e && (e.img || e.failed || e.missing); }).length;
       for (const k of uniq) { try { heroSheet(k); } catch (e2) {} }
       const t0 = Date.now();
-      while (doneN() < uniq.length && Date.now() - t0 < 6000) {
+      /* 기다리는 건 최대 2.5초까지만. 더 끌면 '검은 화면에서 게임이 안 된다'가 된다 —
+         남은 시트는 백그라운드로 계속 받고, 도착 전에는 기존 실루엣 폴백으로 그린다. */
+      while (doneN() < uniq.length && Date.now() - t0 < 2500) {
         if (fl) fl.textContent = `${pd2.name} 준비 중... (${doneN()}/${uniq.length})`;
         await new Promise(r => setTimeout(r, 80));
       }
@@ -10306,8 +10309,12 @@ function fpsTick(t, gap) {
   fpsShown = t;
   const span = fpsBuf.length > 1 ? t - fpsBuf[0] : 0;
   const fps = span > 30 ? Math.round((fpsBuf.length - 1) / span * 1000) : 0;
-  fpsEl.textContent = fps > 0 ? `${fps}fps · 최대 ${Math.round(fpsWorst)}ms` : '측정 중...';
-  fpsEl.classList.toggle('bad', fps > 0 && (fps < 25 || fpsWorst > 120));
+  /* 최근에 큰 멈춤이 있었으면 원인을 같은 자리에 붙여 준다 — 설정을 열지 않아도 범인이 보인다 */
+  const last = stallLog.length ? stallLog[stallLog.length - 1] : null;
+  const fresh = last && (Date.now() - stallLastAt) < 8000;
+  const why = fresh ? ` · 멈춤 ${last.gap}ms(루프 ${last.js}${last.out ? ' · ' + last.out : ''})` : '';
+  fpsEl.textContent = (fps > 0 ? `${fps}fps · 최대 ${Math.round(fpsWorst)}ms` : '측정 중...') + why;
+  fpsEl.classList.toggle('bad', !!fresh || (fps > 0 && (fps < 25 || fpsWorst > 120)));
   fpsWorst = 0;
 }
 /* 프레임 상한은 '낮음'에서만. 예전엔 '보통'까지 30fps 로 묶여 부드럽지 않다는 말이 나왔다. */
@@ -10536,7 +10543,7 @@ function loopBody(t) {
   const rawGap = t - lastT; /* 클램프 전 실제 프레임 간격 */
   fpsTick(t, rawGap);
   profFrame(rawGap);
-  if (ready && rawGap > 300) noteStall(rawGap, profLast);
+  if (rawGap > 300) noteStall(rawGap, profLast); /* ready 이전(로딩 직후)의 멈춤도 잡아야 한다 */
   if (ldOff && !ldErr) { const _ld = $('loading'); if (_ld && _ld.style.display !== 'none') _ld.style.display = 'none'; } /* 안전장치: 준비가 끝났는데 로딩 화면이 남아 있으면 즉시 내린다 */
   const dt = Math.min(100, t - lastT); /* 프레임이 느릴 때 게임 시간까지 느려지던 것(20fps 아래 = 슬로우 모션) 완화 — 10fps까지는 실시간으로 진행 */
   lastT = t;
@@ -11309,7 +11316,7 @@ async function init() {
   { const uniq = [...new Set(warmKeys)];
     /* 실제 시트 개수로 전체 무게를 다시 잡는다 */
     ldTotal(LDW.auth + LDW.doc * 5 + LDW.me + LDW.terrain + LDW.sheet * uniq.length + LDW.frame * 3);
-    await ldWaitSheets(uniq, 9000, '그래픽 불러오는 중...'); }
+    await ldWaitSheets(uniq, 4000, '그래픽 불러오는 중...'); } /* 상한 4초 — 넘으면 폴백으로 시작하고 뒤에서 마저 받는다 */
   ready = true;
   /* 첫 프레임에 몰리는 준비 작업(HUD·단축바·가방 DOM, 영웅/몬스터 프레임 베이크)을
      아직 검은 화면일 때 미리 돌린다. 예전에는 이게 전부 플레이 시작 직후로 밀려 뚝뚝 끊겼다. */

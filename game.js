@@ -4891,6 +4891,15 @@ function drawSprite(name, x, y, scale = 4, opts = {}) {
 
 /* ================= 캔버스 ================= */
 const cv = $('game'), ctx = cv.getContext('2d');
+/* 모바일: 메인 캔버스의 그림자 블러를 통째로 봉인한다.
+   몬스터 장식(빛나는 눈·균열·리치 구슬), 전설 아이템 반짝임 등이 매 프레임 shadowBlur 를 켰는데,
+   iOS 사파리는 그림자 한 번마다 별도 블러 패스를 돌린다. 화면에 몬스터 12마리면 프레임당 30~50 패스.
+   설정자만 막으므로 오프스크린 베이크 캔버스(이름표·데미지 숫자·아이템 아이콘)는 영향을 받지 않는다. */
+if (MOBILE) {
+  try {
+    Object.defineProperty(ctx, 'shadowBlur', { get() { return 0; }, set(v) {}, configurable: true });
+  } catch (e) {}
+}
 const mm = $('minimap'), mctx = mm.getContext('2d');
 /* 백버퍼를 기기 픽셀비만큼 키워 렌더 — cvW/cvH는 CSS 픽셀 기준(기존 코드 의미 유지) */
 let dpr = 1, cvW = 0, cvH = 0, resizeT = 0;
@@ -6853,8 +6862,13 @@ const hueBakeQ = []; /* 굽는 중인 색조 시트 — 프레임마다 조금�
 /* 시트 전체(8~30MB)를 한 프레임에 색조 변환하면 아이폰에서 50ms 넘게 멈췄다(구역 이동·새 몬스터 등장 때마다).
    → 캔버스만 먼저 만들고 가로 띠 단위로 여러 프레임에 나눠 굽는다. 다 구워지기 전에는 원본 시트를 그대로 쓴다. */
 function hueSheet(base, sh, dh) {
-  if (gfx() === 'low') return sh.img; /* 낮음: 색조 변형 생략 */
-  if (MOBILE && sh.img.width * sh.img.height > 6e6) return sh.img; /* 큰 시트는 모바일에서 틴트 생략 — 31MB 캔버스를 매번 새로 만들다 프레임이 무너졌다 */
+  /* 모바일에서는 색조 변형을 아예 만들지 않는다.
+     시트 크기 그대로의 캔버스(장당 2~7.5MB)를 hue-rotate 필터로 굽는 작업이라,
+     몬스터 종류가 바뀔 때마다 GPU 를 크게 먹고 발열로 이어졌다.
+     (v224 에서 기본 화질을 '낮음'→'보통'으로 올리면서 이게 다시 켜졌던 것이 발열 재발의 원인)
+     팔레트 변종은 기본 색으로 보이지만, 게임이 도는 쪽이 낫다. */
+  if (MOBILE || gfx() === 'low') return sh.img;
+  if (sh.img.width * sh.img.height > 6e6) return sh.img; /* 데스크톱도 아주 큰 시트는 생략 */
   const key = base + '|' + dh + '|' + sh.img.width; /* 해상도가 바뀌면(회전 등) 다른 캐시 */
   const e = hueSheetCache.get(key);
   if (e) {
@@ -10318,7 +10332,10 @@ function fpsTick(t, gap) {
   fpsWorst = 0;
 }
 /* 프레임 상한은 '낮음'에서만. 예전엔 '보통'까지 30fps 로 묶여 부드럽지 않다는 말이 나왔다. */
-const frameCapMs = () => (MOBILE && gfx() === 'low') ? 32 : 0;
+/* 모바일 프레임 상한 — 60fps 를 억지로 쫓다 열이 올라 클럭이 떨어지면
+   오히려 20fps 로 출렁인다. 상한을 두면 낮지만 일정한 프레임이 나오고 발열이 줄어든다.
+   '선명(high)' 을 고르면 상한 없음. */
+const frameCapMs = () => { if (!MOBILE) return 0; const g = gfx(); return g === 'low' ? 32 : g === 'mid' ? 24 : 0; };
 function loop(t) {
 requestAnimationFrame(loop);
   if (window.__stage) return;
